@@ -1,0 +1,59 @@
+{
+  "name": "@galosandoval/shopfloor",
+  "version": "0.1.0",
+  "description": "Harness for a GitHub-issue-driven SDLC agent loop: spawn Claude Code headlessly to implement an issue as a draft PR, with runaway guards, preflight refusal, and verify-comment posting.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Galo Sandoval",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/galosandoval/shopfloor.git"
+  },
+  "homepage": "https://github.com/galosandoval/shopfloor",
+  "bugs": "https://github.com/galosandoval/shopfloor/issues",
+  "keywords": [
+    "claude-code",
+    "agent",
+    "harness",
+    "sdlc",
+    "github-issues",
+    "automation"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "bin": {
+    "shopfloor-implement": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.17.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.19.0",
+    "vitest": "^2.1.8"
+  }
+}
