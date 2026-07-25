@@ -1,14 +1,16 @@
-// Pure pre-flight refusal logic (ported from recipe-chat-v1's
-// `agent/implement/preflight.ts`, #511). A leaf-issue-only agent refuses
-// before any work begins when a labeled issue is a PRD (has native
-// sub-issues), is itself a native sub-issue of a parent, or already has an
-// open PR targeting it. No IO here — {@link runPreflight} gathers these
-// inputs via `gh` and acts on the verdict.
-//
-// This keys off GitHub's *native* parent/sub-issue links, not any repo's own
-// textual "## Parent #N" doc convention: a consumer's implementable slices may
-// carry that text while being top-level issues, so refusing on the text alone
-// would block every run.
+/**
+ * Pure pre-flight refusal logic (ported from recipe-chat-v1's
+ * `agent/implement/preflight.ts`, #511). A leaf-issue-only agent refuses
+ * before any work begins when a labeled issue is a PRD (has native
+ * sub-issues), is itself a native sub-issue of a parent, or already has an
+ * open PR targeting it. No IO here — {@link runPreflight} gathers these
+ * inputs via `gh` and acts on the verdict.
+ *
+ * This keys off GitHub's *native* parent/sub-issue links, not any repo's own
+ * textual "## Parent #N" doc convention: a consumer's implementable slices
+ * may carry that text while being top-level issues, so refusing on the text
+ * alone would block every run.
+ */
 
 export interface LinkingPullRequest {
   number: number
