@@ -5,6 +5,9 @@
   "type": "module",
   "license": "MIT",
   "author": "Galo Sandoval",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/galosandoval/shopfloor.git"
