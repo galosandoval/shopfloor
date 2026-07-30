@@ -16,7 +16,7 @@ organized by (see [Module layout](#module-layout)).
 
 This package deliberately does **not** ship a GitHub Actions workflow
 template or a prompt template — those are per-consumer. See
-[`galosandoval/recipe-chat`](https://github.com/galosandoval/recipe-chat)'s
+[`galosandoval/recipe-chat-v1`](https://github.com/galosandoval/recipe-chat-v1)'s
 `.github/workflows/agent-implement.yml` and `agent/implement/prompt.md` for a
 reference wiring.
 
@@ -105,7 +105,7 @@ import { runPreflight } from '@galosandoval/shopfloor'
 
 const { verdict } = await runPreflight({
   issueNumber: '123',
-  repo: 'galosandoval/recipe-chat'
+  repo: 'galosandoval/recipe-chat-v1'
 })
 if (verdict.refused) {
   console.log(verdict.reason)
@@ -125,10 +125,10 @@ import { postVerifyComment } from '@galosandoval/shopfloor'
 
 await postVerifyComment({
   issueNumber: '123',
-  repo: 'galosandoval/recipe-chat',
+  repo: 'galosandoval/recipe-chat-v1',
   prNumber: '456',
   sha: process.env.GITHUB_SHA!,
-  runUrl: 'https://github.com/galosandoval/recipe-chat/actions/runs/1',
+  runUrl: 'https://github.com/galosandoval/recipe-chat-v1/actions/runs/1',
   verifyReportFile: '/tmp/out/verify_report.md',
   screenshotsDir: '.agent/verify/issue-123'
 })
@@ -160,6 +160,26 @@ trajectories or an LM-judge check of whether an actual agent run produced a
 step is a runtime signal, not an eval suite. This is a named, known gap, not
 an implied guarantee — deterministic correctness of the harness's own
 functions is covered; judgment-quality of what the agent produces is not.
+
+## Versioning
+
+This package is pre-`1.0.0`, and `0.x` minors may carry behavior changes — the
+configuration surface (`RunPolicyConfig` in particular) is still moving.
+Semver's "minor is additive" guarantee does not apply below `1.0.0`, so
+**consumers should exact-pin** (`"@galosandoval/shopfloor": "0.1.0"`, no `^`)
+until `1.0.0` and upgrade deliberately.
+
+`CHANGELOG.md` is authoritative for what changed in a release, including
+behavior changes. Read it before every bump; the version number alone won't
+tell you whether a release is safe to take.
+
+Releases run through [Changesets](https://github.com/changesets/changesets).
+Every PR needs a changeset (`npx changeset`); a PR that deliberately ships
+nothing records an explicit empty one (`npx changeset --empty`) rather than
+leaving "this doesn't release" to be inferred from silence. Merging to `main`
+opens or updates a "Version Packages" PR; merging *that* bumps the version,
+tags the commit, and publishes to npm with provenance via an OIDC trusted
+publisher — there is no `NPM_TOKEN` in this repo.
 
 ## License
 

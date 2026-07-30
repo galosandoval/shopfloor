@@ -1,6 +1,6 @@
 {
   "name": "@galosandoval/shopfloor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Harness for a GitHub-issue-driven SDLC agent loop: spawn Claude Code headlessly to implement an issue as a draft PR, with runaway guards, preflight refusal, and verify-comment posting.",
   "type": "module",
   "license": "MIT",
@@ -39,7 +39,8 @@
     "shopfloor-implement": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsup",
@@ -48,9 +49,13 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "version:packages": "changeset version",
+    "release": "changeset publish",
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.1",
     "@eslint/js": "^9.17.0",
     "@types/node": "^22.10.5",
     "eslint": "^9.17.0",

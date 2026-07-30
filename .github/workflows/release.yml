@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# No file-wide permissions: each job declares exactly what it needs, so the
+# pull_request-triggered path never holds a write token.
+permissions: {}
+
+# Two pushes to main would otherwise race to open the Version Packages PR and
+# to publish. Never cancel in progress — a half-killed publish is worse.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # changeset status diffs against the base branch, which needs history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      # A PR with no changeset fails here. A PR that deliberately ships nothing
+      # records an explicit empty changeset (`npx changeset --empty`) to pass.
+      - name: Check for a changeset
+        if: github.event_name == 'pull_request'
+        run: npx changeset status --since=origin/${{ github.base_ref }}
+
+  release:
+    needs: verify
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write # OIDC trusted publishing to npm — no NPM_TOKEN anywhere.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # changeset publish tags the commit and the action pushes those tags;
+          # pushing from a shallow clone fails with "shallow update not allowed".
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # OIDC trusted publishing requires npm >= 11.5.1, which neither node 20
+      # nor node 22 ships. Without this the publish fails to authenticate with
+      # an error that does not point at the npm version. Pinned to the 11.x
+      # range so a future npm major does not land unreviewed in the publish path.
+      - run: npm install -g npm@^11.5.1
+      - run: npm ci
+      - name: Create Version Packages PR or publish
+        uses: changesets/action@v1
+        with:
+          version: npm run version:packages
+          publish: npm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # changeset publish shells to `npm publish` without --provenance, so
+          # assert it here rather than relying on npm's trusted-publisher default.
+          NPM_CONFIG_PROVENANCE: true
