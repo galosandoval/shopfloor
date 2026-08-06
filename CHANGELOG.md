@@ -1,5 +1,11 @@
 # @galosandoval/shopfloor
 
+## 0.1.2
+
+### Patch Changes
+
+- [#10](https://github.com/galosandoval/shopfloor/pull/10) [`8fbd264`](https://github.com/galosandoval/shopfloor/commit/8fbd264c7ab8426e15889b9785d6aebefa485c1f) Thanks [@galosandoval](https://github.com/galosandoval)! - Added documentation for the Harness gap analysis
+
 ## 0.1.1
 
 ### Patch Changes
