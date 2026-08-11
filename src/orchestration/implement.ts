@@ -1,8 +1,9 @@
 /**
  * Orchestrator for a single "implement this issue" agent run (ported from
  * recipe-chat-v1's `agent/implement/implement.ts`, #510/#540/#556). Spawns
- * the Claude Code CLI directly and owns the run's runaway guards: an idle
- * timeout (output-silence guard) and a zero-commit failure check. It is also
+ * the Claude Code CLI directly and owns the run's runaway budgets — an idle
+ * timeout and a wall-clock ceiling, both enforced in {@link spawnClaude} — plus
+ * a zero-commit failure check. It is also
  * the IO shell around the pure {@link resolveImplementConfig}: the `git` and
  * `gh` probes that answer what neither the caller nor the environment stated
  * live here. The caller owns everything outside the run itself — checking out
@@ -12,11 +13,16 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { execFileSync, execSync, spawn } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { captureTranscript } from '../observability/transcript'
 import { prepareClaudeInvocation } from './claude-invocation'
-import { findMissingEnvVars, resolveIdleMs } from '../guardrails/run-policy'
+import { describeRunawayKill, spawnClaude } from './spawn-claude'
+import {
+  findMissingEnvVars,
+  resolveIdleMs,
+  resolveWallClockMs
+} from '../guardrails/run-policy'
 import { ImplementAgentError } from './implement-error'
 import {
   resolveImplementConfig,
@@ -37,7 +43,7 @@ export interface RunImplementAgentResult {
  * Runs the agent once: resolves the caller's configuration (filling anything
  * unstated from the environment, a `git` / `gh` probe, or a package default),
  * validates the caller's app-specific required env vars, spawns the Claude
- * Code CLI with the idle guard armed, captures the session transcript, and
+ * Code CLI with both runaway guards armed, captures the session transcript, and
  * verifies the run actually committed. Throws {@link ImplementAgentError} on
  * any failure — callers own translating that into their own CI-glue (writing a
  * failure-reason file, exiting non-zero).
@@ -89,18 +95,20 @@ export async function runImplementAgent(
   delete (childEnv as Record<string, unknown>).ANTHROPIC_API_KEY
 
   const idleMs = resolveIdleMs(config.runPolicy, env)
+  const wallClockMs = resolveWallClockMs(config.runPolicy, env)
   const captureRunTranscript = () =>
     captureTranscript({
       projectsDir: config.projectsDir,
       destPath: config.transcriptFile
     })
 
-  const { exitCode, idleKilled, outputTail } = await spawnClaude({
+  const { exitCode, killedBy, outputTail } = await spawnClaude({
     args,
     prompt,
     env: childEnv,
     cwd,
     idleMs,
+    wallClockMs,
     onSpawnError: captureRunTranscript
   })
 
@@ -109,11 +117,14 @@ export async function runImplementAgent(
   // newest-JSONL scan inside captureTranscript resolves it unambiguously.
   const transcriptCaptured = captureRunTranscript()
 
-  if (idleKilled) {
-    throw new ImplementAgentError(
-      `Agent idle for over ${Math.round(idleMs / 60_000)} minute(s) — killed by the idle guard.`,
-      outputTail
-    )
+  // A killed run fails before the commit check below, and deliberately stays
+  // that way for the wall-clock guard too: a run cut off mid-loop never
+  // reached its own verify phase, so whatever it committed is unvetted
+  // work-in-progress. That is why this doesn't follow the leniency the missing
+  // PR description gets further down — there, the commits were finished and
+  // only the prose was absent.
+  if (killedBy) {
+    throw new ImplementAgentError(describeRunawayKill(killedBy), outputTail)
   }
 
   if (exitCode !== 0) {
@@ -245,83 +256,6 @@ function probeIssueTitle(
     )
   }
   return title
-}
-
-interface SpawnClaudeResult {
-  exitCode: number
-  idleKilled: boolean
-  /** Bounded tail of the CLI's combined stdout/stderr, kept for failure diagnostics. */
-  outputTail: string
-}
-
-/**
- * Spawns the Claude CLI, piping its output to this process's own
- * stdout/stderr for the caller's job log while watching for the idle
- * runaway guard: a run killed once its output goes quiet for `idleMs`.
- */
-async function spawnClaude(opts: {
-  args: string[]
-  prompt: string
-  env: NodeJS.ProcessEnv
-  cwd: string
-  idleMs: number
-  onSpawnError: () => void
-}): Promise<SpawnClaudeResult> {
-  const TAIL_BYTES = 4000
-  const IDLE_CHECK_INTERVAL_MS = 15_000
-
-  let outputTail = ''
-  const captureTail = (chunk: Buffer) => {
-    outputTail = (outputTail + chunk.toString('utf8')).slice(-TAIL_BYTES)
-  }
-
-  let idleKilled = false
-
-  try {
-    const exitCode = await new Promise<number>((resolve, reject) => {
-      const child = spawn('claude', [...opts.args, opts.prompt], {
-        env: opts.env,
-        cwd: opts.cwd
-      })
-      let lastActivity = Date.now()
-      const markActive = () => {
-        lastActivity = Date.now()
-      }
-      child.stdout.on('data', (chunk: Buffer) => {
-        process.stdout.write(chunk)
-        captureTail(chunk)
-        markActive()
-      })
-      child.stderr.on('data', (chunk: Buffer) => {
-        process.stderr.write(chunk)
-        captureTail(chunk)
-        markActive()
-      })
-      const idleTimer = setInterval(() => {
-        if (Date.now() - lastActivity > opts.idleMs) {
-          idleKilled = true
-          console.error(
-            `\nFAILED: idle guard tripped after ${Math.round(opts.idleMs / 60_000)} minute(s) — killing the agent.`
-          )
-          child.kill('SIGKILL')
-        }
-      }, IDLE_CHECK_INTERVAL_MS)
-      child.on('error', (error) => {
-        clearInterval(idleTimer)
-        reject(error)
-      })
-      child.on('close', (code) => {
-        clearInterval(idleTimer)
-        resolve(code ?? 1)
-      })
-    })
-    return { exitCode, idleKilled, outputTail }
-  } catch (error) {
-    opts.onSpawnError()
-    throw new ImplementAgentError(
-      `Failed to start the Claude CLI: ${String(error)}`
-    )
-  }
 }
 
 function fileHasContent(file: string): boolean {
