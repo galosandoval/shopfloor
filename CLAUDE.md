@@ -26,20 +26,17 @@ already-gathered facts (no `fs`, `child_process`, `process.env`, or clock — an
 env arrives as a parameter), and a **thin shell** that probes, calls it, and
 acts on the verdict. New decisions land in that shape;
 [`CONTEXT.md`](./CONTEXT.md#pure-core-io-shell) has the naming and placement
-rules.
-
-Tests follow from it: assert inputs and outputs of the pure functions with no IO
-mocking, and **test the wiring separately** — a unit test on a pure function
-proves nothing about whether a run calls it.
+rules. Tests follow from it: assert inputs and outputs of the pure functions
+with no IO mocking, and **test the wiring separately** — a unit test on a pure
+function proves nothing about whether a run calls it.
 
 ## Coding standards
 
 Follow the `coding-standards` skill (`~/.claude/skills/coding-standards/`);
 `references/typescript-style.md` and `references/doc-comments.md` apply. Two it
-won't tell you: doc comments carry the _why_, especially the why-not — rejected
-alternatives and deliberate asymmetries go at the declaration, which is what
-makes the guardrails auditable — and the public surface is `src/index.ts` and
-nothing else.
+won't tell you: doc comments carry the why-not — rejected alternatives and
+deliberate asymmetries go at the declaration, which is what makes the guardrails
+auditable — and the public surface is `src/index.ts`, nothing else.
 
 ## What this package deliberately does not own
 
@@ -49,7 +46,7 @@ Each was decided against; don't add them.
 - **Opinionated coding standards** — `standardsDir` points at the consumer's.
 - **Consumer env-var names** — `requiredEnvVars` is caller-stated.
 - **CI glue and workflow templates** — callers own `$GITHUB_OUTPUT`, exit codes,
-  branch checkout, and opening the PR.
+  branch checkout, the PR.
 - **Evals** — a named, open gap, not an oversight to close casually.
 
 Multi-step procedures belong in skills, not in this file.
