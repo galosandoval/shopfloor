@@ -35,7 +35,9 @@ main()
 async function main() {
   try {
     const result = await runImplementAgent(input)
-    console.log(`\n${result.commitsAhead} commit(s) on ${result.branch} this run.`)
+    console.log(
+      `\n${result.commitsAhead} commit(s) on ${result.branch} this run.`
+    )
   } catch (error) {
     const message =
       error instanceof ImplementAgentError

@@ -8,6 +8,11 @@
  * two env-var-override keys below and the CLI's OAuth token requirement.
  */
 
+import {
+  DEFAULT_CLI_VERSION_STRICTNESS,
+  type CliVersionStrictness
+} from './cli-version'
+
 /** Env var that overrides {@link RunPolicyConfig.idleMinutes} for a single run. */
 export const IDLE_MINUTES_ENV_VAR = 'LOCAL_IDLE_MINUTES'
 
@@ -20,10 +25,18 @@ export interface RunPolicyConfig {
   /** Fast-loop backstop cap on agent turns, layered on top of the guards below. */
   maxTurns?: number
   /**
-   * Claude Code CLI version this run policy was validated against. Recorded
-   * only — nothing compares a running CLI against it yet.
+   * Claude Code CLI version this run policy was validated against. The running
+   * `claude --version` is compared against it before the spawn — see
+   * `checkCliVersion` in `./cli-version` for the comparison rule, and
+   * {@link RunPolicyConfig.cliVersionStrictness} for the consequence. Omitted
+   * means the running version is recorded and compared to nothing.
    */
   cliVersion?: string
+  /**
+   * What a mismatch against {@link RunPolicyConfig.cliVersion} costs — warn
+   * (the default), fail before spawning, or skip the check entirely.
+   */
+  cliVersionStrictness?: CliVersionStrictness
   /** Idle runaway budget, in minutes — overridable via {@link IDLE_MINUTES_ENV_VAR}. */
   idleMinutes?: number
   /**
@@ -45,6 +58,7 @@ export interface RunPolicyConfig {
 export interface ResolvedRunPolicy extends RunPolicyConfig {
   maxTurns: number
   idleMinutes: number
+  cliVersionStrictness: CliVersionStrictness
   requiredEnvVars: readonly string[]
 }
 
@@ -56,6 +70,7 @@ export interface ResolvedRunPolicy extends RunPolicyConfig {
 export const DEFAULT_RUN_POLICY: ResolvedRunPolicy = {
   maxTurns: 150,
   idleMinutes: 15,
+  cliVersionStrictness: DEFAULT_CLI_VERSION_STRICTNESS,
   requiredEnvVars: []
 }
 
@@ -110,6 +125,7 @@ export function resolveWallClockMs(
   env: Record<string, string | undefined>
 ): number | undefined {
   const minutes =
-    parsePositiveNumber(env[WALL_CLOCK_MINUTES_ENV_VAR]) ?? config.wallClockMinutes
+    parsePositiveNumber(env[WALL_CLOCK_MINUTES_ENV_VAR]) ??
+    config.wallClockMinutes
   return minutes === undefined ? undefined : minutes * 60_000
 }

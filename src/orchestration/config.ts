@@ -13,6 +13,7 @@
 
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { parseCliVersionStrictness } from '../guardrails/cli-version'
 import {
   DEFAULT_RUN_POLICY,
   parsePositiveNumber,
@@ -172,11 +173,20 @@ function resolveRunPolicy(
   const resolved: ResolvedRunPolicy = {
     model: stated.model ?? env.MODEL ?? DEFAULT_RUN_POLICY.model,
     maxTurns:
-      stated.maxTurns ?? parsePositiveNumber(env.MAX_TURNS) ?? DEFAULT_RUN_POLICY.maxTurns,
+      stated.maxTurns ??
+      parsePositiveNumber(env.MAX_TURNS) ??
+      DEFAULT_RUN_POLICY.maxTurns,
     idleMinutes:
       stated.idleMinutes ??
       parsePositiveNumber(env.IDLE_MINUTES) ??
       DEFAULT_RUN_POLICY.idleMinutes,
+    cliVersionStrictness:
+      stated.cliVersionStrictness ??
+      // An unrecognized level falls back rather than throwing: this setting
+      // decides how loudly a *diagnostic* speaks, and refusing a run over a
+      // typo in it would be louder than the check it configures.
+      parseCliVersionStrictness(env.CLI_VERSION_STRICTNESS) ??
+      DEFAULT_RUN_POLICY.cliVersionStrictness,
     requiredEnvVars:
       stated.requiredEnvVars ??
       parseNameList(env.REQUIRED_ENV_VARS) ??
@@ -190,7 +200,8 @@ function resolveRunPolicy(
 
   const wallClockMinutes =
     stated.wallClockMinutes ?? parsePositiveNumber(env.WALL_CLOCK_MINUTES)
-  if (wallClockMinutes !== undefined) resolved.wallClockMinutes = wallClockMinutes
+  if (wallClockMinutes !== undefined)
+    resolved.wallClockMinutes = wallClockMinutes
 
   return resolved
 }

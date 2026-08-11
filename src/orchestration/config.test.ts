@@ -1,10 +1,8 @@
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { DEFAULT_CLI_VERSION_STRICTNESS } from '../guardrails/cli-version'
 import { DEFAULT_RUN_POLICY } from '../guardrails/run-policy'
-import {
-  resolveImplementConfig,
-  type RunImplementAgentConfig
-} from './config'
+import { resolveImplementConfig, type RunImplementAgentConfig } from './config'
 
 const TOKEN = 'sk-oauth-test'
 
@@ -164,8 +162,12 @@ describe('resolveImplementConfig', () => {
         baseEnv()
       )
 
-      expect(config.prDescriptionFile).toBe(path.join('/out', 'pr_description.txt'))
-      expect(config.verifyReportFile).toBe(path.join('/out', 'verify_report.md'))
+      expect(config.prDescriptionFile).toBe(
+        path.join('/out', 'pr_description.txt')
+      )
+      expect(config.verifyReportFile).toBe(
+        path.join('/out', 'verify_report.md')
+      )
       expect(config.transcriptFile).toBe(path.join('/out', 'transcript.jsonl'))
       expect(config.failureReasonFile).toBe(
         path.join('/out', 'failure_reason.txt')
@@ -181,7 +183,9 @@ describe('resolveImplementConfig', () => {
       expect(config.prDescriptionFile).toBe(
         path.join('/env-out', 'pr_description.txt')
       )
-      expect(config.transcriptFile).toBe(path.join('/env-out', 'transcript.jsonl'))
+      expect(config.transcriptFile).toBe(
+        path.join('/env-out', 'transcript.jsonl')
+      )
     })
 
     it('lets each output path be overridden individually', () => {
@@ -225,8 +229,10 @@ describe('resolveImplementConfig', () => {
         ).screenshotsDir
       ).toBe('shots')
       expect(
-        resolveImplementConfig(baseInput(), baseEnv({ SCREENSHOTS_DIR: 'env-shots' }))
-          .screenshotsDir
+        resolveImplementConfig(
+          baseInput(),
+          baseEnv({ SCREENSHOTS_DIR: 'env-shots' })
+        ).screenshotsDir
       ).toBe('env-shots')
     })
 
@@ -246,8 +252,10 @@ describe('resolveImplementConfig', () => {
         ).projectsDir
       ).toBe('/projects')
       expect(
-        resolveImplementConfig(baseInput(), baseEnv({ PROJECTS_DIR: '/env-projects' }))
-          .projectsDir
+        resolveImplementConfig(
+          baseInput(),
+          baseEnv({ PROJECTS_DIR: '/env-projects' })
+        ).projectsDir
       ).toBe('/env-projects')
     })
   })
@@ -300,6 +308,7 @@ describe('resolveImplementConfig', () => {
         maxTurns: 80,
         idleMinutes: 9,
         cliVersion: '2.1.208',
+        cliVersionStrictness: DEFAULT_CLI_VERSION_STRICTNESS,
         wallClockMinutes: 45,
         requiredEnvVars: ['DATABASE_URL', 'GH_TOKEN']
       })
@@ -321,6 +330,43 @@ describe('resolveImplementConfig', () => {
       )
 
       expect(runPolicy.maxTurns).toBe(DEFAULT_RUN_POLICY.maxTurns)
+    })
+
+    it('defaults the CLI-version strictness to a non-blocking warn', () => {
+      const { runPolicy } = resolveImplementConfig(baseInput(), baseEnv())
+
+      expect(runPolicy.cliVersionStrictness).toBe(
+        DEFAULT_CLI_VERSION_STRICTNESS
+      )
+    })
+
+    it('reads the CLI-version strictness from the environment', () => {
+      const { runPolicy } = resolveImplementConfig(
+        baseInput(),
+        baseEnv({ CLI_VERSION_STRICTNESS: 'error' })
+      )
+
+      expect(runPolicy.cliVersionStrictness).toBe('error')
+    })
+
+    it('prefers a stated CLI-version strictness over the environment', () => {
+      const { runPolicy } = resolveImplementConfig(
+        baseInput({ runPolicy: { cliVersionStrictness: 'off' } }),
+        baseEnv({ CLI_VERSION_STRICTNESS: 'error' })
+      )
+
+      expect(runPolicy.cliVersionStrictness).toBe('off')
+    })
+
+    it('falls back to the default on an unrecognized strictness, rather than refusing the run', () => {
+      const { runPolicy } = resolveImplementConfig(
+        baseInput(),
+        baseEnv({ CLI_VERSION_STRICTNESS: 'strict' })
+      )
+
+      expect(runPolicy.cliVersionStrictness).toBe(
+        DEFAULT_CLI_VERSION_STRICTNESS
+      )
     })
 
     it('reads an empty REQUIRED_ENV_VARS as requiring nothing', () => {

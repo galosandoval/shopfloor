@@ -1,9 +1,11 @@
 /**
  * The orchestrator's own wiring: that the budgets it resolves reach the spawn,
- * and that each guard's kill becomes the right failure. The resolvers are
- * tested pure elsewhere — a suite that stops there stays green while a budget
- * is never read by a run, which is the coverage gap shopfloor#4 exists to
- * close, so everything here goes through `runImplementAgent` itself.
+ * that each guard's kill becomes the right failure, and that the pre-spawn
+ * preconditions (shopfloor#5) refuse before any tokens are spent. The
+ * resolvers are tested pure elsewhere — a suite that stops there stays green
+ * while a budget is never read by a run, which is the coverage gap
+ * shopfloor#4 exists to close, so everything here goes through
+ * `runImplementAgent` itself.
  */
 
 import { runImplementAgent } from './implement'
@@ -21,11 +23,19 @@ vi.mock('./spawn-claude', async (importOriginal) => ({
 vi.mock('../observability/transcript', () => ({
   captureTranscript: vi.fn(() => true)
 }))
+// Hoisted so the two stubs a test reprograms are held as plain `vi.fn()`s:
+// both built-ins are heavily overloaded, and addressing them through
+// `vi.mocked` would mean casting past an overload set to stub one return.
+const { execFileSyncMock, statSyncMock } = vi.hoisted(() => ({
+  execFileSyncMock: vi.fn(),
+  statSyncMock: vi.fn()
+}))
+
 vi.mock('node:child_process', () => ({
   // The post-run commit count; a fresh mock per test overrides it where the
   // number is what's under test.
   execSync: vi.fn(() => '2\n'),
-  execFileSync: vi.fn(() => ''),
+  execFileSync: execFileSyncMock,
   spawn: vi.fn()
 }))
 vi.mock('node:fs', () => ({
@@ -33,10 +43,28 @@ vi.mock('node:fs', () => ({
   // has no copy of, and the PR description is written by the run itself.
   existsSync: vi.fn(() => true),
   readFileSync: vi.fn(() => 'an agent-written PR description'),
-  writeFileSync: vi.fn()
+  writeFileSync: vi.fn(),
+  // A stated `standardsDir` resolves to a real directory unless a test says
+  // otherwise.
+  statSync: statSyncMock
 }))
 
 const spawnClaudeMock = vi.mocked(spawnClaude)
+
+/** The version a probed `claude --version` reports, in the CLI's own format. */
+function runningCliVersion(version: string | undefined) {
+  execFileSyncMock.mockImplementation((file: string) =>
+    file === 'claude' && version ? `${version} (Claude Code)` : ''
+  )
+}
+
+/** A `standardsDir` that resolves to nothing, as a missing path or a file. */
+function standardsDirIs(kind: 'missing' | 'a file') {
+  statSyncMock.mockImplementation(() => {
+    if (kind === 'missing') throw new Error('ENOENT')
+    return { isDirectory: () => false }
+  })
+}
 
 function baseInput(
   overrides: Partial<RunImplementAgentConfig> = {}
@@ -69,6 +97,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(captureTranscript).mockReturnValue(true)
   spawnClaudeMock.mockResolvedValue(spawnResult())
+  // Implementations survive `clearAllMocks`, so every per-test override above
+  // is restored to the happy default here rather than leaking into the next.
+  runningCliVersion('2.1.220')
+  statSyncMock.mockImplementation(() => ({ isDirectory: () => true }))
 })
 
 describe('runImplementAgent guard wiring', () => {
@@ -102,6 +134,153 @@ describe('runImplementAgent guard wiring', () => {
   })
 })
 
+describe('runImplementAgent CLI-version precondition', () => {
+  let warn: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    warn.mockRestore()
+  })
+
+  it('records the running CLI version on the result', async () => {
+    runningCliVersion('2.1.220')
+
+    const result = await runImplementAgent(baseInput())
+
+    expect(result.cliVersion).toBe('2.1.220')
+  })
+
+  it('records nothing when the running version cannot be read', async () => {
+    runningCliVersion(undefined)
+
+    const result = await runImplementAgent(baseInput())
+
+    expect(result.cliVersion).toBeUndefined()
+  })
+
+  it('warns on a mismatch without blocking the run', async () => {
+    runningCliVersion('3.1.220')
+
+    const result = await runImplementAgent(
+      baseInput({ runPolicy: { cliVersion: '2.1.220' } })
+    )
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('3.1.220'))
+    expect(result.cliVersion).toBe('3.1.220')
+    expect(spawnClaudeMock).toHaveBeenCalled()
+  })
+
+  it('says nothing when the running version matches the pin', async () => {
+    runningCliVersion('2.1.220')
+
+    await runImplementAgent(baseInput({ runPolicy: { cliVersion: '2.1.208' } }))
+
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('says nothing when no version is pinned', async () => {
+    await runImplementAgent(baseInput())
+
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('fails before spawning under error strictness', async () => {
+    runningCliVersion('3.1.220')
+
+    await expect(
+      runImplementAgent(
+        baseInput({
+          runPolicy: { cliVersion: '2.1.220', cliVersionStrictness: 'error' }
+        })
+      )
+    ).rejects.toThrow(/3\.1\.220.*2\.1\.220/s)
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
+  })
+
+  it('runs unbothered under off strictness, even on a mismatch', async () => {
+    runningCliVersion('3.1.220')
+
+    await runImplementAgent(
+      baseInput({
+        runPolicy: { cliVersion: '2.1.220', cliVersionStrictness: 'off' }
+      })
+    )
+
+    expect(warn).not.toHaveBeenCalled()
+    expect(spawnClaudeMock).toHaveBeenCalled()
+  })
+
+  it('warns rather than going quiet when the pin itself is unreadable', async () => {
+    await runImplementAgent(
+      baseInput({
+        runPolicy: { cliVersion: 'latest', cliVersionStrictness: 'error' }
+      })
+    )
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('latest'))
+    expect(spawnClaudeMock).toHaveBeenCalled()
+  })
+
+  it.each([
+    ['a failed', undefined],
+    ['an unparseable', 'not a version']
+  ])(
+    'never blocks on %s claude --version, even under error strictness',
+    async (_name, version) => {
+      runningCliVersion(version)
+
+      await runImplementAgent(
+        baseInput({
+          runPolicy: { cliVersion: '2.1.220', cliVersionStrictness: 'error' }
+        })
+      )
+
+      expect(spawnClaudeMock).toHaveBeenCalled()
+    }
+  )
+})
+
+describe('runImplementAgent standards-directory precondition', () => {
+  it.each([['missing'], ['a file']] as const)(
+    'fails before spawning when the standards dir is %s, naming the path',
+    async (kind) => {
+      standardsDirIs(kind)
+
+      await expect(
+        runImplementAgent(baseInput({ standardsDir: '/tmp/skills/rules' }))
+      ).rejects.toThrow(/\/tmp\/skills\/rules/)
+      expect(spawnClaudeMock).not.toHaveBeenCalled()
+    }
+  )
+
+  it('skips the check silently when no standards dir is stated', async () => {
+    standardsDirIs('missing')
+
+    await runImplementAgent(baseInput())
+
+    expect(spawnClaudeMock).toHaveBeenCalled()
+  })
+
+  it('spawns when the standards dir resolves to a directory', async () => {
+    await runImplementAgent(baseInput({ standardsDir: '/tmp/skills/rules' }))
+
+    expect(spawnClaudeMock).toHaveBeenCalled()
+  })
+
+  it('resolves a relative standards dir against the run’s cwd, not this process’s', async () => {
+    // The agent reads the path from inside the run's checkout, so validating
+    // it anywhere else would pass or fail on a different directory entirely.
+    await runImplementAgent(
+      baseInput({ standardsDir: 'skills/rules', cwd: '/repo' })
+    )
+
+    expect(statSyncMock).toHaveBeenCalledWith('/repo/skills/rules')
+  })
+})
+
 describe('runImplementAgent guard failures', () => {
   const wallClockKill = { reason: 'wall-clock', budgetMs: 45 * 60_000 } as const
   const idleKill = { reason: 'idle', budgetMs: 15 * 60_000 } as const
@@ -124,23 +303,29 @@ describe('runImplementAgent guard failures', () => {
 
   it('carries the output tail into the failure, whichever guard tripped', async () => {
     spawnClaudeMock.mockResolvedValue(
-      spawnResult({ killedBy: wallClockKill, outputTail: 'the last thing it said' })
+      spawnResult({
+        killedBy: wallClockKill,
+        outputTail: 'the last thing it said'
+      })
     )
 
-    await expect(
-      runImplementAgent(baseInput())
-    ).rejects.toMatchObject({ outputTail: 'the last thing it said' })
+    await expect(runImplementAgent(baseInput())).rejects.toMatchObject({
+      outputTail: 'the last thing it said'
+    })
   })
 
   it.each([
     ['wall-clock', wallClockKill],
     ['idle', idleKill]
-  ])('still captures the transcript when the %s guard kills the run', async (_name, killedBy) => {
-    spawnClaudeMock.mockResolvedValue(spawnResult({ killedBy }))
+  ])(
+    'still captures the transcript when the %s guard kills the run',
+    async (_name, killedBy) => {
+      spawnClaudeMock.mockResolvedValue(spawnResult({ killedBy }))
 
-    await expect(runImplementAgent(baseInput())).rejects.toThrow()
-    expect(captureTranscript).toHaveBeenCalled()
-  })
+      await expect(runImplementAgent(baseInput())).rejects.toThrow()
+      expect(captureTranscript).toHaveBeenCalled()
+    }
+  )
 
   it('fails a wall-clock kill even when the agent had already committed', async () => {
     // Decided in shopfloor#4: unlike a missing PR description, a run the

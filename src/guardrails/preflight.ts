@@ -27,8 +27,7 @@ export interface PreflightInput {
 }
 
 export type PreflightVerdict =
-  | { refused: false }
-  | { refused: true; reason: string }
+  { refused: false } | { refused: true; reason: string }
 
 /** GitHub's issue-closing keywords (every accepted tense/plural form). */
 const CLOSING_KEYWORD =

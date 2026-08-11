@@ -21,11 +21,14 @@ import { describeRunawayKill, spawnClaude } from './spawn-claude'
 import {
   findMissingEnvVars,
   resolveIdleMs,
-  resolveWallClockMs
+  resolveWallClockMs,
+  type ResolvedRunPolicy
 } from '../guardrails/run-policy'
+import { checkCliVersion, parseCliVersion } from '../guardrails/cli-version'
 import { ImplementAgentError } from './implement-error'
 import {
   resolveImplementConfig,
+  type ResolvedImplementConfig,
   type RunImplementAgentConfig
 } from './config'
 
@@ -37,13 +40,20 @@ export interface RunImplementAgentResult {
   transcriptCaptured: boolean
   /** Whether the agent wrote its own PR description, or this run fell back to one. */
   prDescription: 'agent' | 'fallback'
+  /**
+   * The Claude Code CLI version this run actually spawned, per `claude
+   * --version`. Undefined when that probe failed or said something
+   * unrecognized — recorded so a run's output names which CLI produced it,
+   * independently of whether a pin was stated to compare against.
+   */
+  cliVersion?: string
 }
 
 /**
  * Runs the agent once: resolves the caller's configuration (filling anything
  * unstated from the environment, a `git` / `gh` probe, or a package default),
- * validates the caller's app-specific required env vars, spawns the Claude
- * Code CLI with both runaway guards armed, captures the session transcript, and
+ * settles every pre-spawn precondition (see {@link verifyPreconditions}),
+ * spawns the Claude Code CLI with both runaway guards armed, captures the session transcript, and
  * verifies the run actually committed. Throws {@link ImplementAgentError} on
  * any failure — callers own translating that into their own CI-glue (writing a
  * failure-reason file, exiting non-zero).
@@ -55,15 +65,7 @@ export async function runImplementAgent(
   const config = resolveImplementConfig(input, env)
   const cwd = config.cwd ?? process.cwd()
 
-  // Validate the whole contract-required env up front, before the Claude CLI
-  // spawns, so a missing var fails immediately naming every offender instead
-  // of spending tokens on a doomed run.
-  const missingEnv = findMissingEnvVars(config.runPolicy.requiredEnvVars, env)
-  if (missingEnv.length > 0) {
-    throw new ImplementAgentError(
-      `Missing required env var(s): ${missingEnv.join(', ')}`
-    )
-  }
+  const cliVersion = verifyPreconditions(config, env, cwd)
 
   const branch = config.branch ?? probeBranch(cwd)
   const issueTitle =
@@ -136,10 +138,15 @@ export async function runImplementAgent(
 
   // The agent commits its own TDD work; a zero-commit run is a failure, not a PR.
   const commitsAhead = Number(
-    execSync('git rev-list --count main..HEAD', { encoding: 'utf8', cwd }).trim()
+    execSync('git rev-list --count main..HEAD', {
+      encoding: 'utf8',
+      cwd
+    }).trim()
   )
   if (!Number.isFinite(commitsAhead) || commitsAhead === 0) {
-    throw new ImplementAgentError('Agent finished but made no commits on the branch.')
+    throw new ImplementAgentError(
+      'Agent finished but made no commits on the branch.'
+    )
   }
 
   // Without a description the PR body would be just `Closes #N`. Fall back
@@ -153,7 +160,91 @@ export async function runImplementAgent(
     )
   }
 
-  return { branch, commitsAhead, transcriptCaptured, prDescription }
+  return { branch, commitsAhead, transcriptCaptured, prDescription, cliVersion }
+}
+
+/**
+ * Everything that must hold before the CLI spawns, so a misconfigured run
+ * fails immediately instead of spending tokens on a doomed one: the caller's
+ * required env vars, the standards path, and the CLI version. Returns the
+ * running CLI version for the run result — the one thing these checks produce
+ * rather than merely permit.
+ *
+ * They differ in how hard they push back, and each difference is deliberate: a
+ * missing env var or a dead standards path is a misconfiguration that changes
+ * what the run produces, while a drifted CLI is a diagnostic that only
+ * sometimes matters. See {@link requireStandardsDir} and `checkCliVersion`.
+ */
+function verifyPreconditions(
+  config: ResolvedImplementConfig,
+  env: Record<string, string | undefined>,
+  cwd: string
+): string | undefined {
+  // Validate the whole contract-required env up front, so a missing var fails
+  // immediately naming every offender.
+  const missingEnv = findMissingEnvVars(config.runPolicy.requiredEnvVars, env)
+  if (missingEnv.length > 0) {
+    throw new ImplementAgentError(
+      `Missing required env var(s): ${missingEnv.join(', ')}`
+    )
+  }
+
+  requireStandardsDir(config.standardsDir, cwd)
+  return checkRunningCliVersion(config.runPolicy, cwd)
+}
+
+/**
+ * Refuse a non-empty `standardsDir` that resolves to nothing, naming the path.
+ * An empty one still means "deliberately skip", unchanged — the prompt
+ * template's own text handles that. This is stricter than the CLI-version
+ * warn on purpose: a wrong path is indistinguishable from a right one in the
+ * rendered prompt, so the run quietly instructs the agent to read nothing and
+ * produces work against no standards at all.
+ */
+function requireStandardsDir(standardsDir: string, cwd: string): void {
+  if (!standardsDir) return
+
+  let isDirectory = false
+  try {
+    // Resolved against the run's cwd, which is where the agent itself reads
+    // the path from: a relative `standardsDir` validated against this
+    // process's cwd would pass or fail on the wrong directory entirely.
+    isDirectory = fs.statSync(path.resolve(cwd, standardsDir)).isDirectory()
+  } catch {
+    // Unreadable and absent are the same misconfiguration to a run.
+  }
+  if (isDirectory) return
+
+  throw new ImplementAgentError(
+    `Standards directory does not resolve to a directory: ${standardsDir} — ` +
+      'point `standardsDir` / STANDARDS_DIR at a directory that exists, or ' +
+      'leave it unset to skip the standards step deliberately.'
+  )
+}
+
+/**
+ * The running CLI version, having compared it against the policy's pin. Throws
+ * only under `'error'` strictness; the default warns and lets the run proceed.
+ * Returns the version for the run result either way, including when no pin was
+ * stated to compare against.
+ */
+function checkRunningCliVersion(
+  runPolicy: Pick<ResolvedRunPolicy, 'cliVersion' | 'cliVersionStrictness'>,
+  cwd: string
+): string | undefined {
+  const running = probe('claude', ['--version'], cwd)
+  const verdict = checkCliVersion({
+    running,
+    pinned: runPolicy.cliVersion,
+    strictness: runPolicy.cliVersionStrictness
+  })
+
+  if (verdict.blocking) throw new ImplementAgentError(verdict.message)
+  // Both a mismatch and an unusable pin say something worth hearing; a match,
+  // an absent pin, and an unreadable CLI say nothing.
+  if (verdict.message) console.warn(verdict.message)
+
+  return parseCliVersion(running)
 }
 
 /**
@@ -194,11 +285,7 @@ function resolveBundleDir(): string | undefined {
  * missing, fails, or says nothing. Probes are best-effort by design: the
  * caller turns an unanswered probe into an error naming what to state instead.
  */
-function probe(
-  file: string,
-  args: string[],
-  cwd: string
-): string | undefined {
+function probe(file: string, args: string[], cwd: string): string | undefined {
   try {
     // execFile, not a shell string: an issue number off `argv` is caller input
     // and must never be word-split or interpolated into a command line.
