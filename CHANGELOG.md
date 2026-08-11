@@ -1,5 +1,11 @@
 # @galosandoval/shopfloor
 
+## 0.6.0
+
+### Minor Changes
+
+- [#21](https://github.com/galosandoval/shopfloor/pull/21) [`4d77ee3`](https://github.com/galosandoval/shopfloor/commit/4d77ee3fb3928da678b090ca9f4721fc27ab1dcd) Thanks [@galosandoval](https://github.com/galosandoval)! - add CLAUDE.md and CONTEXT.md for project documentation; establish testing conventions in docs/testing.md
+
 ## 0.5.0
 
 ### Minor Changes
