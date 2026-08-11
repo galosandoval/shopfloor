@@ -125,6 +125,7 @@ export function resolveWallClockMs(
   env: Record<string, string | undefined>
 ): number | undefined {
   const minutes =
-    parsePositiveNumber(env[WALL_CLOCK_MINUTES_ENV_VAR]) ?? config.wallClockMinutes
+    parsePositiveNumber(env[WALL_CLOCK_MINUTES_ENV_VAR]) ??
+    config.wallClockMinutes
   return minutes === undefined ? undefined : minutes * 60_000
 }

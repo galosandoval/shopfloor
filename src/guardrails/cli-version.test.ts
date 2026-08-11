@@ -42,9 +42,12 @@ describe('parseCliVersionStrictness', () => {
     ['unset', undefined],
     ['empty', ''],
     ['an unrecognized level', 'strict']
-  ])('returns undefined for %s, so the caller keeps its default', (_name, raw) => {
-    expect(parseCliVersionStrictness(raw)).toBeUndefined()
-  })
+  ])(
+    'returns undefined for %s, so the caller keeps its default',
+    (_name, raw) => {
+      expect(parseCliVersionStrictness(raw)).toBeUndefined()
+    }
+  )
 })
 
 describe('checkCliVersion', () => {
@@ -52,13 +55,21 @@ describe('checkCliVersion', () => {
 
   it('matches an identical version', () => {
     expect(
-      checkCliVersion({ running: '2.1.220 (Claude Code)', pinned: '2.1.220', strictness })
+      checkCliVersion({
+        running: '2.1.220 (Claude Code)',
+        pinned: '2.1.220',
+        strictness
+      })
     ).toEqual({ status: 'match', blocking: false })
   })
 
   it('matches across a patch difference, which cannot move the CLI surface this harness reads', () => {
     expect(
-      checkCliVersion({ running: '2.1.220 (Claude Code)', pinned: '2.1.208', strictness })
+      checkCliVersion({
+        running: '2.1.220 (Claude Code)',
+        pinned: '2.1.208',
+        strictness
+      })
     ).toMatchObject({ status: 'match' })
   })
 
@@ -66,7 +77,9 @@ describe('checkCliVersion', () => {
     ['a minor difference', '2.2.0'],
     ['a major difference', '3.1.220']
   ])('mismatches on %s', (_name, running) => {
-    expect(checkCliVersion({ running, pinned: '2.1.220', strictness })).toMatchObject({
+    expect(
+      checkCliVersion({ running, pinned: '2.1.220', strictness })
+    ).toMatchObject({
       status: 'mismatch'
     })
   })
@@ -91,19 +104,31 @@ describe('checkCliVersion', () => {
 
   it('blocks a mismatch under error strictness', () => {
     expect(
-      checkCliVersion({ running: '3.1.220', pinned: '2.1.220', strictness: 'error' })
+      checkCliVersion({
+        running: '3.1.220',
+        pinned: '2.1.220',
+        strictness: 'error'
+      })
     ).toMatchObject({ status: 'mismatch', blocking: true })
   })
 
   it('compares nothing under off strictness, even on a mismatch', () => {
     expect(
-      checkCliVersion({ running: '3.1.220', pinned: '2.1.220', strictness: 'off' })
+      checkCliVersion({
+        running: '3.1.220',
+        pinned: '2.1.220',
+        strictness: 'off'
+      })
     ).toEqual({ status: 'unchecked', blocking: false })
   })
 
   it('records without comparing when no version is pinned', () => {
     expect(
-      checkCliVersion({ running: '2.1.220', pinned: undefined, strictness: 'error' })
+      checkCliVersion({
+        running: '2.1.220',
+        pinned: undefined,
+        strictness: 'error'
+      })
     ).toEqual({ status: 'unchecked', blocking: false })
   })
 
@@ -118,7 +143,11 @@ describe('checkCliVersion', () => {
 
   it('never blocks on an unparseable pin, which is the caller’s typo, not a drifted CLI', () => {
     expect(
-      checkCliVersion({ running: '2.1.220', pinned: 'latest', strictness: 'error' })
+      checkCliVersion({
+        running: '2.1.220',
+        pinned: 'latest',
+        strictness: 'error'
+      })
     ).toMatchObject({ status: 'unchecked', blocking: false })
   })
 
@@ -139,7 +168,11 @@ describe('checkCliVersion', () => {
 
   it('says nothing when the pin is unreadable but the check was switched off', () => {
     expect(
-      checkCliVersion({ running: '2.1.220', pinned: 'latest', strictness: 'off' })
+      checkCliVersion({
+        running: '2.1.220',
+        pinned: 'latest',
+        strictness: 'off'
+      })
     ).toEqual({ status: 'unchecked', blocking: false })
   })
 })

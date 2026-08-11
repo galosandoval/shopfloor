@@ -173,7 +173,9 @@ function resolveRunPolicy(
   const resolved: ResolvedRunPolicy = {
     model: stated.model ?? env.MODEL ?? DEFAULT_RUN_POLICY.model,
     maxTurns:
-      stated.maxTurns ?? parsePositiveNumber(env.MAX_TURNS) ?? DEFAULT_RUN_POLICY.maxTurns,
+      stated.maxTurns ??
+      parsePositiveNumber(env.MAX_TURNS) ??
+      DEFAULT_RUN_POLICY.maxTurns,
     idleMinutes:
       stated.idleMinutes ??
       parsePositiveNumber(env.IDLE_MINUTES) ??
@@ -198,7 +200,8 @@ function resolveRunPolicy(
 
   const wallClockMinutes =
     stated.wallClockMinutes ?? parsePositiveNumber(env.WALL_CLOCK_MINUTES)
-  if (wallClockMinutes !== undefined) resolved.wallClockMinutes = wallClockMinutes
+  if (wallClockMinutes !== undefined)
+    resolved.wallClockMinutes = wallClockMinutes
 
   return resolved
 }

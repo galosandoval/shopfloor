@@ -65,9 +65,12 @@ describe('spawnClaude runaway guards', () => {
     })
 
     it('never fires when no wall-clock budget is stated', async () => {
-      const result = await run(`${CHATTY}; setTimeout(() => process.exit(0), 80)`, {
-        idleMs: 60_000
-      })
+      const result = await run(
+        `${CHATTY}; setTimeout(() => process.exit(0), 80)`,
+        {
+          idleMs: 60_000
+        }
+      )
 
       expect(result.killedBy).toBeNull()
       expect(result.exitCode).toBe(0)
@@ -123,9 +126,12 @@ describe('spawnClaude runaway guards', () => {
     })
 
     it('is held off by output, however long the run goes', async () => {
-      const result = await run(`${CHATTY}; setTimeout(() => process.exit(0), 80)`, {
-        idleMs: 40
-      })
+      const result = await run(
+        `${CHATTY}; setTimeout(() => process.exit(0), 80)`,
+        {
+          idleMs: 40
+        }
+      )
 
       expect(result.killedBy).toBeNull()
     })
@@ -163,8 +169,8 @@ describe('describeRunawayKill', () => {
   })
 
   it('reports a sub-minute budget in seconds rather than as zero minutes', () => {
-    expect(describeRunawayKill({ reason: 'wall-clock', budgetMs: 30_000 })).toContain(
-      '30 second(s)'
-    )
+    expect(
+      describeRunawayKill({ reason: 'wall-clock', budgetMs: 30_000 })
+    ).toContain('30 second(s)')
   })
 })

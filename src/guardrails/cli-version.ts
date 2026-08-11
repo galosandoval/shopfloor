@@ -82,7 +82,9 @@ export function parseCliVersionStrictness(
  * unreadable version is the harness's own uncertainty, and refusing a run over
  * it would turn a missing diagnostic into an outage.
  */
-export function checkCliVersion(input: CliVersionCheckInput): CliVersionVerdict {
+export function checkCliVersion(
+  input: CliVersionCheckInput
+): CliVersionVerdict {
   const unchecked: CliVersionVerdict = { status: 'unchecked', blocking: false }
   if (input.strictness === 'off') return unchecked
 
@@ -105,7 +107,8 @@ export function checkCliVersion(input: CliVersionCheckInput): CliVersionVerdict 
   }
   if (!pinned) return unchecked
 
-  if (sameMajorMinor(running, pinned)) return { status: 'match', blocking: false }
+  if (sameMajorMinor(running, pinned))
+    return { status: 'match', blocking: false }
 
   return {
     status: 'mismatch',

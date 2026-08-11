@@ -1,0 +1,13 @@
+# Build output / generated
+dist/
+coverage/
+tsconfig.tsbuildinfo
+
+# Dependencies
+node_modules/
+
+# Lockfiles
+package-lock.json
+
+# Changesets generated
+CHANGELOG.md

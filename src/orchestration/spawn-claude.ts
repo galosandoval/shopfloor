@@ -93,10 +93,14 @@ export async function spawnClaude(
 
   try {
     const exitCode = await new Promise<number>((resolve, reject) => {
-      const child = spawn(opts.command ?? 'claude', [...opts.args, opts.prompt], {
-        env: opts.env,
-        cwd: opts.cwd
-      })
+      const child = spawn(
+        opts.command ?? 'claude',
+        [...opts.args, opts.prompt],
+        {
+          env: opts.env,
+          cwd: opts.cwd
+        }
+      )
 
       const startedAt = Date.now()
       let lastActivity = startedAt

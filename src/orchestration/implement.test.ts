@@ -227,20 +227,20 @@ describe('runImplementAgent CLI-version precondition', () => {
   it.each([
     ['a failed', undefined],
     ['an unparseable', 'not a version']
-  ])('never blocks on %s claude --version, even under error strictness', async (
-    _name,
-    version
-  ) => {
-    runningCliVersion(version)
+  ])(
+    'never blocks on %s claude --version, even under error strictness',
+    async (_name, version) => {
+      runningCliVersion(version)
 
-    await runImplementAgent(
-      baseInput({
-        runPolicy: { cliVersion: '2.1.220', cliVersionStrictness: 'error' }
-      })
-    )
+      await runImplementAgent(
+        baseInput({
+          runPolicy: { cliVersion: '2.1.220', cliVersionStrictness: 'error' }
+        })
+      )
 
-    expect(spawnClaudeMock).toHaveBeenCalled()
-  })
+      expect(spawnClaudeMock).toHaveBeenCalled()
+    }
+  )
 })
 
 describe('runImplementAgent standards-directory precondition', () => {
@@ -303,23 +303,29 @@ describe('runImplementAgent guard failures', () => {
 
   it('carries the output tail into the failure, whichever guard tripped', async () => {
     spawnClaudeMock.mockResolvedValue(
-      spawnResult({ killedBy: wallClockKill, outputTail: 'the last thing it said' })
+      spawnResult({
+        killedBy: wallClockKill,
+        outputTail: 'the last thing it said'
+      })
     )
 
-    await expect(
-      runImplementAgent(baseInput())
-    ).rejects.toMatchObject({ outputTail: 'the last thing it said' })
+    await expect(runImplementAgent(baseInput())).rejects.toMatchObject({
+      outputTail: 'the last thing it said'
+    })
   })
 
   it.each([
     ['wall-clock', wallClockKill],
     ['idle', idleKill]
-  ])('still captures the transcript when the %s guard kills the run', async (_name, killedBy) => {
-    spawnClaudeMock.mockResolvedValue(spawnResult({ killedBy }))
+  ])(
+    'still captures the transcript when the %s guard kills the run',
+    async (_name, killedBy) => {
+      spawnClaudeMock.mockResolvedValue(spawnResult({ killedBy }))
 
-    await expect(runImplementAgent(baseInput())).rejects.toThrow()
-    expect(captureTranscript).toHaveBeenCalled()
-  })
+      await expect(runImplementAgent(baseInput())).rejects.toThrow()
+      expect(captureTranscript).toHaveBeenCalled()
+    }
+  )
 
   it('fails a wall-clock kill even when the agent had already committed', async () => {
     // Decided in shopfloor#4: unlike a missing PR description, a run the

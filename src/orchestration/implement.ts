@@ -138,10 +138,15 @@ export async function runImplementAgent(
 
   // The agent commits its own TDD work; a zero-commit run is a failure, not a PR.
   const commitsAhead = Number(
-    execSync('git rev-list --count main..HEAD', { encoding: 'utf8', cwd }).trim()
+    execSync('git rev-list --count main..HEAD', {
+      encoding: 'utf8',
+      cwd
+    }).trim()
   )
   if (!Number.isFinite(commitsAhead) || commitsAhead === 0) {
-    throw new ImplementAgentError('Agent finished but made no commits on the branch.')
+    throw new ImplementAgentError(
+      'Agent finished but made no commits on the branch.'
+    )
   }
 
   // Without a description the PR body would be just `Closes #N`. Fall back
@@ -280,11 +285,7 @@ function resolveBundleDir(): string | undefined {
  * missing, fails, or says nothing. Probes are best-effort by design: the
  * caller turns an unanswered probe into an error naming what to state instead.
  */
-function probe(
-  file: string,
-  args: string[],
-  cwd: string
-): string | undefined {
+function probe(file: string, args: string[], cwd: string): string | undefined {
   try {
     // execFile, not a shell string: an issue number off `argv` is caller input
     // and must never be word-split or interpolated into a command line.

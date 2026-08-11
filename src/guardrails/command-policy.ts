@@ -133,9 +133,7 @@ function splitSegments(tokens: Token[]): Token[][] {
 }
 
 function classifySegment(tokens: Token[]): CommandVerdict {
-  return (
-    classifySchemaPush(tokens) ?? classifyGit(tokens) ?? ALLOW
-  )
+  return classifySchemaPush(tokens) ?? classifyGit(tokens) ?? ALLOW
 }
 
 /**

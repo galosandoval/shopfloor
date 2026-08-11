@@ -88,11 +88,15 @@ describe('run-policy contract', () => {
     })
 
     it('falls back to the package default idle budget when the config omits one', () => {
-      expect(resolveIdleMs({}, {})).toBe(DEFAULT_RUN_POLICY.idleMinutes * 60_000)
+      expect(resolveIdleMs({}, {})).toBe(
+        DEFAULT_RUN_POLICY.idleMinutes * 60_000
+      )
     })
 
     it('still honors the idle override when the config omits a budget', () => {
-      expect(resolveIdleMs({}, { [IDLE_MINUTES_ENV_VAR]: '4' })).toBe(4 * 60_000)
+      expect(resolveIdleMs({}, { [IDLE_MINUTES_ENV_VAR]: '4' })).toBe(
+        4 * 60_000
+      )
     })
 
     it('reports no wall-clock budget when neither config nor env sets one', () => {
