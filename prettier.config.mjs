@@ -2,7 +2,6 @@
 const config = {
   semi: false,
   singleQuote: true,
-  jsxSingleQuote: true,
   trailingComma: 'none'
 }
 
