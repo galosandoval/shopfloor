@@ -105,6 +105,35 @@ describe('prepareClaudeInvocation', () => {
       expect(args).not.toContain('--output-format')
     })
 
+    it('wires the command guard as a PreToolUse hook over Bash when a hook script is given', () => {
+      const { args } = prepareClaudeInvocation(
+        baseInput({ commandGuardHookPath: '/pkg/dist/command-guard-hook.js' })
+      )
+      const settings = JSON.parse(args[args.indexOf('--settings') + 1])
+
+      expect(settings).toEqual({
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: 'Bash',
+              hooks: [
+                {
+                  type: 'command',
+                  command: 'node "/pkg/dist/command-guard-hook.js"'
+                }
+              ]
+            }
+          ]
+        }
+      })
+    })
+
+    it('leaves the settings flag off when no hook script is given', () => {
+      const { args } = prepareClaudeInvocation(baseInput())
+
+      expect(args).not.toContain('--settings')
+    })
+
     it('appends the streaming flags when streamOutput is set', () => {
       const { args } = prepareClaudeInvocation(
         baseInput({ streamOutput: true })

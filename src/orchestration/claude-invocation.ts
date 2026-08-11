@@ -23,6 +23,12 @@ export interface ClaudeInvocationInput {
   model?: string
   /** Fast-loop backstop cap on agent turns — from the caller's `RunPolicyConfig`. */
   maxTurns: number
+  /** Absolute path to the command-guard hook script (shopfloor#2). Given, the
+   *  invocation carries a `--settings` payload wiring it as a `PreToolUse`
+   *  hook over `Bash`, so the run's forbidden operations are refused at
+   *  tool-call time rather than caught after the fact. Omitted leaves the
+   *  session on the ambient settings alone. */
+  commandGuardHookPath?: string
   /** Streams incrementally instead of staying silent until the whole session
    *  ends: a local idle-timeout needs that heartbeat to have any signal to
    *  watch. Omitted/false keeps the arg vector byte-identical to before this
@@ -72,6 +78,14 @@ export function prepareClaudeInvocation(
     '--dangerously-skip-permissions'
   ]
 
+  if (input.commandGuardHookPath) {
+    // Inline JSON rather than a settings file: `--settings` accepts either,
+    // and inline keeps this module pure — nothing to write, nothing to clean
+    // up. Session-scoped, so the guard never leaks into a human's own
+    // settings for the same checkout.
+    args.push('--settings', guardSettingsJson(input.commandGuardHookPath))
+  }
+
   if (input.streamOutput) {
     args.push(
       '--output-format',
@@ -82,4 +96,23 @@ export function prepareClaudeInvocation(
   }
 
   return { args, prompt }
+}
+
+/**
+ * The `--settings` payload that arms the command guard: a `PreToolUse` hook on
+ * `Bash` — the only tool that runs shell commands, and so the only one the
+ * policy can classify. The hook script is quoted because it is a path being
+ * spliced into a shell command line.
+ */
+function guardSettingsJson(hookScriptPath: string): string {
+  return JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [{ type: 'command', command: `node "${hookScriptPath}"` }]
+        }
+      ]
+    }
+  })
 }

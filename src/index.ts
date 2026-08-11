@@ -34,6 +34,12 @@ export {
 } from './guardrails/run-preflight'
 
 export {
+  classifyCommand,
+  type BlockedVerdict,
+  type CommandVerdict
+} from './guardrails/command-policy'
+
+export {
   buildVerifyComment,
   type VerifyCommentInput
 } from './guardrails/verify-comment'

@@ -154,6 +154,48 @@ if (verdict.refused) {
 `evaluatePreflight` is the pure decision function underneath, if you already
 have the sub-issue count / parent number / linking PRs gathered another way.
 
+### Command guard
+
+Three operations an autonomous run must never perform — pushing a Prisma
+schema straight at the database instead of writing a migration, force-pushing,
+and amending — are blocked at tool-call time rather than asked for in the
+prompt. `runImplementAgent` arms this automatically: the invocation carries a
+`--settings` payload wiring a `PreToolUse` hook over `Bash` at the shipped
+hook script, and a matching command exits `2` with the reason and the
+sanctioned alternative on stderr, which the CLI feeds back to the agent as a
+refusal. It fires under `--dangerously-skip-permissions` too — that flag skips
+the human prompt, not the hooks.
+
+Nothing to configure, and nothing leaks into a human's own settings for the
+same checkout: the payload is session-scoped, passed inline on the command
+line. Prompts still say *why* the rules exist; enforcement no longer depends
+on the model remembering them.
+
+`classifyCommand` is the pure decision function underneath — a command string
+in, `{ decision: 'allow' }` or `{ decision: 'block', rule, reason,
+alternative }` out:
+
+```ts
+import { classifyCommand } from '@galosandoval/shopfloor'
+
+classifyCommand('bunx prisma migrate dev --name add_pantry') // { decision: 'allow' }
+classifyCommand('git push --force origin main').decision // 'block'
+```
+
+It reads the command as a quote-aware token stream and checks every segment of
+a `&&` / `||` / `;` / `|` chain, so flag order, short flags (`-fu`),
+package-runner prefixes, leading-`+` refspecs (`git push origin +main`), and
+chained commands all classify the same; a forbidden flag inside a quoted
+string is data (a commit message mentioning `--amend` commits fine). The rule
+set is deliberately fixed and small: it is what this harness's own loop
+forbids, not a general shell allowlist.
+
+`runImplementAgent` **refuses to start** if it can't find the hook script
+beside its own bundle — a broken install fails the run rather than quietly
+running it unguarded. The hook itself fails the other way on purpose: input it
+can't read or classify exits 0, so the guard never takes a run down over a
+command it has no opinion about.
+
 ### Verify-comment posting
 
 Post the agent's verify-phase report and any committed screenshots back to
@@ -189,13 +231,15 @@ or `review` module has an obvious home:
   `resolveImplementConfig` (pure configuration resolution), and
   `prepareClaudeInvocation` (pure CLI-invocation assembly).
 - `src/guardrails/` — the run-policy contract (idle/wall-clock/max-turns
-  resolvers), preflight refusal, and verify-comment posting (a feedback-loop
-  guardrail: posting proof back to the PR).
+  resolvers), preflight refusal, the command policy and its `PreToolUse` hook
+  script, and verify-comment posting (a feedback-loop guardrail: posting proof
+  back to the PR).
 - `src/observability/` — session transcript capture, for CI-artifact upload.
 
 The package exports the four verbs (`runImplementAgent`, `runPreflight`,
-`postVerifyComment`, plus `ImplementAgentError`), the two documented pure
-escape hatches (`evaluatePreflight`, `buildVerifyComment`), `DEFAULT_RUN_POLICY`,
+`postVerifyComment`, plus `ImplementAgentError`), the three documented pure
+escape hatches (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`),
+`DEFAULT_RUN_POLICY`,
 and the input/result types. The resolvers, the invocation assembler, and the
 transcript helpers are internals — import from source if you're vendoring, but
 they aren't API.
@@ -203,8 +247,9 @@ they aren't API.
 ## Tests vs. evals
 
 This package has **tests**: unit coverage on every pure function
-(`evaluatePreflight`, `buildVerifyComment`, `resolveImplementConfig`,
-`prepareClaudeInvocation`, the run-policy resolvers, transcript capture) that
+(`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`,
+`resolveImplementConfig`, `prepareClaudeInvocation`, the run-policy resolvers,
+transcript capture) that
 asserts on inputs/outputs, no IO mocking. It does **not** have **evals** — no scored suite over labeled
 trajectories or an LM-judge check of whether an actual agent run produced a
 *good* implementation. The `implement` phase's best-effort Playwright verify

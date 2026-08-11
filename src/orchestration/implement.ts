@@ -11,7 +11,9 @@
  */
 
 import * as fs from 'node:fs'
+import * as path from 'node:path'
 import { execFileSync, execSync, spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { captureTranscript } from '../observability/transcript'
 import { prepareClaudeInvocation } from './claude-invocation'
 import { findMissingEnvVars, resolveIdleMs } from '../guardrails/run-policy'
@@ -72,6 +74,7 @@ export async function runImplementAgent(
     screenshotsDir: config.screenshotsDir,
     model: config.runPolicy.model,
     maxTurns: config.runPolicy.maxTurns,
+    commandGuardHookPath: resolveCommandGuardHookPath(),
     // Always stream: the idle guard below watches the CLI's output for a
     // heartbeat, and `--print` text stays silent until the session ends.
     streamOutput: true
@@ -140,6 +143,39 @@ export async function runImplementAgent(
   }
 
   return { branch, commitsAhead, transcriptCaptured, prDescription }
+}
+
+/**
+ * Absolute path to the built command-guard hook script, which ships beside
+ * this bundle. Throws when it can't be found: an unarmed guardrail is worse
+ * than a refused run, because the run it would have guarded is autonomous and
+ * the violation it would have blocked is only noticed once it has landed. The
+ * only way to hit this is a broken install or a consumer importing this module
+ * from source instead of from `dist/`.
+ */
+function resolveCommandGuardHookPath(): string {
+  const bundleDir = resolveBundleDir()
+  const hookPath = bundleDir && path.join(bundleDir, 'command-guard-hook.js')
+  if (hookPath && fs.existsSync(hookPath)) return hookPath
+
+  throw new ImplementAgentError(
+    `Command-guard hook script not found at ${hookPath ?? '(unresolvable)'} — ` +
+      'refusing to run unguarded against schema pushes, force-pushes, and ' +
+      'amends. Reinstall @galosandoval/shopfloor, or import it from dist/.'
+  )
+}
+
+/**
+ * The directory this module was loaded from, in either module format: the ESM
+ * build has `import.meta.url`, while the CJS build's bundler shims that away
+ * and has `__filename` instead. Undefined if neither answers, which the caller
+ * treats as "no hook to point at".
+ */
+function resolveBundleDir(): string | undefined {
+  const moduleUrl = import.meta.url as string | undefined
+  if (moduleUrl) return path.dirname(fileURLToPath(moduleUrl))
+  if (typeof __filename === 'string') return path.dirname(__filename)
+  return undefined
 }
 
 /**
