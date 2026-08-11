@@ -8,14 +8,11 @@
  * `runImplementAgent` itself.
  */
 
-import * as fs from 'node:fs'
-import { execFileSync } from 'node:child_process'
 import { runImplementAgent } from './implement'
 import { spawnClaude, type SpawnClaudeResult } from './spawn-claude'
 import { captureTranscript } from '../observability/transcript'
 import type { RunImplementAgentConfig } from './config'
 import { WALL_CLOCK_MINUTES_ENV_VAR } from '../guardrails/run-policy'
-import type { Mock } from 'vitest'
 
 // Only the subprocess is stubbed; `describeRunawayKill` is pure, and a stubbed
 // one would let these assert a failure message no run would ever print.
@@ -26,11 +23,19 @@ vi.mock('./spawn-claude', async (importOriginal) => ({
 vi.mock('../observability/transcript', () => ({
   captureTranscript: vi.fn(() => true)
 }))
+// Hoisted so the two stubs a test reprograms are held as plain `vi.fn()`s:
+// both built-ins are heavily overloaded, and addressing them through
+// `vi.mocked` would mean casting past an overload set to stub one return.
+const { execFileSyncMock, statSyncMock } = vi.hoisted(() => ({
+  execFileSyncMock: vi.fn(),
+  statSyncMock: vi.fn()
+}))
+
 vi.mock('node:child_process', () => ({
   // The post-run commit count; a fresh mock per test overrides it where the
   // number is what's under test.
   execSync: vi.fn(() => '2\n'),
-  execFileSync: vi.fn(() => ''),
+  execFileSync: execFileSyncMock,
   spawn: vi.fn()
 }))
 vi.mock('node:fs', () => ({
@@ -41,15 +46,10 @@ vi.mock('node:fs', () => ({
   writeFileSync: vi.fn(),
   // A stated `standardsDir` resolves to a real directory unless a test says
   // otherwise.
-  statSync: vi.fn(() => ({ isDirectory: () => true }))
+  statSync: statSyncMock
 }))
 
 const spawnClaudeMock = vi.mocked(spawnClaude)
-
-// Both node built-ins are overloaded, and neither overload set is worth
-// satisfying to stub one return value — the mocks are addressed untyped.
-const execFileSyncMock = vi.mocked(execFileSync) as unknown as Mock
-const statSyncMock = vi.mocked(fs.statSync) as unknown as Mock
 
 /** The version a probed `claude --version` reports, in the CLI's own format. */
 function runningCliVersion(version: string | undefined) {

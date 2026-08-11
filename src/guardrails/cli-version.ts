@@ -107,9 +107,8 @@ export function checkCliVersion(input: CliVersionCheckInput): CliVersionVerdict 
     status: 'mismatch',
     message:
       `Claude Code CLI version ${running} does not match the pinned ` +
-      `${pinned} this run policy was validated against. The harness depends ` +
-      'on CLI surface that moves between minor releases — the headless flag ' +
-      'vector, the stream-json event shape, the session-transcript layout.',
+      `${pinned} this run policy was validated against — this harness reads ` +
+      'CLI surface that moves between minor releases.',
     blocking: input.strictness === 'error'
   }
 }
