@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+When reporting information to me, be extremely concise and sacrifice grammar for the sake of concision.
+
 `@galosandoval/shopfloor` — a typed, tested harness that spawns the Claude Code
 CLI headlessly to implement a labeled GitHub issue as a draft PR. Library +
 thin bin, no framework. Node 20+, ESM, TypeScript, vitest, tsup. Scripts are in
