@@ -110,6 +110,34 @@ PR, sandboxing, and any CI glue.
 - **Probes are best-effort and lazy.** A probe that answers nothing becomes an
   error naming what to state instead, never a silent default.
 
+## Standards in repo, procedures in skills
+
+Where a piece of agent context lives is decided by one line: **standards are
+per-repository and live in the repository; procedures are cross-repository and
+arrive as skills.** This repository's coding standards are therefore files here
+— [`docs/typescript-style.md`](./docs/typescript-style.md) and
+[`docs/doc-comments.md`](./docs/doc-comments.md) — and multi-step procedures
+(implement, review, TDD) stay out of the repo as installed skills.
+
+Two failures forced the boundary, and both are why it should not be moved back:
+
+- **The agent doing the work runs on a CI runner.** `CLAUDE.md` used to point at
+  a skill by absolute path under the author's home directory — a symlink into a
+  separate checkout on one laptop, and nothing at all anywhere else. A headless
+  run was being handed a reference that did not exist.
+- **The review sub-agent can only see repository files.** The `code-review`
+  skill's Standards axis finds its sources by looking for documents _in the
+  repository_ and hands that file list to a sub-agent with no other access. A
+  skill loaded into the parent session is invisible to it. A standard living
+  outside the repository cannot be reviewed against, by construction.
+
+The converse holds too: a procedure duplicated into every repository drifts
+between them, and it is the same procedure everywhere — so it belongs in one
+installed skill, not in `CLAUDE.md`.
+
+This is about work done _on_ this repository. The package still ships no
+opinionated standards to its consumers; `standardsDir` points at theirs.
+
 ## Known gaps
 
 [`docs/harness-gap-analysis.md`](./docs/harness-gap-analysis.md) is the standing
