@@ -88,6 +88,10 @@ export function checkCliVersion(input: CliVersionCheckInput): CliVersionVerdict 
 
   const running = parseCliVersion(input.running)
   const pinned = parseCliVersion(input.pinned)
+  // An unreadable running version comes first and stays silent: it is the
+  // probe's own failure, and reporting a pin problem here would claim the
+  // running CLI was read when it wasn't.
+  if (!running) return unchecked
   if (input.pinned && !pinned) {
     // Stated but unreadable: still not worth refusing a run over, but saying
     // nothing would leave a consumer believing a check that isn't running.
@@ -99,7 +103,7 @@ export function checkCliVersion(input: CliVersionCheckInput): CliVersionVerdict 
         'it. Expected a semver like 2.1.220.'
     }
   }
-  if (!running || !pinned) return unchecked
+  if (!pinned) return unchecked
 
   if (sameMajorMinor(running, pinned)) return { status: 'match', blocking: false }
 

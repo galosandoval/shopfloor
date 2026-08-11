@@ -128,6 +128,15 @@ describe('checkCliVersion', () => {
     ).toMatchObject({ message: expect.stringContaining('latest') })
   })
 
+  it('stays quiet when both sides are unreadable, rather than blaming the pin alone', () => {
+    // The pin message says the running CLI "was not checked against it", which
+    // would imply the CLI itself read fine. When neither side is readable,
+    // there is nothing honest to say.
+    expect(
+      checkCliVersion({ running: undefined, pinned: 'latest', strictness })
+    ).toEqual({ status: 'unchecked', blocking: false })
+  })
+
   it('says nothing when the pin is unreadable but the check was switched off', () => {
     expect(
       checkCliVersion({ running: '2.1.220', pinned: 'latest', strictness: 'off' })
