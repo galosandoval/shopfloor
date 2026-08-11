@@ -84,6 +84,23 @@ await runImplementAgent({
 })
 ```
 
+### What a run returns
+
+A resolved run answers with `RunImplementAgentResult`:
+
+| Field                | Type                    | Meaning                                                                              |
+| -------------------- | ----------------------- | ------------------------------------------------------------------------------------ |
+| `branch`             | `string`                | The branch committed on, as resolved — stated, inferred, or probed                   |
+| `commitsAhead`       | `number`                | Commits on `branch` since `main`, per `git rev-list --count`                         |
+| `prDescription`      | `'agent' \| 'fallback'` | Whether the agent wrote its own PR description, or this run supplied one             |
+| `transcriptCaptured` | `boolean`               | Whether the session transcript was found and copied to `transcriptFile`              |
+| `cliVersion`         | `string \| undefined`   | The CLI version this run spawned; undefined when that probe failed or was unreadable |
+
+`prDescription: 'fallback'` and `transcriptCaptured: false` are **not**
+failures — the run committed either way. They are there so CI glue can say so
+in the PR rather than presenting generated prose as the agent's own, or an
+absent transcript as an uploaded one.
+
 ### Resolution order
 
 Every optional input resolves the same way: **explicit input → environment
@@ -94,11 +111,16 @@ you state, or one the environment already carries, never spawns a subprocess.
 | -------------------------------- | --------------------------- | --------------- | ---------------------------------------------------- |
 | `issueNumber`                    | `ISSUE_NUMBER`              | —               | _required_                                           |
 | `claudeCodeOAuthToken`           | `CLAUDE_CODE_OAUTH_TOKEN`   | —               | _required_                                           |
+| `promptTemplate`                 | — (CLI only: `PROMPT_FILE`) | —               | _required_                                           |
 | `issueTitle`                     | `ISSUE_TITLE`               | `gh issue view` | —                                                    |
 | `branch`                         | `BRANCH`, `GITHUB_REF_NAME` | `git rev-parse` | —                                                    |
 | `repo`                           | `GITHUB_REPOSITORY`         | —               | unset; `gh` then infers it from the checkout         |
 | `standardsDir`                   | `STANDARDS_DIR`             | —               | `''` (prompt skips the step)                         |
 | `outputDir`                      | `OUTPUT_DIR`                | —               | OS tmpdir                                            |
+| `prDescriptionFile`              | —                           | —               | `pr_description.txt` under `outputDir`               |
+| `verifyReportFile`               | —                           | —               | `verify_report.md` under `outputDir`                 |
+| `transcriptFile`                 | —                           | —               | `transcript.jsonl` under `outputDir`                 |
+| `failureReasonFile`              | —                           | —               | `failure_reason.txt` under `outputDir`               |
 | `screenshotsDir`                 | `SCREENSHOTS_DIR`           | —               | `.agent/verify/issue-<N>`                            |
 | `projectsDir`                    | `PROJECTS_DIR`              | —               | `~/.claude/projects`                                 |
 | `runPolicy.model`                | `MODEL`                     | —               | none — the Claude CLI's own default                  |
@@ -108,6 +130,16 @@ you state, or one the environment already carries, never spawns a subprocess.
 | `runPolicy.cliVersion`           | `CLI_VERSION`               | —               | none — the running version is recorded, not compared |
 | `runPolicy.cliVersionStrictness` | `CLI_VERSION_STRICTNESS`    | —               | `'warn'`                                             |
 | `runPolicy.requiredEnvVars`      | `REQUIRED_ENV_VARS`         | —               | `[]`                                                 |
+
+`promptTemplate` is the raw template **contents**, not a path — the library
+never reads a file for it, so it carries no environment variable. `PROMPT_FILE`
+is the CLI entrypoint's own convenience: the bin reads that path and passes the
+contents in. It is the one variable in this document that does not work against
+`runImplementAgent`.
+
+The four output files take no environment variable either: state one to move it,
+or leave it and it lands under `outputDir`. That is where `OUTPUT_DIR` earns its
+place — one variable relocates all four.
 
 `screenshotsDir` is deliberately **not** derived from `outputDir`: those files
 get committed, so they stay repo-relative while the rest of the run's outputs
@@ -305,10 +337,10 @@ or `review` module has an obvious home:
 The package exports the four verbs (`runImplementAgent`, `runPreflight`,
 `postVerifyComment`, plus `ImplementAgentError`), the three documented pure
 escape hatches (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`),
-`DEFAULT_RUN_POLICY`,
-and the input/result types. The resolvers, the invocation assembler, and the
-transcript helpers are internals — import from source if you're vendoring, but
-they aren't API.
+`DEFAULT_RUN_POLICY`, and the input/result types — including
+`CliVersionStrictness`, the union behind the strictness table above. The
+resolvers, the invocation assembler, and the transcript helpers are internals —
+import from source if you're vendoring, but they aren't API.
 
 ## Tests vs. evals
 

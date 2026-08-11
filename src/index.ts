@@ -1,6 +1,7 @@
 /**
  * The package's public surface: the four verbs a consumer calls, the error
- * they throw, the two pure escape hatches the README documents, and the types
+ * they throw, the three pure escape hatches the README documents
+ * (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`), and the types
  * of what goes in and comes out. Resolvers, invocation assembly, transcript
  * capture, and reference parsing are internals — they exist as test seams, not
  * as API.
