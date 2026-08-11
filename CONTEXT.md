@@ -138,6 +138,15 @@ installed skill, not in `CLAUDE.md`.
 This is about work done _on_ this repository. The package still ships no
 opinionated standards to its consumers; `standardsDir` points at theirs.
 
+**Provenance, settled once so the files don't each carry it.** These documents
+came from the author's `coding-standards` skill in
+[galosandoval/skills](https://github.com/galosandoval/skills), a fork of
+[mattpocock/skills](https://github.com/mattpocock/skills) (MIT, © Matt Pocock).
+The fork's licence does not reach them: `git log` on the source files shows both
+were written by this package's author, and neither contains upstream text. No
+MIT notice is owed, and the copies here are edited to fit this repository rather
+than kept diffable against the skill.
+
 ## Known gaps
 
 [`docs/harness-gap-analysis.md`](./docs/harness-gap-analysis.md) is the standing

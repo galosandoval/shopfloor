@@ -39,7 +39,5 @@ auditable at the place it is enforced rather than only in a commit message.
 
 ---
 
-Carried over verbatim from the author's personal `coding-standards` skill in
-[galosandoval/skills](https://github.com/galosandoval/skills), plus the
-repository-specific section above. See
+Why this lives in the repo, and where it came from:
 [`CONTEXT.md`](../CONTEXT.md#standards-in-repo-procedures-in-skills).
