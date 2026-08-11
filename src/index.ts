@@ -20,6 +20,8 @@ export {
   type RunPolicyConfig
 } from './guardrails/run-policy'
 
+export { type CliVersionStrictness } from './guardrails/cli-version'
+
 export {
   evaluatePreflight,
   type LinkingPullRequest,

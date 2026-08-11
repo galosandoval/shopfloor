@@ -74,6 +74,10 @@ await runImplementAgent({
     idleMinutes: 15,
     // Omitted, a run has no wall-clock ceiling — only the idle guard.
     wallClockMinutes: 45,
+    // The CLI version this policy was validated against. A mismatch on
+    // major.minor warns by default; 'error' refuses the run, 'off' skips.
+    cliVersion: '2.1.220',
+    cliVersionStrictness: 'warn',
     // The caller's own app-specific env vars — this package bakes in none.
     requiredEnvVars: ['DATABASE_URL', 'OPENAI_API_KEY', 'GH_TOKEN']
   }
@@ -101,6 +105,8 @@ you state, or one the environment already carries, never spawns a subprocess.
 | `runPolicy.maxTurns` | `MAX_TURNS` | — | `150` |
 | `runPolicy.idleMinutes` | `IDLE_MINUTES` | — | `15` |
 | `runPolicy.wallClockMinutes` | `WALL_CLOCK_MINUTES` | — | none — the run has no wall-clock ceiling |
+| `runPolicy.cliVersion` | `CLI_VERSION` | — | none — the running version is recorded, not compared |
+| `runPolicy.cliVersionStrictness` | `CLI_VERSION_STRICTNESS` | — | `'warn'` |
 | `runPolicy.requiredEnvVars` | `REQUIRED_ENV_VARS` | — | `[]` |
 
 `screenshotsDir` is deliberately **not** derived from `outputDir`: those files
@@ -135,11 +141,47 @@ never reached its own verify phase, so those commits are unvetted
 work-in-progress. That is deliberately stricter than the missing-PR-description
 case below, where the commits were finished and only the prose was absent.
 
-#### Not yet enforced
+#### Pre-spawn preconditions
 
-`runPolicy.cliVersion` (`CLI_VERSION`) is **recorded, not enforced**. Nothing
-compares a running CLI against the pinned version. The field exists so that
-enforcement can land additively; don't build a cost model on it.
+Three things are settled before the CLI spawns, so a misconfigured run costs
+zero tokens: the `runPolicy.requiredEnvVars` check, the standards directory,
+and the CLI version.
+
+**Standards directory — fails the run.** A non-empty `standardsDir`
+(`STANDARDS_DIR`) that does not resolve to a directory is a misconfiguration
+and refuses before spawning, naming the path. A wrong path is indistinguishable
+from a right one once it is substituted into the prompt, so the alternative is
+a run that quietly instructs the agent to read nothing and produces work
+against no standards at all. A relative path resolves against the run's `cwd`,
+which is where the agent itself reads it from. Leaving `standardsDir` unset
+still means "deliberately skip", silently, exactly as before.
+
+**CLI version — warns by default.** The running `claude --version` is read
+before the spawn and returned on the run result as `cliVersion`, so a run's
+output always names which CLI produced it. When `runPolicy.cliVersion`
+(`CLI_VERSION`) states a pin, the two are compared:
+
+| `runPolicy.cliVersionStrictness` | `CLI_VERSION_STRICTNESS` | On mismatch |
+| --- | --- | --- |
+| `'warn'` *(default)* | `warn` | Logs a warning; the run proceeds |
+| `'error'` | `error` | Refuses before spawning |
+| `'off'` | `off` | No comparison at all |
+
+**A mismatch means a differing `major.minor` — the patch is ignored.** The
+surfaces this harness depends on are CLI features (the headless flag vector,
+the stream-json event shape, the `~/.claude/projects` session layout), and
+features arrive in minor releases; a patch bump fixes surface that already
+exists. Requiring an exact match would fail runs over changes that cannot
+affect the harness — the pin churn that trains people to delete the check.
+The rule is the same at every strictness; only the consequence differs.
+
+Absent `cliVersion`, the version is recorded and compared to nothing. A
+`claude --version` that fails or returns something unrecognizable never blocks
+a run, whatever the strictness — an unreadable version is the harness's own
+uncertainty, and refusing a run over it would turn a missing diagnostic into an
+outage. A stated `cliVersion` that isn't a readable semver doesn't block either,
+but it does warn: a check that silently stopped running is the exact rot this
+is here to catch.
 
 ### CLI
 
@@ -255,9 +297,9 @@ or `review` module has an obvious home:
   `prepareClaudeInvocation` (pure CLI-invocation assembly), and `spawnClaude`
   (the subprocess, with both runaway guards armed around it).
 - `src/guardrails/` — the run-policy contract (idle/wall-clock/max-turns
-  resolvers), preflight refusal, the command policy and its `PreToolUse` hook
-  script, and verify-comment posting (a feedback-loop guardrail: posting proof
-  back to the PR).
+  resolvers), the pure CLI-version comparison, preflight refusal, the command
+  policy and its `PreToolUse` hook script, and verify-comment posting (a
+  feedback-loop guardrail: posting proof back to the PR).
 - `src/observability/` — session transcript capture, for CI-artifact upload.
 
 The package exports the four verbs (`runImplementAgent`, `runPreflight`,
@@ -273,7 +315,7 @@ they aren't API.
 This package has **tests**: unit coverage on every pure function
 (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`,
 `resolveImplementConfig`, `prepareClaudeInvocation`, the run-policy resolvers,
-transcript capture) that
+`checkCliVersion`, transcript capture) that
 asserts on inputs/outputs, no IO mocking. It does **not** have **evals** — no scored suite over labeled
 trajectories or an LM-judge check of whether an actual agent run produced a
 *good* implementation. The `implement` phase's best-effort Playwright verify
