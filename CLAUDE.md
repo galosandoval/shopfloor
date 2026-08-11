@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+When reporting information to me, be extremely concise and sacrifice grammar for the sake of concision.
+
 `@galosandoval/shopfloor` — a typed, tested harness that spawns the Claude Code
 CLI headlessly to implement a labeled GitHub issue as a draft PR. Library +
 thin bin, no framework. Node 20+, ESM, TypeScript, vitest, tsup. Scripts are in
@@ -8,6 +10,8 @@ and build.
 
 - [`CONTEXT.md`](./CONTEXT.md) — architecture, module map, run flow, invariants.
 - [`docs/testing.md`](./docs/testing.md) — read before writing a test.
+- [`docs/typescript-style.md`](./docs/typescript-style.md) — size, colocation, extraction.
+- [`docs/doc-comments.md`](./docs/doc-comments.md) — when a comment becomes a doc block.
 - [`README.md`](./README.md) — the consumer-facing API; keep it accurate.
 
 ## Every PR carries a changeset
@@ -32,18 +36,19 @@ function proves nothing about whether a run calls it.
 
 ## Coding standards
 
-Follow the `coding-standards` skill (`~/.claude/skills/coding-standards/`);
-`references/typescript-style.md` and `references/doc-comments.md` apply. Two it
-won't tell you: doc comments carry the why-not — rejected alternatives and
-deliberate asymmetries go at the declaration, which is what makes the guardrails
-auditable — and the public surface is `src/index.ts`, nothing else.
+They live in this repository, so a CI runner and a review sub-agent can both
+read them: [`docs/typescript-style.md`](./docs/typescript-style.md) and
+[`docs/doc-comments.md`](./docs/doc-comments.md). One thing neither says: the
+public surface is `src/index.ts`, nothing else.
 
 ## What this package deliberately does not own
 
 Each was decided against; don't add them.
 
 - **Prompt content** beyond the harness's invocation defaults — per-consumer.
-- **Opinionated coding standards** — `standardsDir` points at the consumer's.
+- **Opinionated coding standards for consumers** — `standardsDir` points at
+  theirs. `docs/typescript-style.md` and `docs/doc-comments.md` govern work on
+  this repository only; they are not shipped.
 - **Consumer env-var names** — `requiredEnvVars` is caller-stated.
 - **CI glue and workflow templates** — callers own `$GITHUB_OUTPUT`, exit codes,
   branch checkout, the PR.
