@@ -72,6 +72,8 @@ await runImplementAgent({
     // Every field is optional and merges over DEFAULT_RUN_POLICY.
     maxTurns: 150,
     idleMinutes: 15,
+    // Omitted, a run has no wall-clock ceiling — only the idle guard.
+    wallClockMinutes: 45,
     // The caller's own app-specific env vars — this package bakes in none.
     requiredEnvVars: ['DATABASE_URL', 'OPENAI_API_KEY', 'GH_TOKEN']
   }
@@ -98,6 +100,7 @@ you state, or one the environment already carries, never spawns a subprocess.
 | `runPolicy.model` | `MODEL` | — | none — the Claude CLI's own default |
 | `runPolicy.maxTurns` | `MAX_TURNS` | — | `150` |
 | `runPolicy.idleMinutes` | `IDLE_MINUTES` | — | `15` |
+| `runPolicy.wallClockMinutes` | `WALL_CLOCK_MINUTES` | — | none — the run has no wall-clock ceiling |
 | `runPolicy.requiredEnvVars` | `REQUIRED_ENV_VARS` | — | `[]` |
 
 `screenshotsDir` is deliberately **not** derived from `outputDir`: those files
@@ -110,13 +113,33 @@ however the OAuth token was resolved — inference never widens the auth surface
 `LOCAL_IDLE_MINUTES` / `LOCAL_WALL_CLOCK_MINUTES` override the guard budgets
 for a single run without touching the contract.
 
+#### Runaway guards
+
+Two time-based guards watch a run, because they catch different failures. The
+**idle guard** catches a *stalled* agent — output goes silent — and is always
+armed, at 15 minutes by default. The **wall-clock guard** catches a *looping*
+agent, one that stays productive-looking and resets the idle timer on every
+chunk; it is armed only when `runPolicy.wallClockMinutes` (`WALL_CLOCK_MINUTES`)
+states a ceiling, since a default ceiling would kill runs no caller asked to
+bound.
+
+Either guard terminates the run and throws an `ImplementAgentError` naming the
+budget that tripped, with the transcript still captured. How they kill differs
+on purpose: the wall-clock guard sends `SIGTERM`, waits 30 seconds, then
+`SIGKILL`s, giving a looping agent a chance to flush real uncommitted work,
+while the idle guard goes straight to `SIGKILL` — a stalled agent is usually
+wedged somewhere that cannot service a signal handler anyway.
+
+**A killed run is a hard failure even if the agent had already committed.** It
+never reached its own verify phase, so those commits are unvetted
+work-in-progress. That is deliberately stricter than the missing-PR-description
+case below, where the commits were finished and only the prose was absent.
+
 #### Not yet enforced
 
-`runPolicy.cliVersion` (`CLI_VERSION`) and `runPolicy.wallClockMinutes`
-(`WALL_CLOCK_MINUTES`) are **recorded, not enforced**. Nothing compares a
-running CLI against the pinned version, and no guard imposes a wall-clock
-ceiling — a run's only time-based guard is the idle timeout. The fields exist
-so that enforcement can land additively; don't build a cost model on them.
+`runPolicy.cliVersion` (`CLI_VERSION`) is **recorded, not enforced**. Nothing
+compares a running CLI against the pinned version. The field exists so that
+enforcement can land additively; don't build a cost model on it.
 
 ### CLI
 
@@ -228,8 +251,9 @@ Organized by harness concern rather than a flat file list, so a future `plan`
 or `review` module has an obvious home:
 
 - `src/orchestration/` — `runImplementAgent` (the orchestrator),
-  `resolveImplementConfig` (pure configuration resolution), and
-  `prepareClaudeInvocation` (pure CLI-invocation assembly).
+  `resolveImplementConfig` (pure configuration resolution),
+  `prepareClaudeInvocation` (pure CLI-invocation assembly), and `spawnClaude`
+  (the subprocess, with both runaway guards armed around it).
 - `src/guardrails/` — the run-policy contract (idle/wall-clock/max-turns
   resolvers), preflight refusal, the command policy and its `PreToolUse` hook
   script, and verify-comment posting (a feedback-loop guardrail: posting proof

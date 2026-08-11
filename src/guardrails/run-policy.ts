@@ -28,8 +28,9 @@ export interface RunPolicyConfig {
   idleMinutes?: number
   /**
    * Wall-clock runaway budget, in minutes — overridable via
-   * {@link WALL_CLOCK_MINUTES_ENV_VAR}. Recorded only: no guard enforces it
-   * yet, so a run has no wall-clock ceiling regardless of this value.
+   * {@link WALL_CLOCK_MINUTES_ENV_VAR}. Enforced: a run past this ceiling is
+   * terminated and fails. Omitted leaves a run with no ceiling but the idle
+   * guard, which a *looping* agent never trips.
    */
   wallClockMinutes?: number
   /**
@@ -100,8 +101,9 @@ export function resolveIdleMs(
 /**
  * Wall-clock budget in ms — `config.wallClockMinutes` unless
  * {@link WALL_CLOCK_MINUTES_ENV_VAR} overrides it, or undefined when neither
- * states one. Nothing enforces this yet; it is the value a future wall-clock
- * guard will read.
+ * states one — which the guard reads as "this run has no ceiling", the one
+ * budget with no package default, since a fabricated ceiling would kill runs
+ * no caller ever asked to bound.
  */
 export function resolveWallClockMs(
   config: Pick<RunPolicyConfig, 'wallClockMinutes'>,
