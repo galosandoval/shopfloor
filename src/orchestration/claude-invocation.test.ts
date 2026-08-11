@@ -88,6 +88,17 @@ describe('prepareClaudeInvocation', () => {
       expect(maxTurnsValue).toBe('42')
     })
 
+    it('omits the model flag entirely when no model is configured, deferring to the CLI', () => {
+      const { args } = prepareClaudeInvocation(baseInput({ model: undefined }))
+
+      expect(args).toEqual([
+        '--print',
+        '--max-turns',
+        String(MAX_TURNS),
+        '--dangerously-skip-permissions'
+      ])
+    })
+
     it('leaves the arg vector unchanged when streamOutput is omitted', () => {
       const { args } = prepareClaudeInvocation(baseInput())
 

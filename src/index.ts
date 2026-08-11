@@ -1,28 +1,27 @@
+/**
+ * The package's public surface: the four verbs a consumer calls, the error
+ * they throw, the two pure escape hatches the README documents, and the types
+ * of what goes in and comes out. Resolvers, invocation assembly, transcript
+ * capture, and reference parsing are internals — they exist as test seams, not
+ * as API.
+ */
+
 export {
   runImplementAgent,
-  ImplementAgentError,
-  type RunImplementAgentConfig,
   type RunImplementAgentResult
 } from './orchestration/implement'
 
-export {
-  prepareClaudeInvocation,
-  type ClaudeInvocationInput,
-  type ClaudeInvocation
-} from './orchestration/claude-invocation'
+export { ImplementAgentError } from './orchestration/implement-error'
+
+export { type RunImplementAgentConfig } from './orchestration/config'
 
 export {
-  IDLE_MINUTES_ENV_VAR,
-  WALL_CLOCK_MINUTES_ENV_VAR,
-  findMissingEnvVars,
-  resolveIdleMs,
-  resolveWallClockMs,
+  DEFAULT_RUN_POLICY,
   type RunPolicyConfig
 } from './guardrails/run-policy'
 
 export {
   evaluatePreflight,
-  parseClosingReferences,
   type LinkingPullRequest,
   type PreflightInput,
   type PreflightVerdict
@@ -44,8 +43,3 @@ export {
   type PostVerifyCommentInput,
   type PostVerifyCommentResult
 } from './guardrails/post-verify'
-
-export {
-  captureTranscript,
-  findNewestSessionFile
-} from './observability/transcript'

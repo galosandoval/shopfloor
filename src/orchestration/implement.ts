@@ -1,61 +1,29 @@
-import * as fs from 'node:fs'
-import { execSync, spawn } from 'node:child_process'
-import { captureTranscript } from '../observability/transcript'
-import { prepareClaudeInvocation } from './claude-invocation'
-import {
-  findMissingEnvVars,
-  resolveIdleMs,
-  type RunPolicyConfig
-} from '../guardrails/run-policy'
-
 /**
  * Orchestrator for a single "implement this issue" agent run (ported from
  * recipe-chat-v1's `agent/implement/implement.ts`, #510/#540/#556). Spawns
  * the Claude Code CLI directly and owns the run's runaway guards: an idle
- * timeout (output-silence guard) and a zero-commit failure check. The caller
- * owns everything outside the run itself — checking out the branch, opening
- * the PR, sandboxing (an ephemeral CI runner or a container).
+ * timeout (output-silence guard) and a zero-commit failure check. It is also
+ * the IO shell around the pure {@link resolveImplementConfig}: the `git` and
+ * `gh` probes that answer what neither the caller nor the environment stated
+ * live here. The caller owns everything outside the run itself — checking out
+ * the branch, opening the PR, sandboxing (an ephemeral CI runner or a
+ * container).
  */
 
-export class ImplementAgentError extends Error {
-  /** Bounded tail of the CLI's combined stdout/stderr, when available. */
-  readonly outputTail?: string
-
-  constructor(message: string, outputTail?: string) {
-    super(message)
-    this.name = 'ImplementAgentError'
-    this.outputTail = outputTail
-  }
-}
-
-export interface RunImplementAgentConfig {
-  issueNumber: string
-  issueTitle: string
-  branch: string
-  /** Subscription / flat-rate token — never `ANTHROPIC_API_KEY` (metered). */
-  claudeCodeOAuthToken: string
-  /** Absolute path to coding-standard rules, or `''` to skip that prompt step. */
-  standardsDir: string
-  /** Raw contents of the prompt template, with `{{PLACEHOLDER}}` tokens to render. */
-  promptTemplate: string
-  /** Path the agent writes its PR description to; a fallback is written here if empty. */
-  prDescriptionFile: string
-  /** Path the agent writes its verify-phase report to. */
-  verifyReportFile: string
-  /** Repo-relative dir the agent commits verify-phase screenshots into. */
-  screenshotsDir: string
-  /** Where to copy the agent's Claude Code session transcript for audit. */
-  transcriptFile: string
-  /** Claude Code's session store, e.g. `$HOME/.claude/projects`. */
-  projectsDir: string
-  runPolicy: RunPolicyConfig
-  /** Defaults to `process.env`. */
-  env?: NodeJS.ProcessEnv
-  /** Defaults to `process.cwd()` — where the CLI spawns and `git rev-list` runs. */
-  cwd?: string
-}
+import * as fs from 'node:fs'
+import { execFileSync, execSync, spawn } from 'node:child_process'
+import { captureTranscript } from '../observability/transcript'
+import { prepareClaudeInvocation } from './claude-invocation'
+import { findMissingEnvVars, resolveIdleMs } from '../guardrails/run-policy'
+import { ImplementAgentError } from './implement-error'
+import {
+  resolveImplementConfig,
+  type RunImplementAgentConfig
+} from './config'
 
 export interface RunImplementAgentResult {
+  /** The branch the run committed on, as resolved — stated, inferred, or probed. */
+  branch: string
   /** Commits made on `branch` since `main`, per `git rev-list --count`. */
   commitsAhead: number
   transcriptCaptured: boolean
@@ -64,16 +32,19 @@ export interface RunImplementAgentResult {
 }
 
 /**
- * Runs the agent once: validates the caller's app-specific required env vars,
- * spawns the Claude Code CLI with the idle guard armed, captures the session
- * transcript, and verifies the run actually committed. Throws
- * {@link ImplementAgentError} on any failure — callers own translating that
- * into their own CI-glue (writing a failure-reason file, exiting non-zero).
+ * Runs the agent once: resolves the caller's configuration (filling anything
+ * unstated from the environment, a `git` / `gh` probe, or a package default),
+ * validates the caller's app-specific required env vars, spawns the Claude
+ * Code CLI with the idle guard armed, captures the session transcript, and
+ * verifies the run actually committed. Throws {@link ImplementAgentError} on
+ * any failure — callers own translating that into their own CI-glue (writing a
+ * failure-reason file, exiting non-zero).
  */
 export async function runImplementAgent(
-  config: RunImplementAgentConfig
+  input: RunImplementAgentConfig
 ): Promise<RunImplementAgentResult> {
-  const env = config.env ?? process.env
+  const env = input.env ?? process.env
+  const config = resolveImplementConfig(input, env)
   const cwd = config.cwd ?? process.cwd()
 
   // Validate the whole contract-required env up front, before the Claude CLI
@@ -86,11 +57,15 @@ export async function runImplementAgent(
     )
   }
 
+  const branch = config.branch ?? probeBranch(cwd)
+  const issueTitle =
+    config.issueTitle ?? probeIssueTitle(config.issueNumber, config.repo, cwd)
+
   const { args, prompt } = prepareClaudeInvocation({
     promptTemplate: config.promptTemplate,
     issueNumber: config.issueNumber,
-    issueTitle: config.issueTitle,
-    branch: config.branch,
+    issueTitle,
+    branch,
     prDescriptionFile: config.prDescriptionFile,
     standardsDir: config.standardsDir,
     verifyReportFile: config.verifyReportFile,
@@ -160,11 +135,80 @@ export async function runImplementAgent(
     prDescription = 'fallback'
     fs.writeFileSync(
       config.prDescriptionFile,
-      `Implements #${config.issueNumber}: ${config.issueTitle}\n`
+      `Implements #${config.issueNumber}: ${issueTitle}\n`
     )
   }
 
-  return { commitsAhead, transcriptCaptured, prDescription }
+  return { branch, commitsAhead, transcriptCaptured, prDescription }
+}
+
+/**
+ * Trimmed stdout of a resolution probe, or undefined when the command is
+ * missing, fails, or says nothing. Probes are best-effort by design: the
+ * caller turns an unanswered probe into an error naming what to state instead.
+ */
+function probe(
+  file: string,
+  args: string[],
+  cwd: string
+): string | undefined {
+  try {
+    // execFile, not a shell string: an issue number off `argv` is caller input
+    // and must never be word-split or interpolated into a command line.
+    const output = execFileSync(file, args, {
+      encoding: 'utf8',
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    return output || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The checked-out branch, for a local run with no CI environment to read. */
+function probeBranch(cwd: string): string {
+  const branch = probe('git', ['rev-parse', '--abbrev-ref', 'HEAD'], cwd)
+  // A detached HEAD names no branch, and the agent's commits need one.
+  if (!branch || branch === 'HEAD') {
+    throw new ImplementAgentError(
+      'No branch to implement on — pass `branch`, set BRANCH, or check out a branch.'
+    )
+  }
+  return branch
+}
+
+/**
+ * The issue's own title, so the prompt can never disagree with the issue it is
+ * implementing. `gh` infers the repository from the checkout when the config
+ * states none.
+ */
+function probeIssueTitle(
+  issueNumber: string,
+  repo: string | undefined,
+  cwd: string
+): string {
+  const title = probe(
+    'gh',
+    [
+      'issue',
+      'view',
+      issueNumber,
+      ...(repo ? ['--repo', repo] : []),
+      '--json',
+      'title',
+      '-q',
+      '.title'
+    ],
+    cwd
+  )
+  if (!title) {
+    throw new ImplementAgentError(
+      `Could not read the title of issue #${issueNumber} via gh — pass ` +
+        '`issueTitle` or set ISSUE_TITLE.'
+    )
+  }
+  return title
 }
 
 interface SpawnClaudeResult {

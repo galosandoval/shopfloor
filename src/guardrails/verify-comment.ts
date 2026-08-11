@@ -23,8 +23,12 @@ export interface VerifyCommentInput {
    * `.agent/verify/issue-5/recipes.png`. Empty for non-UI / skipped runs.
    */
   screenshots: string[]
-  /** URL of the workflow run, linked so the PR comment jumps to the full logs. */
-  runUrl: string
+  /**
+   * URL of the workflow run, linked so the PR comment jumps to the full logs.
+   * Omitted for a run with no workflow behind it (a local run), which drops
+   * the link rather than emitting a dead one.
+   */
+  runUrl?: string
 }
 
 /**
@@ -41,8 +45,8 @@ function rawUrl(repo: string, ref: string, filePath: string): string {
 /**
  * Assembles the full PR-comment body: the agent's verify report, an inline
  * image for each committed screenshot (raw URLs pinned to `ref`), and a link
- * to the workflow run. With no screenshots (non-UI / skipped / failed-capture
- * runs) the report and run link stand alone.
+ * to the workflow run when there is one. With no screenshots (non-UI /
+ * skipped / failed-capture runs) the report and run link stand alone.
  */
 export function buildVerifyComment(input: VerifyCommentInput): string {
   const { report, repo, ref, screenshots, runUrl } = input
@@ -57,7 +61,9 @@ export function buildVerifyComment(input: VerifyCommentInput): string {
     parts.push(`### Screenshots\n\n${images.join('\n\n')}`)
   }
 
-  parts.push(`[View the workflow run](${runUrl})`)
+  if (runUrl) {
+    parts.push(`[View the workflow run](${runUrl})`)
+  }
 
   return `${parts.join('\n\n')}\n`
 }

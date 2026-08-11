@@ -1,4 +1,5 @@
 import {
+  DEFAULT_RUN_POLICY,
   IDLE_MINUTES_ENV_VAR,
   WALL_CLOCK_MINUTES_ENV_VAR,
   findMissingEnvVars,
@@ -84,6 +85,39 @@ describe('run-policy contract', () => {
       const config = { ...baseConfig, idleMinutes: 7, wallClockMinutes: 90 }
       expect(resolveIdleMs(config, {})).toBe(7 * 60_000)
       expect(resolveWallClockMs(config, {})).toBe(90 * 60_000)
+    })
+
+    it('falls back to the package default idle budget when the config omits one', () => {
+      expect(resolveIdleMs({}, {})).toBe(DEFAULT_RUN_POLICY.idleMinutes * 60_000)
+    })
+
+    it('still honors the idle override when the config omits a budget', () => {
+      expect(resolveIdleMs({}, { [IDLE_MINUTES_ENV_VAR]: '4' })).toBe(4 * 60_000)
+    })
+
+    it('reports no wall-clock budget when neither config nor env sets one', () => {
+      expect(resolveWallClockMs({}, {})).toBeUndefined()
+    })
+
+    it('honors a wall-clock override even when the config omits a budget', () => {
+      expect(
+        resolveWallClockMs({}, { [WALL_CLOCK_MINUTES_ENV_VAR]: '20' })
+      ).toBe(20 * 60_000)
+    })
+  })
+
+  describe('DEFAULT_RUN_POLICY', () => {
+    it('requires no env vars of its own', () => {
+      expect(DEFAULT_RUN_POLICY.requiredEnvVars).toEqual([])
+    })
+
+    it('names no model, leaving the choice to the Claude CLI', () => {
+      expect(DEFAULT_RUN_POLICY.model).toBeUndefined()
+    })
+
+    it('caps turns and arms the idle guard', () => {
+      expect(DEFAULT_RUN_POLICY.maxTurns).toBeGreaterThan(0)
+      expect(DEFAULT_RUN_POLICY.idleMinutes).toBeGreaterThan(0)
     })
   })
 })

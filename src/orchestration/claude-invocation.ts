@@ -17,8 +17,10 @@ export interface ClaudeInvocationInput {
   standardsDir: string
   verifyReportFile: string
   screenshotsDir: string
-  /** Claude model the headless agent runs — from the caller's `RunPolicyConfig`. */
-  model: string
+  /** Claude model the headless agent runs — from the caller's `RunPolicyConfig`.
+   *  Omitted leaves `--model` off the vector so the Claude CLI's own default
+   *  applies, rather than pinning a model string here. */
+  model?: string
   /** Fast-loop backstop cap on agent turns — from the caller's `RunPolicyConfig`. */
   maxTurns: number
   /** Streams incrementally instead of staying silent until the whole session
@@ -60,8 +62,7 @@ export function prepareClaudeInvocation(
 
   const args = [
     '--print',
-    '--model',
-    input.model,
+    ...(input.model ? ['--model', input.model] : []),
     '--max-turns',
     String(input.maxTurns),
     // Safe because the containment boundary is the environment, not this
