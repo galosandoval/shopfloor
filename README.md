@@ -38,9 +38,12 @@ environment variable pointed at. An unstated `pluginDirs` loads it; see
 [Plugin directories](#pre-spawn-preconditions).
 
 What ships in it is **procedure** — how work gets done, which is the same in
-every repository. Coding standards are not procedure: they are per-repository
-and live in the repository being worked on, which is what `standardsDir` points
-at. This package ships none of its own.
+every repository. Coding standards are not procedure: they are per-repository,
+so they live in the repository being worked on — in its `CLAUDE.md` and the
+docs that file points at, which the agent reads for itself. This package ships
+none of its own, and no longer takes a path to yours: `standardsDir` was
+removed, and a run still configured for it refuses (see
+[Pre-spawn preconditions](#pre-spawn-preconditions)).
 
 ## Usage
 
@@ -77,7 +80,6 @@ await runImplementAgent({
   repo: 'galosandoval/recipe-chat-v1',
   claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!,
   promptTemplate: fs.readFileSync('prompt.md', 'utf8'),
-  standardsDir: '/tmp/skills/rules',
   // Claude Code plugins loaded for this session only, one --plugin-dir each,
   // so their skills reach the agent without anything landing in your git tree.
   // Every entry is validated before a token is spent. Stating this REPLACES
@@ -135,7 +137,6 @@ you state, or one the environment already carries, never spawns a subprocess.
 | `issueTitle`                     | `ISSUE_TITLE`               | `gh issue view` | —                                                     |
 | `branch`                         | `BRANCH`, `GITHUB_REF_NAME` | `git rev-parse` | —                                                     |
 | `repo`                           | `GITHUB_REPOSITORY`         | —               | unset; `gh` then infers it from the checkout          |
-| `standardsDir`                   | `STANDARDS_DIR`             | —               | `''` (prompt skips the step)                          |
 | `pluginDirs`                     | `PLUGIN_DIRS` (comma-sep.)  | —               | the bundled skills plugin; stating a list replaces it |
 | `outputDir`                      | `OUTPUT_DIR`                | —               | OS tmpdir                                             |
 | `prDescriptionFile`              | —                           | —               | `pr_description.txt` under `outputDir`                |
@@ -196,18 +197,26 @@ case below, where the commits were finished and only the prose was absent.
 
 #### Pre-spawn preconditions
 
-Four things are settled before the CLI spawns, so a misconfigured run costs
-zero tokens: the `runPolicy.requiredEnvVars` check, the standards directory,
-the plugin directories, and the CLI version.
+Three things are settled just before the CLI spawns, so a misconfigured run
+costs zero tokens: the `runPolicy.requiredEnvVars` check, the plugin
+directories, and the CLI version. A fourth refuses earlier still, while the
+configuration resolves, because it needs nothing from disk to detect: a
+standards directory.
 
-**Standards directory — fails the run.** A non-empty `standardsDir`
-(`STANDARDS_DIR`) that does not resolve to a directory is a misconfiguration
-and refuses before spawning, naming the path. A wrong path is indistinguishable
-from a right one once it is substituted into the prompt, so the alternative is
-a run that quietly instructs the agent to read nothing and produces work
-against no standards at all. A relative path resolves against the run's `cwd`,
-which is where the agent itself reads it from. Leaving `standardsDir` unset
-still means "deliberately skip", silently, exactly as before.
+**A standards directory — fails the run.** `standardsDir` is gone, and the
+prompt no longer carries a `{{STANDARDS_DIR}}` placeholder to substitute into;
+skills reach the agent through the CLI's own plugin discovery instead. A run
+that still states `standardsDir`, or whose environment still sets a non-empty
+`STANDARDS_DIR`, **refuses before spawning** and names the replacement. That
+refusal is the migration: dropping the field quietly would leave a CI-set
+variable meaning nothing at all — no type error, no runtime error, just a run
+with less context than its operator believes it has. An empty value from either
+source still means "deliberately skip" and does not refuse, exactly as before.
+
+A prompt template that still contains `{{STANDARDS_DIR}}` now renders that
+token as literal text. Fixing the configuration is what a run demands first, so
+this is reachable only by a caller who does that and leaves the template stale
+— check yours when you upgrade.
 
 **Plugin directories — fail the run.** Each entry in `pluginDirs`
 (`PLUGIN_DIRS`, comma-separated) is passed to the CLI as `--plugin-dir`, one
@@ -247,13 +256,13 @@ letting it proceed with none of the procedure it was configured to have.
 
 Nothing spawns until every entry passes. A **directory** entry is refused when:
 
-| Refused when                                                          | Why                                                                                                                            |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| it does not resolve                                                   | the failure `standardsDir` used to hide — a rotted path and a correct one are indistinguishable once the flag is on the vector |
-| it has no readable `.claude-plugin/plugin.json`                       | it is not a plugin                                                                                                             |
-| its manifest declares no skills **and** it has no `skills/` directory | it contributes nothing the run asked for                                                                                       |
-| its manifest declares a skill path that is absent on disk             | the manifest is stale                                                                                                          |
-| it ships **hooks** or **MCP servers**                                 | see below                                                                                                                      |
+| Refused when                                                          | Why                                                                                                                                   |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| it does not resolve                                                   | the failure a bare standards path used to hide — a rotted path and a correct one are indistinguishable once the flag is on the vector |
+| it has no readable `.claude-plugin/plugin.json`                       | it is not a plugin                                                                                                                    |
+| its manifest declares no skills **and** it has no `skills/` directory | it contributes nothing the run asked for                                                                                              |
+| its manifest declares a skill path that is absent on disk             | the manifest is stale                                                                                                                 |
+| it ships **hooks** or **MCP servers**                                 | see below                                                                                                                             |
 
 The refusal names every offending entry and what is wrong with it, not just the
 first.

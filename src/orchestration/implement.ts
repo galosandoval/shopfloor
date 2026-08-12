@@ -83,7 +83,6 @@ export async function runImplementAgent(
     issueTitle,
     branch,
     prDescriptionFile: config.prDescriptionFile,
-    standardsDir: config.standardsDir,
     pluginDirs,
     verifyReportFile: config.verifyReportFile,
     screenshotsDir: config.screenshotsDir,
@@ -173,14 +172,15 @@ export async function runImplementAgent(
 /**
  * Everything that must hold before the CLI spawns, so a misconfigured run
  * fails immediately instead of spending tokens on a doomed one: the caller's
- * required env vars, the standards path, and the CLI version. Returns the
+ * required env vars, the plugin directories, and the CLI version. Returns the
  * running CLI version for the run result — the one thing these checks produce
- * rather than merely permit.
+ * rather than merely permit. The removed `standardsDir` refuses earlier still,
+ * in `resolveImplementConfig`, since it needs no IO to detect.
  *
  * They differ in how hard they push back, and each difference is deliberate: a
- * missing env var or a dead standards path is a misconfiguration that changes
- * what the run produces, while a drifted CLI is a diagnostic that only
- * sometimes matters. See {@link requireStandardsDir} and `checkCliVersion`.
+ * missing env var or a rotted plugin directory is a misconfiguration that
+ * changes what the run produces, while a drifted CLI is a diagnostic that only
+ * sometimes matters. See {@link requirePluginDirs} and `checkCliVersion`.
  *
  * `pluginDirs` arrives resolved rather than read off `config`, because the
  * bundled default behind it is a filesystem lookup the pure resolver does not
@@ -201,17 +201,16 @@ function verifyPreconditions(
     )
   }
 
-  requireStandardsDir(config.standardsDir, cwd)
   requirePluginDirs(pluginDirs, cwd)
   return checkRunningCliVersion(config.runPolicy, cwd)
 }
 
 /**
  * Refuse before the spawn when any plugin directory fails validation. Stricter
- * than the CLI-version warn for the same reason `standardsDir` is: a rotted
- * plugin and a correct one are indistinguishable once the flag is on the
- * vector, so the run would quietly produce work with none of the skills it was
- * configured to have. An empty list probes nothing.
+ * than the CLI-version warn on purpose: a rotted plugin and a correct one are
+ * indistinguishable once the flag is on the vector, so the run would quietly
+ * produce work with none of the skills it was configured to have. An empty
+ * list probes nothing.
  *
  * The bundled plugin gets no exemption. It reaches this as an ordinary entry
  * and is refused by the same rules, named by its own path — which is the
@@ -223,35 +222,6 @@ function requirePluginDirs(pluginDirs: string[], cwd: string): void {
 
   const verdict = runPluginDirsCheck(pluginDirs, cwd)
   if (verdict.refused) throw new ImplementAgentError(verdict.reason)
-}
-
-/**
- * Refuse a non-empty `standardsDir` that resolves to nothing, naming the path.
- * An empty one still means "deliberately skip", unchanged — the prompt
- * template's own text handles that. This is stricter than the CLI-version
- * warn on purpose: a wrong path is indistinguishable from a right one in the
- * rendered prompt, so the run quietly instructs the agent to read nothing and
- * produces work against no standards at all.
- */
-function requireStandardsDir(standardsDir: string, cwd: string): void {
-  if (!standardsDir) return
-
-  let isDirectory = false
-  try {
-    // Resolved against the run's cwd, which is where the agent itself reads
-    // the path from: a relative `standardsDir` validated against this
-    // process's cwd would pass or fail on the wrong directory entirely.
-    isDirectory = fs.statSync(path.resolve(cwd, standardsDir)).isDirectory()
-  } catch {
-    // Unreadable and absent are the same misconfiguration to a run.
-  }
-  if (isDirectory) return
-
-  throw new ImplementAgentError(
-    `Standards directory does not resolve to a directory: ${standardsDir} — ` +
-      'point `standardsDir` / STANDARDS_DIR at a directory that exists, or ' +
-      'leave it unset to skip the standards step deliberately.'
-  )
 }
 
 /**

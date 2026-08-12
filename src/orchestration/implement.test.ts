@@ -46,8 +46,6 @@ vi.mock('node:fs', () => ({
   existsSync: vi.fn(() => true),
   readFileSync: readFileSyncMock,
   writeFileSync: vi.fn(),
-  // A stated `standardsDir` resolves to a real directory unless a test says
-  // otherwise.
   statSync: statSyncMock
 }))
 
@@ -80,14 +78,6 @@ function pluginDirsAreValid({ shipsHooks }: { shipsHooks?: boolean } = {}) {
       ? JSON.stringify({ name: 'skills', skills: ['./skills/tdd'] })
       : 'an agent-written PR description'
   )
-}
-
-/** A `standardsDir` that resolves to nothing, as a missing path or a file. */
-function standardsDirIs(kind: 'missing' | 'a file') {
-  statSyncMock.mockImplementation(() => {
-    if (kind === 'missing') throw new Error('ENOENT')
-    return { isDirectory: () => false }
-  })
 }
 
 function baseInput(
@@ -270,43 +260,29 @@ describe('runImplementAgent CLI-version precondition', () => {
   )
 })
 
-describe('runImplementAgent standards-directory precondition', () => {
-  it.each([['missing'], ['a file']] as const)(
-    'fails before spawning when the standards dir is %s, naming the path',
-    async (kind) => {
-      standardsDirIs(kind)
-
-      await expect(
-        runImplementAgent(baseInput({ standardsDir: '/tmp/skills/rules' }))
-      ).rejects.toThrow(/\/tmp\/skills\/rules/)
-      expect(spawnClaudeMock).not.toHaveBeenCalled()
-    }
-  )
-
-  it('skips the check silently when no standards dir is stated', async () => {
-    standardsDirIs('missing')
-
-    // No plugins either: on a filesystem where nothing resolves, the bundled
-    // default would refuse this run for its own reasons.
-    await runImplementAgent(baseInput({ pluginDirs: [] }))
-
-    expect(spawnClaudeMock).toHaveBeenCalled()
+describe('runImplementAgent removed standards directory', () => {
+  it('refuses a run whose environment still sets STANDARDS_DIR', async () => {
+    // The migration's whole point (shopfloor#27): a consumer's CI sets this,
+    // and deleting the field without this check would spend a run's tokens on
+    // an agent with less context than its operator believes it has.
+    await expect(
+      runImplementAgent(
+        baseInput({ env: { STANDARDS_DIR: '/tmp/skills/rules' } })
+      )
+    ).rejects.toThrow(/STANDARDS_DIR/)
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
   })
 
-  it('spawns when the standards dir resolves to a directory', async () => {
-    await runImplementAgent(baseInput({ standardsDir: '/tmp/skills/rules' }))
+  it('refuses a run still stating the removed field', async () => {
+    // No longer type-checks, which is the point: a JS caller, or one compiled
+    // against an older version of this package, still reaches the runtime.
+    const stated = {
+      ...baseInput(),
+      standardsDir: '/tmp/skills/rules'
+    } as RunImplementAgentConfig
 
-    expect(spawnClaudeMock).toHaveBeenCalled()
-  })
-
-  it('resolves a relative standards dir against the run’s cwd, not this process’s', async () => {
-    // The agent reads the path from inside the run's checkout, so validating
-    // it anywhere else would pass or fail on a different directory entirely.
-    await runImplementAgent(
-      baseInput({ standardsDir: 'skills/rules', cwd: '/repo' })
-    )
-
-    expect(statSyncMock).toHaveBeenCalledWith('/repo/skills/rules')
+    await expect(runImplementAgent(stated)).rejects.toThrow(/standardsDir/)
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
   })
 })
 

@@ -12,9 +12,6 @@ export interface ClaudeInvocationInput {
   issueTitle: string
   branch: string
   prDescriptionFile: string
-  /** Empty when a local run has no standards mount; the template's own text
-   *  handles the skip, this module just substitutes the empty string. */
-  standardsDir: string
   verifyReportFile: string
   screenshotsDir: string
   /** Claude model the headless agent runs — from the caller's `RunPolicyConfig`.
@@ -63,7 +60,6 @@ export function prepareClaudeInvocation(
     ISSUE_TITLE: input.issueTitle,
     BRANCH: input.branch,
     PR_DESCRIPTION_FILE: input.prDescriptionFile,
-    STANDARDS_DIR: input.standardsDir,
     VERIFY_REPORT_FILE: input.verifyReportFile,
     SCREENSHOTS_DIR: input.screenshotsDir
   }
