@@ -65,5 +65,8 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.19.0",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "galosandoval-skills": "github:galosandoval/skills#galosandoval-skills@1.1.0"
   }
 }

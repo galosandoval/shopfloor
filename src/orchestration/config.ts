@@ -45,7 +45,11 @@ export interface RunImplementAgentConfig {
    * Claude Code plugin directories (or `.zip` archives) loaded into this
    * session only, one `--plugin-dir` each, so their skills reach the agent
    * without anything being written into the consumer's git tree. Defaults to
-   * `PLUGIN_DIRS`, comma-separated.
+   * `PLUGIN_DIRS`, comma-separated; unstated by both, the run falls back to
+   * the bundled plugin — a stated list **replaces** that default rather than
+   * adding to it, and a stated empty one loads nothing at all. The fallback
+   * itself is `resolveBundledPluginDir`, in the shell, because locating it is
+   * filesystem work.
    *
    * Named for what it grants rather than for skills, the reason it is wanted:
    * a plugin can carry more than skills, so a name promising "skills" would
@@ -101,8 +105,9 @@ export interface ResolvedImplementConfig {
   standardsDir: string
   /**
    * Omitted entirely when nothing stated a list, so "unstated" stays
-   * distinguishable from "stated as empty" — the two differ once a bundled
-   * default exists to fall back to, and a fabricated `[]` would erase that.
+   * distinguishable from "stated as empty" — the first falls back to the
+   * bundled plugin and the second loads none, and a fabricated `[]` here would
+   * erase the difference.
    */
   pluginDirs?: string[]
   prDescriptionFile: string

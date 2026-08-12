@@ -26,6 +26,7 @@ import {
 } from '../guardrails/run-policy'
 import { checkCliVersion, parseCliVersion } from '../guardrails/cli-version'
 import { runPluginDirsCheck } from '../guardrails/run-plugin-dirs'
+import { resolveBundledPluginDir } from './bundled-plugin'
 import { ImplementAgentError } from './implement-error'
 import {
   resolveImplementConfig,
@@ -66,7 +67,11 @@ export async function runImplementAgent(
   const config = resolveImplementConfig(input, env)
   const cwd = config.cwd ?? process.cwd()
 
-  const cliVersion = verifyPreconditions(config, env, cwd)
+  // An unstated list resolves to the bundled plugin; a stated one replaces it,
+  // including a stated empty one — "deliberately no plugins at all".
+  const pluginDirs = config.pluginDirs ?? [resolveBundledPluginDir()]
+
+  const cliVersion = verifyPreconditions(config, pluginDirs, env, cwd)
 
   const branch = config.branch ?? probeBranch(cwd)
   const issueTitle =
@@ -79,7 +84,7 @@ export async function runImplementAgent(
     branch,
     prDescriptionFile: config.prDescriptionFile,
     standardsDir: config.standardsDir,
-    pluginDirs: config.pluginDirs,
+    pluginDirs,
     verifyReportFile: config.verifyReportFile,
     screenshotsDir: config.screenshotsDir,
     model: config.runPolicy.model,
@@ -176,9 +181,14 @@ export async function runImplementAgent(
  * missing env var or a dead standards path is a misconfiguration that changes
  * what the run produces, while a drifted CLI is a diagnostic that only
  * sometimes matters. See {@link requireStandardsDir} and `checkCliVersion`.
+ *
+ * `pluginDirs` arrives resolved rather than read off `config`, because the
+ * bundled default behind it is a filesystem lookup the pure resolver does not
+ * do.
  */
 function verifyPreconditions(
   config: ResolvedImplementConfig,
+  pluginDirs: string[],
   env: Record<string, string | undefined>,
   cwd: string
 ): string | undefined {
@@ -192,22 +202,24 @@ function verifyPreconditions(
   }
 
   requireStandardsDir(config.standardsDir, cwd)
-  requirePluginDirs(config.pluginDirs, cwd)
+  requirePluginDirs(pluginDirs, cwd)
   return checkRunningCliVersion(config.runPolicy, cwd)
 }
 
 /**
- * Refuse before the spawn when any stated plugin directory fails validation.
- * Stricter than the CLI-version warn for the same reason `standardsDir` is: a
- * rotted plugin and a correct one are indistinguishable once the flag is on
- * the vector, so the run would quietly produce work with none of the skills it
- * was configured to have. An unstated or empty list probes nothing.
+ * Refuse before the spawn when any plugin directory fails validation. Stricter
+ * than the CLI-version warn for the same reason `standardsDir` is: a rotted
+ * plugin and a correct one are indistinguishable once the flag is on the
+ * vector, so the run would quietly produce work with none of the skills it was
+ * configured to have. An empty list probes nothing.
+ *
+ * The bundled plugin gets no exemption. It reaches this as an ordinary entry
+ * and is refused by the same rules, named by its own path — which is the
+ * dependency's, so the refusal says which plugin it was without a second
+ * message shape to keep in step with the first.
  */
-function requirePluginDirs(
-  pluginDirs: string[] | undefined,
-  cwd: string
-): void {
-  if (!pluginDirs || pluginDirs.length === 0) return
+function requirePluginDirs(pluginDirs: string[], cwd: string): void {
+  if (pluginDirs.length === 0) return
 
   const verdict = runPluginDirsCheck(pluginDirs, cwd)
   if (verdict.refused) throw new ImplementAgentError(verdict.reason)
