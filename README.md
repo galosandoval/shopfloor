@@ -63,6 +63,10 @@ await runImplementAgent({
   claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!,
   promptTemplate: fs.readFileSync('prompt.md', 'utf8'),
   standardsDir: '/tmp/skills/rules',
+  // Claude Code plugins loaded for this session only, one --plugin-dir each,
+  // so their skills reach the agent without anything landing in your git tree.
+  // Every entry is validated before a token is spent.
+  pluginDirs: ['/opt/skills-plugin'],
   // Places pr_description.txt, verify_report.md, transcript.jsonl, and
   // failure_reason.txt; each is still individually overridable.
   outputDir: '/tmp/out',
@@ -116,6 +120,7 @@ you state, or one the environment already carries, never spawns a subprocess.
 | `branch`                         | `BRANCH`, `GITHUB_REF_NAME` | `git rev-parse` | —                                                    |
 | `repo`                           | `GITHUB_REPOSITORY`         | —               | unset; `gh` then infers it from the checkout         |
 | `standardsDir`                   | `STANDARDS_DIR`             | —               | `''` (prompt skips the step)                         |
+| `pluginDirs`                     | `PLUGIN_DIRS` (comma-sep.)  | —               | unstated — no plugin reaches the run                 |
 | `outputDir`                      | `OUTPUT_DIR`                | —               | OS tmpdir                                            |
 | `prDescriptionFile`              | —                           | —               | `pr_description.txt` under `outputDir`               |
 | `verifyReportFile`               | —                           | —               | `verify_report.md` under `outputDir`                 |
@@ -175,9 +180,9 @@ case below, where the commits were finished and only the prose was absent.
 
 #### Pre-spawn preconditions
 
-Three things are settled before the CLI spawns, so a misconfigured run costs
+Four things are settled before the CLI spawns, so a misconfigured run costs
 zero tokens: the `runPolicy.requiredEnvVars` check, the standards directory,
-and the CLI version.
+the plugin directories, and the CLI version.
 
 **Standards directory — fails the run.** A non-empty `standardsDir`
 (`STANDARDS_DIR`) that does not resolve to a directory is a misconfiguration
@@ -187,6 +192,61 @@ a run that quietly instructs the agent to read nothing and produces work
 against no standards at all. A relative path resolves against the run's `cwd`,
 which is where the agent itself reads it from. Leaving `standardsDir` unset
 still means "deliberately skip", silently, exactly as before.
+
+**Plugin directories — fail the run.** Each entry in `pluginDirs`
+(`PLUGIN_DIRS`, comma-separated) is passed to the CLI as `--plugin-dir`, one
+flag occurrence per entry, loading that plugin **for the session only** — the
+CLI's own skill discovery, with nothing written into your git tree. That last
+part matters: the agent commits its own work, and files it did not create risk
+being swept into a commit. A relative entry resolves against the run's `cwd`,
+which is where the CLI resolves it from. Remote plugin URLs are deliberately
+not accepted — fetching unattested code over the network into a
+fully-permissioned autonomous run is its own decision, not a free ride on this
+one.
+
+An unstated list and a list stated as empty are held apart rather than
+collapsed — `PLUGIN_DIRS=''` records "deliberately no plugins" — because a
+bundled default will later fall back on that distinction.
+
+Nothing spawns until every entry passes. A **directory** entry is refused when:
+
+| Refused when                                                          | Why                                                                                                                            |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| it does not resolve                                                   | the failure `standardsDir` used to hide — a rotted path and a correct one are indistinguishable once the flag is on the vector |
+| it has no readable `.claude-plugin/plugin.json`                       | it is not a plugin                                                                                                             |
+| its manifest declares no skills **and** it has no `skills/` directory | it contributes nothing the run asked for                                                                                       |
+| its manifest declares a skill path that is absent on disk             | the manifest is stale                                                                                                          |
+| it ships **hooks** or **MCP servers**                                 | see below                                                                                                                      |
+
+The refusal names every offending entry and what is wrong with it, not just the
+first.
+
+The check asserts what the manifest asserts about itself, and **no more** — it
+does not count skill files or read their frontmatter. Anything deeper would be
+a second, independent model of how the CLI discovers skills, and it would drift
+from the real one.
+
+An entry that is an **archive** — a `.zip`, the only file form accepted; any
+other file is refused — is checked **for existence only**. That is a deliberately weaker guarantee: inspecting it
+would mean unpacking it, which reintroduces exactly the staging work passing a
+directory to the CLI avoids. Nothing below applies to an archive — including
+the capability refusal.
+
+**Hooks and MCP servers — refused.** Both are refused whether declared in the
+manifest (`hooks`, `mcpServers`) or present only as convention (`hooks/`,
+`.mcp.json`); published plugins commonly declare neither key and rely on the
+directory names alone, so both are checked.
+
+The reason is specific to how these runs execute. They already pass
+`--dangerously-skip-permissions`, so a plugin's tool-permission declarations
+are moot — nothing is gated either way. What is _not_ moot is code that runs
+automatically without the model choosing to invoke it, and tools that fall
+outside the [command guard](#command-guard), which matches shell commands only
+and therefore cannot see a tool contributed by an MCP server. That is what
+makes this promise mean something: **a stated plugin adds no automatic code
+execution and no tools outside the command guard.** Plugin content that is only
+prose — skills, subagent definitions, slash commands — is deliberately
+permitted; a headless run never even invokes a slash command.
 
 **CLI version — warns by default.** The running `claude --version` is read
 before the spawn and returned on the run result as `cliVersion`, so a run's
@@ -330,13 +390,16 @@ or `review` module has an obvious home:
   (the subprocess, with both runaway guards armed around it).
 - `src/guardrails/` — the run-policy contract (idle/wall-clock/max-turns
   resolvers), the pure CLI-version comparison, preflight refusal, the command
-  policy and its `PreToolUse` hook script, and verify-comment posting (a
+  policy and its `PreToolUse` hook script, plugin-directory validation, and
+  verify-comment posting (a
   feedback-loop guardrail: posting proof back to the PR).
 - `src/observability/` — session transcript capture, for CI-artifact upload.
 
 The package exports the four verbs (`runImplementAgent`, `runPreflight`,
-`postVerifyComment`, plus `ImplementAgentError`), the three documented pure
-escape hatches (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`),
+`postVerifyComment`, plus `ImplementAgentError`), the four documented pure
+escape hatches (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`,
+`evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
+CI glue can pre-validate a plugin directory without starting a run),
 `DEFAULT_RUN_POLICY`, and the input/result types — including
 `CliVersionStrictness`, the union behind the strictness table above. The
 resolvers, the invocation assembler, and the transcript helpers are internals —
@@ -347,7 +410,7 @@ import from source if you're vendoring, but they aren't API.
 This package has **tests**: unit coverage on every pure function
 (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`,
 `resolveImplementConfig`, `prepareClaudeInvocation`, the run-policy resolvers,
-`checkCliVersion`, transcript capture) that
+`checkCliVersion`, `evaluatePluginDirs`, transcript capture) that
 asserts on inputs/outputs, no IO mocking. It does **not** have **evals** — no scored suite over labeled
 trajectories or an LM-judge check of whether an actual agent run produced a
 _good_ implementation. The `implement` phase's best-effort Playwright verify

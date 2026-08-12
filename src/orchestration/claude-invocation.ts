@@ -23,6 +23,12 @@ export interface ClaudeInvocationInput {
   model?: string
   /** Fast-loop backstop cap on agent turns — from the caller's `RunPolicyConfig`. */
   maxTurns: number
+  /** Claude Code plugin directories to load for this session only, one
+   *  `--plugin-dir` occurrence each — the CLI's own skill discovery, rather
+   *  than anything staged into the consumer's tree. Validated before the run
+   *  reaches here (`evaluatePluginDirs`); this module only lays out flags.
+   *  Omitted or empty leaves the flag off the vector entirely. */
+  pluginDirs?: string[]
   /** Absolute path to the command-guard hook script (shopfloor#2). Given, the
    *  invocation carries a `--settings` payload wiring it as a `PreToolUse`
    *  hook over `Bash`, so the run's forbidden operations are refused at
@@ -75,7 +81,8 @@ export function prepareClaudeInvocation(
     // flag: a fully autonomous headless run has no human present to approve
     // tool calls, so permission prompts would just hang the run. Callers must
     // provide their own sandboxing (a disposable CI runner, a container).
-    '--dangerously-skip-permissions'
+    '--dangerously-skip-permissions',
+    ...(input.pluginDirs ?? []).flatMap((dir) => ['--plugin-dir', dir])
   ]
 
   if (input.commandGuardHookPath) {

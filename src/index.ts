@@ -1,7 +1,8 @@
 /**
  * The package's public surface: the four verbs a consumer calls, the error
  * they throw, the three pure escape hatches the README documents
- * (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`), and the types
+ * (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`,
+ * `evaluatePluginDirs`), and the types
  * of what goes in and comes out. Resolvers, invocation assembly, transcript
  * capture, and reference parsing are internals — they exist as test seams, not
  * as API.
@@ -35,6 +36,15 @@ export {
   type RunPreflightInput,
   type RunPreflightResult
 } from './guardrails/run-preflight'
+
+export {
+  evaluatePluginDirs,
+  type PluginCapability,
+  type PluginDirFacts,
+  type PluginDirsVerdict
+} from './guardrails/plugin-dirs'
+
+export { runPluginDirsCheck } from './guardrails/run-plugin-dirs'
 
 export {
   classifyCommand,

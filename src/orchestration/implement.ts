@@ -25,6 +25,7 @@ import {
   type ResolvedRunPolicy
 } from '../guardrails/run-policy'
 import { checkCliVersion, parseCliVersion } from '../guardrails/cli-version'
+import { runPluginDirsCheck } from '../guardrails/run-plugin-dirs'
 import { ImplementAgentError } from './implement-error'
 import {
   resolveImplementConfig,
@@ -78,6 +79,7 @@ export async function runImplementAgent(
     branch,
     prDescriptionFile: config.prDescriptionFile,
     standardsDir: config.standardsDir,
+    pluginDirs: config.pluginDirs,
     verifyReportFile: config.verifyReportFile,
     screenshotsDir: config.screenshotsDir,
     model: config.runPolicy.model,
@@ -190,7 +192,25 @@ function verifyPreconditions(
   }
 
   requireStandardsDir(config.standardsDir, cwd)
+  requirePluginDirs(config.pluginDirs, cwd)
   return checkRunningCliVersion(config.runPolicy, cwd)
+}
+
+/**
+ * Refuse before the spawn when any stated plugin directory fails validation.
+ * Stricter than the CLI-version warn for the same reason `standardsDir` is: a
+ * rotted plugin and a correct one are indistinguishable once the flag is on
+ * the vector, so the run would quietly produce work with none of the skills it
+ * was configured to have. An unstated or empty list probes nothing.
+ */
+function requirePluginDirs(
+  pluginDirs: string[] | undefined,
+  cwd: string
+): void {
+  if (!pluginDirs || pluginDirs.length === 0) return
+
+  const verdict = runPluginDirsCheck(pluginDirs, cwd)
+  if (verdict.refused) throw new ImplementAgentError(verdict.reason)
 }
 
 /**

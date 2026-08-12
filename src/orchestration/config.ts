@@ -42,6 +42,20 @@ export interface RunImplementAgentConfig {
   /** Absolute path to coding-standard rules — defaults to `STANDARDS_DIR`, else skipped. */
   standardsDir?: string
   /**
+   * Claude Code plugin directories (or `.zip` archives) loaded into this
+   * session only, one `--plugin-dir` each, so their skills reach the agent
+   * without anything being written into the consumer's git tree. Defaults to
+   * `PLUGIN_DIRS`, comma-separated.
+   *
+   * Named for what it grants rather than for skills, the reason it is wanted:
+   * a plugin can carry more than skills, so a name promising "skills" would
+   * let one quietly widen a run's surface while reading as inert. Every entry
+   * is validated before the spawn by `evaluatePluginDirs`. Remote
+   * plugin URLs are deliberately not accepted: fetching unattested code over
+   * the network into a fully-permissioned autonomous run is its own decision.
+   */
+  pluginDirs?: string[]
+  /**
    * Directory the run's outputs are written beneath — defaults to `OUTPUT_DIR`,
    * else the OS temp dir. Each derived path below can still be set on its own.
    */
@@ -85,6 +99,12 @@ export interface ResolvedImplementConfig {
   claudeCodeOAuthToken: string
   promptTemplate: string
   standardsDir: string
+  /**
+   * Omitted entirely when nothing stated a list, so "unstated" stays
+   * distinguishable from "stated as empty" — the two differ once a bundled
+   * default exists to fall back to, and a fabricated `[]` would erase that.
+   */
+  pluginDirs?: string[]
   prDescriptionFile: string
   verifyReportFile: string
   transcriptFile: string
@@ -123,7 +143,7 @@ export function resolveImplementConfig(
   const inOutputDir = (file: string) =>
     path.join(resolveOutputDir(input, env), file)
 
-  return {
+  const resolved: ResolvedImplementConfig = {
     issueNumber,
     issueTitle: input.issueTitle ?? env.ISSUE_TITLE,
     branch: input.branch ?? env.BRANCH ?? env.GITHUB_REF_NAME,
@@ -148,6 +168,13 @@ export function resolveImplementConfig(
     runPolicy: resolveRunPolicy(input.runPolicy ?? {}, env),
     cwd: input.cwd
   }
+
+  // Omitted rather than defaulted, so an unstated list stays distinct from one
+  // stated as empty — `PLUGIN_DIRS=''` is a caller saying "no plugins at all".
+  const pluginDirs = input.pluginDirs ?? parseNameList(env.PLUGIN_DIRS)
+  if (pluginDirs !== undefined) resolved.pluginDirs = pluginDirs
+
+  return resolved
 }
 
 /** Name of the file a failed run's reason is written to, beneath the output dir. */
