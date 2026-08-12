@@ -1,5 +1,96 @@
 # @galosandoval/shopfloor
 
+## 0.8.0
+
+### Minor Changes
+
+- [#31](https://github.com/galosandoval/shopfloor/pull/31) [`b64efed`](https://github.com/galosandoval/shopfloor/commit/b64efedeb85ea9e61d69eaab87c8eee46cce8325) Thanks [@galosandoval](https://github.com/galosandoval)! - Bundle the skills plugin: installing this package now brings the skills the
+  harness expects an agent to have, as a git dependency on
+  [`galosandoval/skills`](https://github.com/galosandoval/skills) pinned to the
+  tag `galosandoval-skills@1.1.0`. No second checkout to clone, no path to keep
+  `PLUGIN_DIRS` pointed at.
+
+  **Behavior change — an unstated `pluginDirs` no longer means "no plugins".** It
+  now resolves to the bundled plugin, so a run that previously spawned with no
+  `--plugin-dir` at all will spawn with one, and the agent's session carries
+  skills it did not have before. A stated list **replaces** the default rather
+  than adding to it; an explicitly empty list (`pluginDirs: []`, `PLUGIN_DIRS=''`)
+  restores the old behavior exactly — no plugins load.
+
+  **New failure mode — a missing bundled plugin refuses the run before spawning.**
+  The bundled plugin is validated by the same check a stated one is, with no
+  exemption, and the likeliest way it fails is not being on disk: a pruned
+  `node_modules`, an install that skipped dependencies, or an environment that
+  cannot fetch git dependencies at all. That refuses, naming
+  `galosandoval-skills` and telling you to reinstall or state your own
+  `pluginDirs` — rather than proceeding with none of the procedure the run was
+  configured to have. The lookup goes through Node's own module resolution from
+  this package's directory, so hoisted and nested layouts both answer; where it
+  cannot, state `pluginDirs` explicitly.
+
+  **New install requirement:** `git` and reachable GitHub at install time.
+
+  **New export — `resolveBundledPluginDir()`** (and `BUNDLED_PLUGIN_PACKAGE`),
+  because replacement means naming both is the only way to keep the bundled
+  plugin alongside your own:
+
+  ```ts
+  import { resolveBundledPluginDir } from '@galosandoval/shopfloor'
+
+  pluginDirs: [resolveBundledPluginDir(), '/opt/my-plugin']
+  ```
+
+  It throws `ImplementAgentError` when the dependency cannot be resolved, so CI
+  glue can surface that failure without starting a run.
+
+  The scope boundary narrows rather than reverses: **procedure ships, standards
+  do not.** Skills are portable across repositories and now arrive with the
+  install; opinionated coding standards remain per-repository, in the repository
+  being worked on — `standardsDir` is removed in this same release, see its own
+  entry.
+
+- [#32](https://github.com/galosandoval/shopfloor/pull/32) [`55114b0`](https://github.com/galosandoval/shopfloor/commit/55114b061726854151c4ac81226249e3ddeee631) Thanks [@galosandoval](https://github.com/galosandoval)! - Remove `standardsDir`. Skills reach the agent through the Claude Code CLI's own
+  plugin discovery (`pluginDirs` / `PLUGIN_DIRS`, defaulting to the bundled
+  skills plugin), so a standards directory pasted into a prompt has nothing left
+  to do: it was instruction-by-path, with no progressive disclosure, no way to
+  load a reference only when a task called for it, and no way for the harness to
+  know whether the path meant anything.
+
+  **Breaking, in a minor — read this before bumping.**
+
+  **What breaks.** `standardsDir` is gone from `RunImplementAgentConfig`, so a
+  caller stating it no longer type-checks. The rendered prompt no longer
+  substitutes `{{STANDARDS_DIR}}`.
+
+  **What newly refuses.** A stated `standardsDir`, or a non-empty `STANDARDS_DIR`
+  in the environment, **refuses the run before spawning** with an
+  `ImplementAgentError` naming the replacement. This is deliberate and is the
+  migration mechanism: deleting the field quietly would leave a CI-set
+  `STANDARDS_DIR` meaning nothing at all — no type error, no runtime error, just
+  a run proceeding with less context than its operator believes it has, which is
+  the silent degradation `0.5.0`'s dead-path validation was added to stop. So a
+  run that was previously green and misconfigured now fails loudly instead. An
+  empty value from either source still means "deliberately skip" and does not
+  refuse. There is no deprecation window where both paths work.
+
+  **What to change.** Delete `standardsDir` from your call, unset `STANDARDS_DIR`
+  in your CI, and **remove `{{STANDARDS_DIR}}` from your prompt template** — an
+  unrecognized placeholder now renders as literal text, so a stale template
+  leaves `{{STANDARDS_DIR}}` sitting in the prompt the agent reads. The refusal
+  above means no run reaches a spawn with its configuration still wrong, but it
+  cannot see your template: a caller who fixes the config and leaves the template
+  stale is the one way this reaches an agent. Your coding standards belong in the
+  repository being worked on — its `CLAUDE.md` and the docs it points at — where
+  the agent reads them for itself.
+
+  **What this does not close.** Of the six kinds of context a harness owes an
+  agent, this moves **instructions** from delegated to shipped and **knowledge**
+  from absent to partial. **Memory**, **examples**, and **tools** stay at zero —
+  every run still starts cold, and a failed run still teaches the next one
+  nothing. **Evals** — scoring whether a run produced good work, and whether it
+  took a sound path to get there — remain the largest open gap. Native skills
+  wiring closed a rotting string, not context ownership.
+
 ## 0.7.0
 
 ### Minor Changes
