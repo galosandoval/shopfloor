@@ -43,5 +43,6 @@ glue can surface that failure without starting a run.
 
 The scope boundary narrows rather than reverses: **procedure ships, standards
 do not.** Skills are portable across repositories and now arrive with the
-install; opinionated coding standards remain per-repository, and `standardsDir`
-still points at yours.
+install; opinionated coding standards remain per-repository, in the repository
+being worked on — `standardsDir` is removed in this same release, see its own
+entry.
