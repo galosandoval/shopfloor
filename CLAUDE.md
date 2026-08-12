@@ -38,8 +38,11 @@ function proves nothing about whether a run calls it.
 
 They live in this repository — the two docs linked above; why there, and where
 they came from, is
-[`CONTEXT.md`](./CONTEXT.md#standards-in-repo-procedures-in-skills). One thing
-neither says: the public surface is `src/index.ts`, nothing else.
+[`CONTEXT.md`](./CONTEXT.md#standards-in-repo-procedures-in-skills). The same
+line decides what this package ships: **procedure ships, standards do not** —
+skills arrive with an install as the bundled plugin, opinionated standards
+never do. One thing neither doc says: the public surface is `src/index.ts`,
+nothing else.
 
 ## What this package deliberately does not own
 
@@ -47,7 +50,9 @@ Each was decided against; don't add them.
 
 - **Prompt content** beyond the harness's invocation defaults — per-consumer.
 - **Opinionated coding standards for consumers** — `standardsDir` points at
-  theirs. This repository's own standards are not shipped.
+  theirs. This repository's own standards are not shipped. Procedure is the
+  narrow exception, and only as a default: the bundled skills plugin arrives
+  with an install, and a stated `pluginDirs` replaces it outright.
 - **Consumer env-var names** — `requiredEnvVars` is caller-stated.
 - **CI glue and workflow templates** — callers own `$GITHUB_OUTPUT`, exit codes,
   branch checkout, the PR.

@@ -27,7 +27,20 @@ npm install @galosandoval/shopfloor
 ```
 
 Requires Node 20+ and the `claude` and `gh` CLIs on `PATH` — this package
-shells out to both rather than wrapping an SDK.
+shells out to both rather than wrapping an SDK — plus `git` and reachable
+GitHub at install time, for the bundled plugin below.
+
+No second command, though. The skills the harness expects an agent
+to have arrive with the install as the **bundled plugin** — a git dependency on
+[`galosandoval/skills`](https://github.com/galosandoval/skills) pinned to a
+tag — so there is no second checkout to clone and no path to keep an
+environment variable pointed at. An unstated `pluginDirs` loads it; see
+[Plugin directories](#pre-spawn-preconditions).
+
+What ships in it is **procedure** — how work gets done, which is the same in
+every repository. Coding standards are not procedure: they are per-repository
+and live in the repository being worked on, which is what `standardsDir` points
+at. This package ships none of its own.
 
 ## Usage
 
@@ -55,6 +68,8 @@ try {
 State a field only where you disagree with what would be inferred:
 
 ```ts
+import { resolveBundledPluginDir } from '@galosandoval/shopfloor'
+
 await runImplementAgent({
   issueNumber: '123',
   issueTitle: 'Add pantry filter to recipe search',
@@ -65,8 +80,9 @@ await runImplementAgent({
   standardsDir: '/tmp/skills/rules',
   // Claude Code plugins loaded for this session only, one --plugin-dir each,
   // so their skills reach the agent without anything landing in your git tree.
-  // Every entry is validated before a token is spent.
-  pluginDirs: ['/opt/skills-plugin'],
+  // Every entry is validated before a token is spent. Stating this REPLACES
+  // the bundled plugin — name it alongside yours to keep both.
+  pluginDirs: [resolveBundledPluginDir(), '/opt/my-plugin'],
   // Places pr_description.txt, verify_report.md, transcript.jsonl, and
   // failure_reason.txt; each is still individually overridable.
   outputDir: '/tmp/out',
@@ -111,30 +127,30 @@ Every optional input resolves the same way: **explicit input → environment
 variable → probe (`git`, `gh`) → package default**. Probes are lazy — a field
 you state, or one the environment already carries, never spawns a subprocess.
 
-| Field                            | Environment                 | Probe           | Default                                              |
-| -------------------------------- | --------------------------- | --------------- | ---------------------------------------------------- |
-| `issueNumber`                    | `ISSUE_NUMBER`              | —               | _required_                                           |
-| `claudeCodeOAuthToken`           | `CLAUDE_CODE_OAUTH_TOKEN`   | —               | _required_                                           |
-| `promptTemplate`                 | — (CLI only: `PROMPT_FILE`) | —               | _required_                                           |
-| `issueTitle`                     | `ISSUE_TITLE`               | `gh issue view` | —                                                    |
-| `branch`                         | `BRANCH`, `GITHUB_REF_NAME` | `git rev-parse` | —                                                    |
-| `repo`                           | `GITHUB_REPOSITORY`         | —               | unset; `gh` then infers it from the checkout         |
-| `standardsDir`                   | `STANDARDS_DIR`             | —               | `''` (prompt skips the step)                         |
-| `pluginDirs`                     | `PLUGIN_DIRS` (comma-sep.)  | —               | unstated — no plugin reaches the run                 |
-| `outputDir`                      | `OUTPUT_DIR`                | —               | OS tmpdir                                            |
-| `prDescriptionFile`              | —                           | —               | `pr_description.txt` under `outputDir`               |
-| `verifyReportFile`               | —                           | —               | `verify_report.md` under `outputDir`                 |
-| `transcriptFile`                 | —                           | —               | `transcript.jsonl` under `outputDir`                 |
-| `failureReasonFile`              | —                           | —               | `failure_reason.txt` under `outputDir`               |
-| `screenshotsDir`                 | `SCREENSHOTS_DIR`           | —               | `.agent/verify/issue-<N>`                            |
-| `projectsDir`                    | `PROJECTS_DIR`              | —               | `~/.claude/projects`                                 |
-| `runPolicy.model`                | `MODEL`                     | —               | none — the Claude CLI's own default                  |
-| `runPolicy.maxTurns`             | `MAX_TURNS`                 | —               | `150`                                                |
-| `runPolicy.idleMinutes`          | `IDLE_MINUTES`              | —               | `15`                                                 |
-| `runPolicy.wallClockMinutes`     | `WALL_CLOCK_MINUTES`        | —               | none — the run has no wall-clock ceiling             |
-| `runPolicy.cliVersion`           | `CLI_VERSION`               | —               | none — the running version is recorded, not compared |
-| `runPolicy.cliVersionStrictness` | `CLI_VERSION_STRICTNESS`    | —               | `'warn'`                                             |
-| `runPolicy.requiredEnvVars`      | `REQUIRED_ENV_VARS`         | —               | `[]`                                                 |
+| Field                            | Environment                 | Probe           | Default                                               |
+| -------------------------------- | --------------------------- | --------------- | ----------------------------------------------------- |
+| `issueNumber`                    | `ISSUE_NUMBER`              | —               | _required_                                            |
+| `claudeCodeOAuthToken`           | `CLAUDE_CODE_OAUTH_TOKEN`   | —               | _required_                                            |
+| `promptTemplate`                 | — (CLI only: `PROMPT_FILE`) | —               | _required_                                            |
+| `issueTitle`                     | `ISSUE_TITLE`               | `gh issue view` | —                                                     |
+| `branch`                         | `BRANCH`, `GITHUB_REF_NAME` | `git rev-parse` | —                                                     |
+| `repo`                           | `GITHUB_REPOSITORY`         | —               | unset; `gh` then infers it from the checkout          |
+| `standardsDir`                   | `STANDARDS_DIR`             | —               | `''` (prompt skips the step)                          |
+| `pluginDirs`                     | `PLUGIN_DIRS` (comma-sep.)  | —               | the bundled skills plugin; stating a list replaces it |
+| `outputDir`                      | `OUTPUT_DIR`                | —               | OS tmpdir                                             |
+| `prDescriptionFile`              | —                           | —               | `pr_description.txt` under `outputDir`                |
+| `verifyReportFile`               | —                           | —               | `verify_report.md` under `outputDir`                  |
+| `transcriptFile`                 | —                           | —               | `transcript.jsonl` under `outputDir`                  |
+| `failureReasonFile`              | —                           | —               | `failure_reason.txt` under `outputDir`                |
+| `screenshotsDir`                 | `SCREENSHOTS_DIR`           | —               | `.agent/verify/issue-<N>`                             |
+| `projectsDir`                    | `PROJECTS_DIR`              | —               | `~/.claude/projects`                                  |
+| `runPolicy.model`                | `MODEL`                     | —               | none — the Claude CLI's own default                   |
+| `runPolicy.maxTurns`             | `MAX_TURNS`                 | —               | `150`                                                 |
+| `runPolicy.idleMinutes`          | `IDLE_MINUTES`              | —               | `15`                                                  |
+| `runPolicy.wallClockMinutes`     | `WALL_CLOCK_MINUTES`        | —               | none — the run has no wall-clock ceiling              |
+| `runPolicy.cliVersion`           | `CLI_VERSION`               | —               | none — the running version is recorded, not compared  |
+| `runPolicy.cliVersionStrictness` | `CLI_VERSION_STRICTNESS`    | —               | `'warn'`                                              |
+| `runPolicy.requiredEnvVars`      | `REQUIRED_ENV_VARS`         | —               | `[]`                                                  |
 
 `promptTemplate` is the raw template **contents**, not a path — the library
 never reads a file for it, so it carries no environment variable. `PROMPT_FILE`
@@ -204,9 +220,30 @@ not accepted — fetching unattested code over the network into a
 fully-permissioned autonomous run is its own decision, not a free ride on this
 one.
 
-An unstated list and a list stated as empty are held apart rather than
-collapsed — `PLUGIN_DIRS=''` records "deliberately no plugins" — because a
-bundled default will later fall back on that distinction.
+**Unstated, the list is the bundled plugin.** Installing this package brings
+[`galosandoval/skills`](https://github.com/galosandoval/skills) with it as a git
+dependency pinned to a tag, and an unstated `pluginDirs` loads that. Its
+resolved location is on the public surface as `resolveBundledPluginDir()`,
+because a **stated list replaces the default rather than adding to it** — so
+naming both is something you write, not something you guess:
+
+```ts
+import { resolveBundledPluginDir } from '@galosandoval/shopfloor'
+
+pluginDirs: [resolveBundledPluginDir(), '/opt/my-plugin']
+```
+
+Replacement, not addition: a default that always loads is a floor rather than a
+default, and a floor is what turns a harness into a framework — your own version
+of a bundled skill would load beside it, with the CLI arbitrating a collision
+this package created. It also keeps the opt-out free: an explicitly empty list
+(`pluginDirs: []`, `PLUGIN_DIRS=''`) loads no plugins at all, which is why an
+unstated list and an empty one are held apart rather than collapsed.
+
+The bundled plugin is validated exactly like a stated one — no exemption. Its
+likeliest failure is not being on disk at all (a strict package-manager layout,
+a pruned install), and that refuses the run naming the package, rather than
+letting it proceed with none of the procedure it was configured to have.
 
 Nothing spawns until every entry passes. A **directory** entry is refused when:
 
@@ -386,8 +423,10 @@ or `review` module has an obvious home:
 
 - `src/orchestration/` — `runImplementAgent` (the orchestrator),
   `resolveImplementConfig` (pure configuration resolution),
-  `prepareClaudeInvocation` (pure CLI-invocation assembly), and `spawnClaude`
-  (the subprocess, with both runaway guards armed around it).
+  `prepareClaudeInvocation` (pure CLI-invocation assembly), `spawnClaude`
+  (the subprocess, with both runaway guards armed around it), and
+  `resolveBundledPluginDir` (where the bundled plugin landed — filesystem work,
+  so it sits in the shell rather than in the configuration resolver).
 - `src/guardrails/` — the run-policy contract (idle/wall-clock/max-turns
   resolvers), the pure CLI-version comparison, preflight refusal, the command
   policy and its `PreToolUse` hook script, plugin-directory validation, and
@@ -400,6 +439,7 @@ The package exports the four verbs (`runImplementAgent`, `runPreflight`,
 escape hatches (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`,
 `evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
 CI glue can pre-validate a plugin directory without starting a run),
+`resolveBundledPluginDir` (where the bundled plugin landed),
 `DEFAULT_RUN_POLICY`, and the input/result types — including
 `CliVersionStrictness`, the union behind the strictness table above. The
 resolvers, the invocation assembler, and the transcript helpers are internals —

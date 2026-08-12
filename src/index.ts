@@ -2,7 +2,9 @@
  * The package's public surface: the four verbs a consumer calls, the error
  * they throw, the three pure escape hatches the README documents
  * (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`,
- * `evaluatePluginDirs`), and the types
+ * `evaluatePluginDirs`), the bundled plugin's resolved location — API because
+ * a stated `pluginDirs` replaces the default, so naming it alongside your own
+ * has to be writable rather than guessable — and the types
  * of what goes in and comes out. Resolvers, invocation assembly, transcript
  * capture, and reference parsing are internals — they exist as test seams, not
  * as API.
@@ -45,6 +47,8 @@ export {
 } from './guardrails/plugin-dirs'
 
 export { runPluginDirsCheck } from './guardrails/run-plugin-dirs'
+
+export { resolveBundledPluginDir } from './orchestration/bundled-plugin'
 
 export {
   classifyCommand,

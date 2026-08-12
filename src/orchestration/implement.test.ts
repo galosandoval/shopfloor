@@ -9,6 +9,7 @@
  */
 
 import { runImplementAgent } from './implement'
+import { resolveBundledPluginDir } from './bundled-plugin'
 import { spawnClaude, type SpawnClaudeResult } from './spawn-claude'
 import { captureTranscript } from '../observability/transcript'
 import type { RunImplementAgentConfig } from './config'
@@ -60,10 +61,12 @@ function runningCliVersion(version: string | undefined) {
 }
 
 /**
- * A filesystem where every stated plugin directory is a valid plugin: a
- * manifest declaring one skill that exists, and neither `hooks/` nor
- * `.mcp.json`. The real `runPluginDirsCheck` runs against this — stubbing the
- * check itself would prove only that a stub was called.
+ * A filesystem where every plugin directory is a valid plugin: a manifest
+ * declaring one skill that exists, and neither `hooks/` nor `.mcp.json`. Also
+ * the suite's default, since an unstated list resolves to the bundled plugin
+ * and every run therefore probes one. The real `runPluginDirsCheck` runs
+ * against this — stubbing the check itself would prove only that a stub was
+ * called.
  */
 function pluginDirsAreValid({ shipsHooks }: { shipsHooks?: boolean } = {}) {
   statSyncMock.mockImplementation((target: string) => {
@@ -121,8 +124,10 @@ beforeEach(() => {
   // Implementations survive `clearAllMocks`, so every per-test override above
   // is restored to the happy default here rather than leaking into the next.
   runningCliVersion('2.1.220')
-  statSyncMock.mockImplementation(() => ({ isDirectory: () => true }))
-  readFileSyncMock.mockReturnValue('an agent-written PR description')
+  // Every run resolves a plugin directory now — the bundled one when nothing
+  // states a list — so a filesystem answering plugin probes is the baseline,
+  // not a per-suite arrangement.
+  pluginDirsAreValid()
 })
 
 describe('runImplementAgent guard wiring', () => {
@@ -281,7 +286,9 @@ describe('runImplementAgent standards-directory precondition', () => {
   it('skips the check silently when no standards dir is stated', async () => {
     standardsDirIs('missing')
 
-    await runImplementAgent(baseInput())
+    // No plugins either: on a filesystem where nothing resolves, the bundled
+    // default would refuse this run for its own reasons.
+    await runImplementAgent(baseInput({ pluginDirs: [] }))
 
     expect(spawnClaudeMock).toHaveBeenCalled()
   })
@@ -304,10 +311,6 @@ describe('runImplementAgent standards-directory precondition', () => {
 })
 
 describe('runImplementAgent plugin-directory precondition', () => {
-  beforeEach(() => {
-    pluginDirsAreValid()
-  })
-
   it('passes each validated entry to the CLI as its own --plugin-dir', async () => {
     await runImplementAgent(
       baseInput({ pluginDirs: ['/plugins/skills', '/plugins/extra.zip'] })
@@ -368,10 +371,37 @@ describe('runImplementAgent plugin-directory precondition', () => {
     expect(spawnClaudeMock).not.toHaveBeenCalled()
   })
 
-  it('passes no flag when no list is stated', async () => {
+  it('falls back to the bundled plugin when no list is stated', async () => {
     await runImplementAgent(baseInput())
 
-    expect(armedWith().args).not.toContain('--plugin-dir')
+    expect(armedWith().args).toEqual(
+      expect.arrayContaining(['--plugin-dir', resolveBundledPluginDir()])
+    )
+  })
+
+  it('replaces the bundled plugin with a stated list rather than adding to it', async () => {
+    await runImplementAgent(baseInput({ pluginDirs: ['/plugins/skills'] }))
+
+    expect(armedWith().args).not.toContain(resolveBundledPluginDir())
+  })
+
+  it('refuses when the bundled plugin fails validation, naming its path', async () => {
+    // Its path is the dependency's, so the package name is what a reader sees.
+    statSyncMock.mockImplementation(() => {
+      throw new Error('ENOENT')
+    })
+
+    await expect(runImplementAgent(baseInput())).rejects.toThrow(
+      /galosandoval-skills/
+    )
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses when the bundled plugin ships hooks or MCP servers', async () => {
+    pluginDirsAreValid({ shipsHooks: true })
+
+    await expect(runImplementAgent(baseInput())).rejects.toThrow(/hooks/)
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
   })
 
   it('passes no flag for a deliberately empty list', async () => {
