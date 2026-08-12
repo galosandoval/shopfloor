@@ -23,12 +23,13 @@ vi.mock('./spawn-claude', async (importOriginal) => ({
 vi.mock('../observability/transcript', () => ({
   captureTranscript: vi.fn(() => true)
 }))
-// Hoisted so the two stubs a test reprograms are held as plain `vi.fn()`s:
-// both built-ins are heavily overloaded, and addressing them through
-// `vi.mocked` would mean casting past an overload set to stub one return.
-const { execFileSyncMock, statSyncMock } = vi.hoisted(() => ({
+// Hoisted so the stubs a test reprograms are held as plain `vi.fn()`s: these
+// built-ins are heavily overloaded, and addressing them through `vi.mocked`
+// would mean casting past an overload set to stub one return.
+const { execFileSyncMock, statSyncMock, readFileSyncMock } = vi.hoisted(() => ({
   execFileSyncMock: vi.fn(),
-  statSyncMock: vi.fn()
+  statSyncMock: vi.fn(),
+  readFileSyncMock: vi.fn()
 }))
 
 vi.mock('node:child_process', () => ({
@@ -42,7 +43,7 @@ vi.mock('node:fs', () => ({
   // The command-guard hook resolves against `dist/`, which a source-run test
   // has no copy of, and the PR description is written by the run itself.
   existsSync: vi.fn(() => true),
-  readFileSync: vi.fn(() => 'an agent-written PR description'),
+  readFileSync: readFileSyncMock,
   writeFileSync: vi.fn(),
   // A stated `standardsDir` resolves to a real directory unless a test says
   // otherwise.
@@ -55,6 +56,26 @@ const spawnClaudeMock = vi.mocked(spawnClaude)
 function runningCliVersion(version: string | undefined) {
   execFileSyncMock.mockImplementation((file: string) =>
     file === 'claude' && version ? `${version} (Claude Code)` : ''
+  )
+}
+
+/**
+ * A filesystem where every stated plugin directory is a valid plugin: a
+ * manifest declaring one skill that exists, and neither `hooks/` nor
+ * `.mcp.json`. The real `runPluginDirsCheck` runs against this — stubbing the
+ * check itself would prove only that a stub was called.
+ */
+function pluginDirsAreValid({ shipsHooks }: { shipsHooks?: boolean } = {}) {
+  statSyncMock.mockImplementation((target: string) => {
+    const isCapability =
+      target.endsWith('/hooks') || target.endsWith('/.mcp.json')
+    if (isCapability && !shipsHooks) throw new Error('ENOENT')
+    return { isDirectory: () => !target.endsWith('.json') }
+  })
+  readFileSyncMock.mockImplementation((target: string) =>
+    target.endsWith('plugin.json')
+      ? JSON.stringify({ name: 'skills', skills: ['./skills/tdd'] })
+      : 'an agent-written PR description'
   )
 }
 
@@ -101,6 +122,7 @@ beforeEach(() => {
   // is restored to the happy default here rather than leaking into the next.
   runningCliVersion('2.1.220')
   statSyncMock.mockImplementation(() => ({ isDirectory: () => true }))
+  readFileSyncMock.mockReturnValue('an agent-written PR description')
 })
 
 describe('runImplementAgent guard wiring', () => {
@@ -278,6 +300,84 @@ describe('runImplementAgent standards-directory precondition', () => {
     )
 
     expect(statSyncMock).toHaveBeenCalledWith('/repo/skills/rules')
+  })
+})
+
+describe('runImplementAgent plugin-directory precondition', () => {
+  beforeEach(() => {
+    pluginDirsAreValid()
+  })
+
+  it('passes each validated entry to the CLI as its own --plugin-dir', async () => {
+    await runImplementAgent(
+      baseInput({ pluginDirs: ['/plugins/skills', '/plugins/extra.zip'] })
+    )
+
+    expect(armedWith().args).toEqual(
+      expect.arrayContaining([
+        '--plugin-dir',
+        '/plugins/skills',
+        '--plugin-dir',
+        '/plugins/extra.zip'
+      ])
+    )
+  })
+
+  it('takes the list from PLUGIN_DIRS when the input states none', async () => {
+    await runImplementAgent(
+      baseInput({ env: { PLUGIN_DIRS: '/from-env,/also-env' } })
+    )
+
+    expect(armedWith().args).toEqual(
+      expect.arrayContaining([
+        '--plugin-dir',
+        '/from-env',
+        '--plugin-dir',
+        '/also-env'
+      ])
+    )
+  })
+
+  it('probes a relative entry against the run’s cwd, not this process’s', async () => {
+    await runImplementAgent(
+      baseInput({ pluginDirs: ['relative/plugin'], cwd: '/repo' })
+    )
+
+    expect(statSyncMock).toHaveBeenCalledWith(
+      '/repo/relative/plugin/.claude-plugin/plugin.json'
+    )
+  })
+
+  it('fails before spawning when an entry does not resolve, naming it', async () => {
+    statSyncMock.mockImplementation(() => {
+      throw new Error('ENOENT')
+    })
+
+    await expect(
+      runImplementAgent(baseInput({ pluginDirs: ['/plugins/gone'] }))
+    ).rejects.toThrow(/\/plugins\/gone/)
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
+  })
+
+  it('fails before spawning when an entry ships hooks or MCP servers', async () => {
+    pluginDirsAreValid({ shipsHooks: true })
+
+    await expect(
+      runImplementAgent(baseInput({ pluginDirs: ['/plugins/hooked'] }))
+    ).rejects.toThrow(/hooks/)
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
+  })
+
+  it('passes no flag when no list is stated', async () => {
+    await runImplementAgent(baseInput())
+
+    expect(armedWith().args).not.toContain('--plugin-dir')
+  })
+
+  it('passes no flag for a deliberately empty list', async () => {
+    await runImplementAgent(baseInput({ pluginDirs: [] }))
+
+    expect(armedWith().args).not.toContain('--plugin-dir')
   })
 })
 

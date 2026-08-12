@@ -105,6 +105,37 @@ describe('prepareClaudeInvocation', () => {
       expect(args).not.toContain('--output-format')
     })
 
+    it('passes one --plugin-dir occurrence per stated entry, in order', () => {
+      const { args } = prepareClaudeInvocation(
+        baseInput({ pluginDirs: ['/plugins/skills', '/plugins/extra.zip'] })
+      )
+
+      expect(args).toEqual([
+        '--print',
+        '--model',
+        MODEL,
+        '--max-turns',
+        String(MAX_TURNS),
+        '--dangerously-skip-permissions',
+        '--plugin-dir',
+        '/plugins/skills',
+        '--plugin-dir',
+        '/plugins/extra.zip'
+      ])
+    })
+
+    it('leaves the flag off entirely when no plugin dirs are stated', () => {
+      const { args } = prepareClaudeInvocation(baseInput())
+
+      expect(args).not.toContain('--plugin-dir')
+    })
+
+    it('leaves the flag off for an explicitly empty list', () => {
+      const { args } = prepareClaudeInvocation(baseInput({ pluginDirs: [] }))
+
+      expect(args).not.toContain('--plugin-dir')
+    })
+
     it('wires the command guard as a PreToolUse hook over Bash when a hook script is given', () => {
       const { args } = prepareClaudeInvocation(
         baseInput({ commandGuardHookPath: '/pkg/dist/command-guard-hook.js' })

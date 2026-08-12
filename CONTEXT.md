@@ -19,13 +19,13 @@ harness concern rather than as a flat file list.
 
 ## Module map
 
-| Directory            | Owns                                                                                                                                                                                                                                          |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/orchestration/` | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `ImplementAgentError` |
-| `src/guardrails/`    | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, the command policy and its `PreToolUse` hook script, verify-comment posting                   |
-| `src/observability/` | Session transcript capture, for CI-artifact upload                                                                                                                                                                                            |
-| `src/index.ts`       | The public surface — nothing else is API                                                                                                                                                                                                      |
-| `src/cli.ts`         | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                |
+| Directory            | Owns                                                                                                                                                                                                                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/orchestration/` | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `ImplementAgentError`                                                          |
+| `src/guardrails/`    | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting |
+| `src/observability/` | Session transcript capture, for CI-artifact upload                                                                                                                                                                                                                                                     |
+| `src/index.ts`       | The public surface — nothing else is API                                                                                                                                                                                                                                                               |
+| `src/cli.ts`         | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                         |
 
 ## Pure core, IO shell
 
@@ -42,7 +42,8 @@ decision splits in two:
 
 The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `command-guard-hook`, `buildVerifyComment` / `postVerifyComment`,
-`checkCliVersion` and `resolveImplementConfig` / `runImplementAgent`.
+`evaluatePluginDirs` / `runPluginDirsCheck`, `checkCliVersion` and
+`resolveImplementConfig` / `runImplementAgent`.
 
 A new module lands in that shape: name the decision, export it as a pure
 function with its own input type, put it in `src/guardrails/` (a decision about
@@ -71,12 +72,14 @@ spawns a subprocess.
    and an env record.
 2. **Verify preconditions** — first, and before any probe spends time or any
    token is spent: the caller's required env vars, that `standardsDir` resolves
-   to a real directory, and the running `claude --version` against the policy's
-   pin. Returns the running version for the run result.
+   to a real directory, that every stated plugin directory is a plugin carrying
+   skills and neither hooks nor MCP servers, and the running `claude --version`
+   against the policy's pin. Returns the running version for the run result.
 3. **Probe what's still unstated** — branch and issue title, via lazy `git` /
    `gh` calls in the shell. These run _after_ the preconditions, so a
    misconfigured run never pays for them.
-4. **Assemble the invocation** — `prepareClaudeInvocation`, pure: flags, the
+4. **Assemble the invocation** — `prepareClaudeInvocation`, pure: flags (one
+   `--plugin-dir` per validated plugin directory), the
    rendered prompt, and the inline `--settings` payload that arms the
    command-guard `PreToolUse` hook. Output always streams, because the idle
    guard reads the child's output as its heartbeat.
@@ -102,6 +105,15 @@ PR, sandboxing, and any CI glue.
   exits 0, so it never takes a run down over a command it has no opinion about.
   Same logic behind the CLI-version check warning by default: pin churn that
   fails green runs trains people to delete the check.
+- **A plugin may add prose, never execution.** A stated plugin directory is
+  refused if it ships hooks or MCP servers, from its manifest or from the
+  convention directories alike. These runs pass
+  `--dangerously-skip-permissions`, so permission declarations are moot; what
+  is not moot is code that runs without the model choosing it, and tools the
+  command guard cannot see — it matches shell commands only. This is also the
+  tripwire on the merge loop of the plugin this package will later bundle: it
+  fires the day an upstream change adds automatic execution, rather than that
+  change arming silently in every consumer's run.
 - **The two runaway guards catch different failures.** Idle catches a _stalled_
   agent; wall-clock catches a _looping_ one that stays chatty forever and is
   structurally immune to the idle guard. Neither substitutes for the other.
@@ -137,6 +149,15 @@ installed skill, not in `CLAUDE.md`.
 
 This is about work done _on_ this repository. The package still ships no
 opinionated standards to its consumers; `standardsDir` points at theirs.
+
+**Provenance, settled once so the files don't each carry it.** These documents
+came from the author's `coding-standards` skill in
+[galosandoval/skills](https://github.com/galosandoval/skills), a fork of
+[mattpocock/skills](https://github.com/mattpocock/skills) (MIT, © Matt Pocock).
+The fork's licence does not reach them: `git log` on the source files shows both
+were written by this package's author, and neither contains upstream text. No
+MIT notice is owed, and the copies here are edited to fit this repository rather
+than kept diffable against the skill.
 
 ## Known gaps
 

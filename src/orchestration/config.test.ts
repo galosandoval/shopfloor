@@ -138,6 +138,50 @@ describe('resolveImplementConfig', () => {
     })
   })
 
+  describe('plugin directories', () => {
+    it('leaves the list unstated when neither input nor environment names one', () => {
+      const config = resolveImplementConfig(baseInput(), baseEnv())
+
+      expect(config.pluginDirs).toBeUndefined()
+    })
+
+    it('distinguishes an explicitly empty list from an unstated one', () => {
+      const config = resolveImplementConfig(
+        baseInput({ pluginDirs: [] }),
+        baseEnv()
+      )
+
+      expect(config.pluginDirs).toEqual([])
+    })
+
+    it('reads an empty PLUGIN_DIRS as deliberately no plugins, not as unstated', () => {
+      const config = resolveImplementConfig(
+        baseInput(),
+        baseEnv({ PLUGIN_DIRS: '' })
+      )
+
+      expect(config.pluginDirs).toEqual([])
+    })
+
+    it('splits PLUGIN_DIRS on commas, trimming each entry', () => {
+      const config = resolveImplementConfig(
+        baseInput(),
+        baseEnv({ PLUGIN_DIRS: '/a/skills, /b/skills.zip' })
+      )
+
+      expect(config.pluginDirs).toEqual(['/a/skills', '/b/skills.zip'])
+    })
+
+    it('prefers a stated list over the environment', () => {
+      const config = resolveImplementConfig(
+        baseInput({ pluginDirs: ['/stated'] }),
+        baseEnv({ PLUGIN_DIRS: '/from-env' })
+      )
+
+      expect(config.pluginDirs).toEqual(['/stated'])
+    })
+  })
+
   describe('output paths', () => {
     it('derives every run output from the OS tmpdir by default', () => {
       const config = resolveImplementConfig(baseInput(), baseEnv())
