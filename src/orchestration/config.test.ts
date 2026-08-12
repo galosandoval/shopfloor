@@ -121,21 +121,44 @@ describe('resolveImplementConfig', () => {
 
       expect(config.issueTitle).toBe('Add pantry filter')
     })
+  })
 
-    it('defaults the standards dir to empty so the prompt skips that step', () => {
-      const config = resolveImplementConfig(baseInput(), baseEnv())
+  describe('the removed standards directory', () => {
+    /** A caller still passing the removed field, which no longer type-checks. */
+    function statingStandardsDir(
+      standardsDir: string
+    ): RunImplementAgentConfig {
+      return { ...baseInput(), standardsDir } as RunImplementAgentConfig
+    }
 
-      expect(config.standardsDir).toBe('')
+    it('refuses a stated standards directory, naming the replacement', () => {
+      expect(() =>
+        resolveImplementConfig(
+          statingStandardsDir('/tmp/skills/rules'),
+          baseEnv()
+        )
+      ).toThrow(/standardsDir.*pluginDirs/s)
     })
 
-    it('takes the standards dir from STANDARDS_DIR when set', () => {
-      const config = resolveImplementConfig(
-        baseInput(),
-        baseEnv({ STANDARDS_DIR: '/tmp/skills/rules' })
-      )
-
-      expect(config.standardsDir).toBe('/tmp/skills/rules')
+    it('refuses a non-empty STANDARDS_DIR, which no type error would catch', () => {
+      expect(() =>
+        resolveImplementConfig(
+          baseInput(),
+          baseEnv({ STANDARDS_DIR: '/tmp/skills/rules' })
+        )
+      ).toThrow(/STANDARDS_DIR.*PLUGIN_DIRS/s)
     })
+
+    it.each([
+      ['a stated empty string', statingStandardsDir(''), baseEnv()],
+      ['no field at all', baseInput(), baseEnv()],
+      ['an empty STANDARDS_DIR', baseInput(), baseEnv({ STANDARDS_DIR: '' })]
+    ])(
+      'resolves a run with %s — empty still means "deliberately skip"',
+      (_name, input, env) => {
+        expect(resolveImplementConfig(input, env).issueNumber).toBe('123')
+      }
+    )
   })
 
   describe('plugin directories', () => {

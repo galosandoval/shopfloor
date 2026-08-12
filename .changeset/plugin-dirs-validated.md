@@ -30,4 +30,4 @@ guarantee: inspecting it would mean unpacking it. A `.zip` is the only file
 form accepted; any other file is refused, since nothing about it can be
 checked.
 
-`standardsDir` is unchanged.
+`standardsDir` is removed in this same release; see its own entry.

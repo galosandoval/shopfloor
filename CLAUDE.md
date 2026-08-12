@@ -49,8 +49,9 @@ nothing else.
 Each was decided against; don't add them.
 
 - **Prompt content** beyond the harness's invocation defaults — per-consumer.
-- **Opinionated coding standards for consumers** — `standardsDir` points at
-  theirs. This repository's own standards are not shipped. Procedure is the
+- **Opinionated coding standards for consumers** — theirs live in the
+  repository being worked on; `standardsDir` was removed rather than repointed
+  (#27). This repository's own standards are not shipped. Procedure is the
   narrow exception, and only as a default: the bundled skills plugin arrives
   with an install, and a stated `pluginDirs` replaces it outright.
 - **Consumer env-var names** — `requiredEnvVars` is caller-stated.

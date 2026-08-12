@@ -83,15 +83,18 @@ every default that can be _stated_ stays in the resolver.
 `runImplementAgent` is the whole flow, in order:
 
 1. **Resolve config** — `resolveImplementConfig`, pure, over the caller's input
-   and an env record.
+   and an env record. It also refuses a run still configured for the removed
+   `standardsDir` / `STANDARDS_DIR` (shopfloor#27): the check needs no IO, so it
+   belongs here rather than among the preconditions below, and it runs before
+   anything else the resolver can fail on.
 2. **Resolve the plugin list** — an unstated one is the bundled plugin
    (`resolveBundledPluginDir`); a stated one replaces it, empty included. The
    lookup is filesystem work, so it happens here in the shell rather than in
    the pure resolver, which leaves `pluginDirs` undefined precisely so
    "unstated" stays distinguishable from "stated as empty".
 3. **Verify preconditions** — first, and before any probe spends time or any
-   token is spent: the caller's required env vars, that `standardsDir` resolves
-   to a real directory, that every plugin directory — the bundled one included,
+   token is spent: the caller's required env vars, that every plugin directory
+   — the bundled one included,
    with no exemption — is a plugin carrying skills and neither hooks nor MCP
    servers, and the running `claude --version` against the policy's pin.
    Returns the running version for the run result.
@@ -181,8 +184,10 @@ The same line decides what this package ships to consumers, and it narrows the
 scope boundary rather than reversing it: **procedure ships, standards do not.**
 The bundled plugin (shopfloor#26) carries skills — how work gets done, portable
 across repositories — and installing this package brings them. Opinionated
-coding standards still ship to nobody; `standardsDir` points at the consumer's
-own, in the repository being worked on.
+coding standards still ship to nobody, and are no longer pointed at either:
+shopfloor#27 removed `standardsDir` rather than repointing it, because a
+consumer's standards live in the repository being worked on, where the agent
+reads them for itself.
 
 **Provenance, settled once so the files don't each carry it.** These documents
 came from the author's `coding-standards` skill in

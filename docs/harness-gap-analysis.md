@@ -11,14 +11,14 @@ Status: **resolved into issues.** A follow-up grilling session settled the open
 questions; every finding below is now tracked. Sections retain their original
 analysis, with decisions marked inline.
 
-| Finding                                          | Issue            |
-| ------------------------------------------------ | ---------------- |
-| §1 wall-clock guard                              | #4               |
-| §2 CLI version pin (+ standards-path validation) | #5               |
-| §4 release and versioning                        | #3               |
-| §5 skills / context ownership                    | #8 (spec needed) |
-| CLAUDE.md for this repo                          | #6               |
-| recipe-chat-v1 upgrade                           | #7               |
+| Finding                                          | Issue                             |
+| ------------------------------------------------ | --------------------------------- |
+| §1 wall-clock guard                              | #4                                |
+| §2 CLI version pin (+ standards-path validation) | #5                                |
+| §4 release and versioning                        | #3                                |
+| §5 skills / context ownership                    | #8 (closed by #24, #25, #26, #27) |
+| CLAUDE.md for this repo                          | #6                                |
+| recipe-chat-v1 upgrade                           | #7                                |
 
 Two issues predate this doc and were authored from it: **#1** (shrink the
 configuration surface) and **#2** (ship an agents directory). #1 is a prefactor
@@ -323,8 +323,9 @@ _process supervision_ than to the "Agent = Model + Harness" claim at
 `README.md:8`. Most of the 90% the paper attributes to the harness lives in files
 this package doesn't ship.
 
-**Partially addressed by §5 / #8**, which takes on the instructions layer. Memory,
-examples, and knowledge remain delegated.
+**Partially addressed by §5 / #8** (shipped as #24–#27), which took on the
+instructions layer and moved knowledge to partial. Memory, examples, and tools
+remain at zero.
 
 ### 3.6 Smaller items
 
@@ -434,7 +435,8 @@ is robust to agent-authored commits in a way that message parsing is not.
 ## 5. Context is delegated through a string that rots
 
 Deepens §3.5 with a concrete failure, and supersedes the closed #2. Tracked as
-**#8 — spec needed**, not yet agent-ready.
+**#8**, and **closed** by #24, #25, #26, and #27 — see "What was built" below,
+which records what shipped and what it deliberately did not close.
 
 ### The failure
 
@@ -456,11 +458,12 @@ framework rather than a harness and reverse its stated position on baking in
 opinions. This is also why #2 was closed — it shipped a default prompt on the
 explicit grounds of "deliberately reverses a stated scope decision."
 
-Mechanically: take a skills source as config, stage into a temp directory laid
-out as `<staged>/.claude/skills/<name>/`, pass it to the CLI as an additional
-directory, and **refuse before spawning if it resolves to zero skills.** Staging
-rather than writing into the consumer's repo matters because the agent commits its
-own work, and files it didn't create risk being swept into a commit.
+The mechanics proposed at the time — take a skills source as config, stage into
+a temp directory laid out as `<staged>/.claude/skills/<name>/`, pass it to the
+CLI as an additional directory, refuse if it resolves to zero skills — were
+**rejected during grilling** and are restated here only so the argument against
+them survives for whoever proposes them again; "What was built" below carries
+that argument.
 
 ### Documented behavior this relies on
 
@@ -482,12 +485,53 @@ From `code.claude.com/docs/en/skills`:
 
 ### Interim mitigation
 
-#5 adds validation now rather than waiting on this: an empty `standardsDir` still
-means "deliberately skip," while a non-empty value resolving to nothing fails
-before the CLI spawns. Stricter than #5's CLI-version warn, because a dead
-standards path silently changes what the agent produces. #8 eventually deletes
-`standardsDir` and makes the validation moot — acceptable, it is cheap and it
-stops the bleeding.
+#5 added validation rather than waiting on this: an empty `standardsDir` still
+meant "deliberately skip," while a non-empty value resolving to nothing failed
+before the CLI spawned. Stricter than #5's CLI-version warn, because a dead
+standards path silently changes what the agent produces. It was expected to be
+made moot by the deletion below; it was not, quite — see the refusal #27 put in
+its place.
+
+### What was built — #24, #25, #26, #27
+
+**Skills reach the agent through the CLI's own plugin discovery, not through a
+staged directory.** `pluginDirs` (`PLUGIN_DIRS`) passes each entry as its own
+`--plugin-dir`, session-scoped, validated before the spawn (#25); an unstated
+list loads the bundled `galosandoval/skills` plugin, installed as a tagged git
+dependency (#26); a stated list replaces that default rather than adding to it.
+`standardsDir` and its prompt placeholder are gone (#27), and this repository's
+own standards moved into this repository as ordinary docs (#24) rather than
+becoming something to ship.
+
+**Why staging into a synthesised `.claude/skills/` layout was dropped.** It was
+a second, independent model of how the CLI discovers skills — one that would
+drift from the real one, silently, in exactly the way the bare path it replaced
+did. `--plugin-dir` is the CLI's own supported entry point, so the harness
+asserts only what a plugin manifest asserts about itself and lets the CLI do
+discovery. Staging also bought a temp-directory lifecycle, a copy step, and a
+name-collision policy the plugin namespace already settles. The one thing
+staging was for — keeping files out of the consumer's git tree, since the agent
+commits its own work — `--plugin-dir` gives for free.
+
+**Removal had to fail loudly.** Deleting `standardsDir` alone would have left a
+consumer's CI-set `STANDARDS_DIR` meaning nothing: no type error, no runtime
+error, a run quietly poorer in context than its operator believed. So a stated
+value or a non-empty variable refuses before the spawn, naming the replacement;
+an empty one still means "deliberately skip". The field is therefore removed
+from the public type and still read at runtime, on purpose, with a note at the
+declaration saying so. A deprecation window where both paths worked was
+rejected: it means precedence logic in the resolver whose only purpose is to be
+deleted later.
+
+**What this does not close.** Of the paper's six context types (§3.5), this
+moves **instructions** from delegated to shipped, and **knowledge** from absent
+to partial — the bundled skills carry procedure, not the consumer's domain.
+**Memory**, **examples**, and **tools** remain at zero: every run still starts
+cold and a failed run still teaches the next one nothing. **Evals** (§3.4) —
+scoring whether a run produced good work, and whether it took a sound path to
+get there — remain the largest open gap, and nothing here touches them.
+"Native skills wiring" closed the context-by-rotting-string failure; it did not
+close context ownership.
 
 ---
 
@@ -509,7 +553,9 @@ The filed order, blockers first:
    and shouldn't describe something that doesn't exist yet.
 5. **#7 — recipe-chat-v1 upgrade.** Blocked by #4. Until this lands the wall-clock
    guard runs in no live pipeline — the difference between shipped and released.
-6. **#8 — skills wiring.** Blocked by #1. Needs its own grilling session first.
+6. **#8 — skills wiring.** Blocked by #1. Grilled, then split into #24 (standards
+   into this repo), #25 (`pluginDirs`), #26 (bundled plugin), and #27 (remove
+   `standardsDir`). All landed; see §5's "What was built".
 
 Still unfiled, in the order they're worth doing:
 

@@ -12,7 +12,6 @@ function baseInput(
   return {
     promptTemplate:
       'Implement #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}} on {{BRANCH}}.\n' +
-      'Standards: [{{STANDARDS_DIR}}]\n' +
       'PR: {{PR_DESCRIPTION_FILE}}\n' +
       'Verify: {{VERIFY_REPORT_FILE}}\n' +
       'Shots: {{SCREENSHOTS_DIR}}\n',
@@ -20,7 +19,6 @@ function baseInput(
     issueTitle: 'Invoke Claude CLI directly',
     branch: 'agent/issue-540-invoke-claude-cli-directly',
     prDescriptionFile: '/tmp/out/pr_description.txt',
-    standardsDir: '/tmp/skills/rules',
     verifyReportFile: '/tmp/out/verify_report.md',
     screenshotsDir: '.agent/verify/issue-540',
     model: MODEL,
@@ -37,19 +35,21 @@ describe('prepareClaudeInvocation', () => {
       expect(prompt).toBe(
         'Implement #540: Invoke Claude CLI directly on ' +
           'agent/issue-540-invoke-claude-cli-directly.\n' +
-          'Standards: [/tmp/skills/rules]\n' +
           'PR: /tmp/out/pr_description.txt\n' +
           'Verify: /tmp/out/verify_report.md\n' +
           'Shots: .agent/verify/issue-540\n'
       )
     })
 
-    it('renders an empty STANDARDS_DIR so the template skips the standards step', () => {
+    it('no longer substitutes STANDARDS_DIR, leaving a stale template’s token as text', () => {
+      // The removed placeholder (shopfloor#27) is now an unrecognized token
+      // like any other. A run only reaches here with its configuration already
+      // corrected, since a stated standards directory refuses before this.
       const { prompt } = prepareClaudeInvocation(
-        baseInput({ standardsDir: '' })
+        baseInput({ promptTemplate: 'Standards: [{{STANDARDS_DIR}}]' })
       )
 
-      expect(prompt).toContain('Standards: []')
+      expect(prompt).toBe('Standards: [{{STANDARDS_DIR}}]')
     })
 
     it('leaves unrecognized tokens untouched', () => {

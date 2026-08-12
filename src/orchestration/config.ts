@@ -39,8 +39,6 @@ export interface RunImplementAgentConfig {
   claudeCodeOAuthToken?: string
   /** Raw contents of the prompt template, with `{{PLACEHOLDER}}` tokens to render. */
   promptTemplate: string
-  /** Absolute path to coding-standard rules — defaults to `STANDARDS_DIR`, else skipped. */
-  standardsDir?: string
   /**
    * Claude Code plugin directories (or `.zip` archives) loaded into this
    * session only, one `--plugin-dir` each, so their skills reach the agent
@@ -102,7 +100,6 @@ export interface ResolvedImplementConfig {
   repo?: string
   claudeCodeOAuthToken: string
   promptTemplate: string
-  standardsDir: string
   /**
    * Omitted entirely when nothing stated a list, so "unstated" stays
    * distinguishable from "stated as empty" — the first falls back to the
@@ -130,6 +127,10 @@ export function resolveImplementConfig(
   input: RunImplementAgentConfig,
   env: Record<string, string | undefined>
 ): ResolvedImplementConfig {
+  // First, so a caller carrying the removed field hears about the removal
+  // rather than about whatever it made them get wrong downstream.
+  requireNoStandardsDir(input, env)
+
   const issueNumber = input.issueNumber ?? env.ISSUE_NUMBER
   if (!issueNumber) {
     throw new ImplementAgentError(
@@ -155,7 +156,6 @@ export function resolveImplementConfig(
     repo: input.repo ?? env.GITHUB_REPOSITORY,
     claudeCodeOAuthToken,
     promptTemplate: input.promptTemplate,
-    standardsDir: input.standardsDir ?? env.STANDARDS_DIR ?? '',
     prDescriptionFile:
       input.prDescriptionFile ?? inOutputDir('pr_description.txt'),
     verifyReportFile: input.verifyReportFile ?? inOutputDir('verify_report.md'),
@@ -180,6 +180,44 @@ export function resolveImplementConfig(
   if (pluginDirs !== undefined) resolved.pluginDirs = pluginDirs
 
   return resolved
+}
+
+/**
+ * Refuse a run still configured for `standardsDir` / `STANDARDS_DIR`, removed
+ * in shopfloor#27 — skills reach the agent through the CLI's own plugin
+ * discovery now, so a directory path pasted into a prompt has nothing left to
+ * mean.
+ *
+ * **The field is gone from {@link RunImplementAgentConfig} and still read
+ * here, deliberately.** Do not tidy this away as dead code: the type removal
+ * only reaches a caller who type-checks against this package, and the failure
+ * this migration exists to prevent is a consumer's CI that sets the
+ * environment variable — where a plain deletion produces no type error, no
+ * runtime error, and a run that proceeds with less context than its operator
+ * believes it has. That is the silent degradation the validation one release
+ * ago was added to stop, and deleting the field carelessly would reintroduce
+ * it in a form no one would notice.
+ *
+ * Either source refuses on its own rather than one taking precedence over the
+ * other: a stated value is not a way to mask a set variable, and precedence
+ * logic whose only purpose is to be deleted later is what a deprecation window
+ * would have cost. An empty value from either still means "deliberately skip",
+ * as it always has, and does not refuse.
+ */
+function requireNoStandardsDir(
+  input: RunImplementAgentConfig,
+  env: Record<string, string | undefined>
+): void {
+  const stated = (input as { standardsDir?: unknown }).standardsDir
+  if (!stated && !env.STANDARDS_DIR) return
+
+  throw new ImplementAgentError(
+    '`standardsDir` / STANDARDS_DIR has been removed — skills now reach the ' +
+      "agent through Claude Code's own plugin discovery, not through a path " +
+      'substituted into the prompt. Unset it; an unstated `pluginDirs` / ' +
+      'PLUGIN_DIRS loads the bundled skills plugin, and a stated one replaces ' +
+      'that. Coding standards belong in the repository being worked on.'
+  )
 }
 
 /** Name of the file a failed run's reason is written to, beneath the output dir. */

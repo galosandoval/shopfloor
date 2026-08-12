@@ -30,4 +30,5 @@ sub-agent, with the React half split into `docs/react-style.md` and marked
 non-binding on a package that ships no React. `CONTEXT.md` records the
 standards-in-repo / procedures-in-skills boundary and the files' provenance.
 None of those documents ship: `files` remains `["dist", "CHANGELOG.md"]`, and
-consumers still point `standardsDir` at their own.
+a consumer's own standards live in the repository being worked on — see the
+`standardsDir` removal in this same release.
