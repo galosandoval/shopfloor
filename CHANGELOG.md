@@ -1,5 +1,71 @@
 # @galosandoval/shopfloor
 
+## 0.7.0
+
+### Minor Changes
+
+- [#29](https://github.com/galosandoval/shopfloor/pull/29) [`f0e52a7`](https://github.com/galosandoval/shopfloor/commit/f0e52a77cafda011d842dcc91407bde709110192) Thanks [@galosandoval](https://github.com/galosandoval)! - Add `pluginDirs` (`PLUGIN_DIRS`, comma-separated): Claude Code plugin
+  directories loaded into a run for that session only, one `--plugin-dir` per
+  entry, so a plugin's skills reach the agent through the CLI's own discovery
+  with nothing written into your git tree.
+
+  **New failure mode — a run now refuses before spawning** when a stated entry
+  does not resolve, is not a plugin (no readable `.claude-plugin/plugin.json`),
+  declares no skills while carrying no `skills/` directory, declares a skill path
+  that is absent on disk, or ships **hooks or MCP servers** (from the manifest or
+  from the `hooks/` and `.mcp.json` conventions). The refusal names every
+  offending entry. Nothing else changes for a caller who states no plugins:
+  unstated is held apart from stated-as-empty, and neither puts a flag on the
+  CLI vector.
+
+  The capability refusal is the point, not a side effect: these runs already pass
+  `--dangerously-skip-permissions`, so a plugin's permission declarations are
+  moot, while hooks execute without the model choosing them and MCP-contributed
+  tools fall outside the command guard, which matches shell commands only. Barring
+  both is what makes the promise checkable — **a stated plugin adds no automatic
+  code execution and no tools outside the command guard.** Prose-only plugin
+  content (skills, subagents, slash commands) is permitted.
+
+  An entry that is a `.zip` archive is checked **for existence only** — including
+  the capability check, which does not apply to it. That is a deliberately weaker
+  guarantee: inspecting it would mean unpacking it. A `.zip` is the only file
+  form accepted; any other file is refused, since nothing about it can be
+  checked.
+
+  `standardsDir` is unchanged.
+
+### Patch Changes
+
+- [#28](https://github.com/galosandoval/shopfloor/pull/28) [`3b69376`](https://github.com/galosandoval/shopfloor/commit/3b693766ec637dd472e9dc3e7284b629a320ae7a) Thanks [@galosandoval](https://github.com/galosandoval)! - Documentation only — no API, behaviour, or configuration change. The one thing
+  that reaches consumers is a corrected doc comment on `src/index.ts`, which
+  `tsup` emits into `dist/*.d.ts`: it claimed the package documents **two** pure
+  escape hatches when there are three, and now names them (`evaluatePreflight`,
+  `buildVerifyComment`, `classifyCommand`). Nothing to change on upgrade.
+
+  The README gained what it had been silently omitting. `promptTemplate` is
+  required but was missing from the resolution table, so the table read as though
+  an issue number and a token were the whole contract; it is listed now, along
+  with the note that it takes the template's **contents** rather than a path and
+  therefore carries no environment variable. `PROMPT_FILE` is documented as what
+  it actually is — the `shopfloor-implement` bin's own convenience, and the one
+  variable in that document that does **not** work against `runImplementAgent`.
+  The four output-file overrides (`prDescriptionFile`, `verifyReportFile`,
+  `transcriptFile`, `failureReasonFile`) are in the table rather than alluded to
+  in a code comment. A new section documents every `RunImplementAgentResult`
+  field, including that `prDescription: 'fallback'` and
+  `transcriptCaptured: false` are not failures — the run committed either way —
+  so CI glue reports them instead of presenting generated prose as the agent's
+  own. `CliVersionStrictness` is named among the exports.
+
+  This repository's own coding standards also moved into the repo
+  (`docs/typescript-style.md`, `docs/doc-comments.md`) from an absolute
+  `~/.claude/skills/` path that exists on no CI runner and to no review
+  sub-agent, with the React half split into `docs/react-style.md` and marked
+  non-binding on a package that ships no React. `CONTEXT.md` records the
+  standards-in-repo / procedures-in-skills boundary and the files' provenance.
+  None of those documents ship: `files` remains `["dist", "CHANGELOG.md"]`, and
+  consumers still point `standardsDir` at their own.
+
 ## 0.6.0
 
 ### Minor Changes
