@@ -36,9 +36,17 @@ jobs:
       - run: npm run build
       # A PR with no changeset fails here. A PR that deliberately ships nothing
       # records an explicit empty changeset (`npx changeset --empty`) to pass.
+      #
+      # The Version Packages PR is exempt: it is the one PR that legitimately
+      # bumps package.json with no changesets left, because consuming them is
+      # exactly what it does. Gating it would make it permanently unmergeable.
       - name: Check for a changeset
-        if: github.event_name == 'pull_request'
-        run: npx changeset status --since=origin/${{ github.base_ref }}
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.head_ref != 'changeset-release/main'
+        run: npx changeset status --since=origin/$BASE_REF
+        env:
+          BASE_REF: ${{ github.base_ref }}
 
   release:
     needs: verify

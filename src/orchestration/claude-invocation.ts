@@ -12,15 +12,26 @@ export interface ClaudeInvocationInput {
   issueTitle: string
   branch: string
   prDescriptionFile: string
-  /** Empty when a local run has no standards mount; the template's own text
-   *  handles the skip, this module just substitutes the empty string. */
-  standardsDir: string
   verifyReportFile: string
   screenshotsDir: string
-  /** Claude model the headless agent runs — from the caller's `RunPolicyConfig`. */
-  model: string
+  /** Claude model the headless agent runs — from the caller's `RunPolicyConfig`.
+   *  Omitted leaves `--model` off the vector so the Claude CLI's own default
+   *  applies, rather than pinning a model string here. */
+  model?: string
   /** Fast-loop backstop cap on agent turns — from the caller's `RunPolicyConfig`. */
   maxTurns: number
+  /** Claude Code plugin directories to load for this session only, one
+   *  `--plugin-dir` occurrence each — the CLI's own skill discovery, rather
+   *  than anything staged into the consumer's tree. Validated before the run
+   *  reaches here (`evaluatePluginDirs`); this module only lays out flags.
+   *  Omitted or empty leaves the flag off the vector entirely. */
+  pluginDirs?: string[]
+  /** Absolute path to the command-guard hook script (shopfloor#2). Given, the
+   *  invocation carries a `--settings` payload wiring it as a `PreToolUse`
+   *  hook over `Bash`, so the run's forbidden operations are refused at
+   *  tool-call time rather than caught after the fact. Omitted leaves the
+   *  session on the ambient settings alone. */
+  commandGuardHookPath?: string
   /** Streams incrementally instead of staying silent until the whole session
    *  ends: a local idle-timeout needs that heartbeat to have any signal to
    *  watch. Omitted/false keeps the arg vector byte-identical to before this
@@ -49,7 +60,6 @@ export function prepareClaudeInvocation(
     ISSUE_TITLE: input.issueTitle,
     BRANCH: input.branch,
     PR_DESCRIPTION_FILE: input.prDescriptionFile,
-    STANDARDS_DIR: input.standardsDir,
     VERIFY_REPORT_FILE: input.verifyReportFile,
     SCREENSHOTS_DIR: input.screenshotsDir
   }
@@ -60,16 +70,24 @@ export function prepareClaudeInvocation(
 
   const args = [
     '--print',
-    '--model',
-    input.model,
+    ...(input.model ? ['--model', input.model] : []),
     '--max-turns',
     String(input.maxTurns),
     // Safe because the containment boundary is the environment, not this
     // flag: a fully autonomous headless run has no human present to approve
     // tool calls, so permission prompts would just hang the run. Callers must
     // provide their own sandboxing (a disposable CI runner, a container).
-    '--dangerously-skip-permissions'
+    '--dangerously-skip-permissions',
+    ...(input.pluginDirs ?? []).flatMap((dir) => ['--plugin-dir', dir])
   ]
+
+  if (input.commandGuardHookPath) {
+    // Inline JSON rather than a settings file: `--settings` accepts either,
+    // and inline keeps this module pure — nothing to write, nothing to clean
+    // up. Session-scoped, so the guard never leaks into a human's own
+    // settings for the same checkout.
+    args.push('--settings', guardSettingsJson(input.commandGuardHookPath))
+  }
 
   if (input.streamOutput) {
     args.push(
@@ -81,4 +99,23 @@ export function prepareClaudeInvocation(
   }
 
   return { args, prompt }
+}
+
+/**
+ * The `--settings` payload that arms the command guard: a `PreToolUse` hook on
+ * `Bash` — the only tool that runs shell commands, and so the only one the
+ * policy can classify. The hook script is quoted because it is a path being
+ * spliced into a shell command line.
+ */
+function guardSettingsJson(hookScriptPath: string): string {
+  return JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: 'Bash',
+          hooks: [{ type: 'command', command: `node "${hookScriptPath}"` }]
+        }
+      ]
+    }
+  })
 }

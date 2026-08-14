@@ -2,8 +2,8 @@
 
 **Date:** 2026-07-28
 **Reviewed at commit:** `1ba11e6` (HEAD)
-**Frame of reference:** *The New SDLC With Vibe Coding: From Ad-Hoc Prompting to
-Agentic Engineering* (Google, May 2026) — specifically §5 "Harness Engineering:
+**Frame of reference:** _The New SDLC With Vibe Coding: From Ad-Hoc Prompting to
+Agentic Engineering_ (Google, May 2026) — specifically §5 "Harness Engineering:
 What Surrounds the Model", §3 "Context Engineering", and §2's tests-vs-evals
 distinction.
 
@@ -11,14 +11,14 @@ Status: **resolved into issues.** A follow-up grilling session settled the open
 questions; every finding below is now tracked. Sections retain their original
 analysis, with decisions marked inline.
 
-| Finding | Issue |
-|---|---|
-| §1 wall-clock guard | #4 |
-| §2 CLI version pin (+ standards-path validation) | #5 |
-| §4 release and versioning | #3 |
-| §5 skills / context ownership | #8 (spec needed) |
-| CLAUDE.md for this repo | #6 |
-| recipe-chat-v1 upgrade | #7 |
+| Finding                                          | Issue                             |
+| ------------------------------------------------ | --------------------------------- |
+| §1 wall-clock guard                              | #4                                |
+| §2 CLI version pin (+ standards-path validation) | #5                                |
+| §4 release and versioning                        | #3                                |
+| §5 skills / context ownership                    | #8 (closed by #24, #25, #26, #27) |
+| CLAUDE.md for this repo                          | #6                                |
+| recipe-chat-v1 upgrade                           | #7                                |
 
 Two issues predate this doc and were authored from it: **#1** (shrink the
 configuration surface) and **#2** (ship an agents directory). #1 is a prefactor
@@ -35,7 +35,7 @@ Two pieces of the run policy are documented, typed, and required of every
 consumer, but never read at runtime — the wall-clock runaway guard and the CLI
 version pin. Both are gaps between an advertised guarantee and actual behavior,
 which makes them qualitatively different from the rest of the backlog: those are
-things the harness doesn't do *yet*, these are things it says it does *now*.
+things the harness doesn't do _yet_, these are things it says it does _now_.
 
 Beyond those, the harness is missing most of what the paper places between the
 model and the outcome: an outer feedback loop, in-run hooks, real observability,
@@ -54,7 +54,7 @@ Four facts that reframe several findings:
    reaches that consumer only when it explicitly bumps. This de-risks every
    behavior change discussed below, and is why §4 settles on `0.x` rather than
    `1.0.0`.
-3. **That consumer pins the Claude CLI by *installing* it**, not by checking it —
+3. **That consumer pins the Claude CLI by _installing_ it**, not by checking it —
    its workflow installs `@anthropic-ai/claude-code` at the pinned version. So in
    the only live pipeline, a version comparison is tautologically true. See §2's
    correction.
@@ -71,23 +71,23 @@ Four facts that reframe several findings:
 
 ### What's there
 
-| Piece | Location | State |
-|---|---|---|
-| `wallClockMinutes` config field | `src/guardrails/run-policy.ts:27` | Required, documented |
-| `WALL_CLOCK_MINUTES_ENV_VAR` override | `src/guardrails/run-policy.ts:15` | Exported |
-| `resolveWallClockMs()` | `src/guardrails/run-policy.ts:67` | Implemented |
-| Unit tests for the resolver | `src/guardrails/run-policy.test.ts:54,62,77,86` | Passing |
-| Public export | `src/index.ts:19` | Exported |
-| `WALL_CLOCK_MINUTES` required by CLI | `src/cli.ts:49` | Mandatory input |
-| Documented in README | `README.md:56,85,94` | Advertised |
-| **Call site in the actual run** | — | **None** |
+| Piece                                 | Location                                        | State                |
+| ------------------------------------- | ----------------------------------------------- | -------------------- |
+| `wallClockMinutes` config field       | `src/guardrails/run-policy.ts:27`               | Required, documented |
+| `WALL_CLOCK_MINUTES_ENV_VAR` override | `src/guardrails/run-policy.ts:15`               | Exported             |
+| `resolveWallClockMs()`                | `src/guardrails/run-policy.ts:67`               | Implemented          |
+| Unit tests for the resolver           | `src/guardrails/run-policy.test.ts:54,62,77,86` | Passing              |
+| Public export                         | `src/index.ts:19`                               | Exported             |
+| `WALL_CLOCK_MINUTES` required by CLI  | `src/cli.ts:49`                                 | Mandatory input      |
+| Documented in README                  | `README.md:56,85,94`                            | Advertised           |
+| **Call site in the actual run**       | —                                               | **None**             |
 
 `runImplementAgent` resolves only the idle budget (`implement.ts:113`) and passes
 only `idleMs` into `spawnClaude` (`implement.ts:125`). `spawnClaude`'s single
 `setInterval` (`implement.ts:221`) compares against `lastActivity` and nothing
 else. No elapsed-time deadline is ever computed or enforced.
 
-Worth noting the resolver *is* unit-tested — so the test suite is green and the
+Worth noting the resolver _is_ unit-tested — so the test suite is green and the
 guard is absent. The tests cover the pure function in isolation; nothing asserts
 it is wired into a run. That's the coverage shape that lets a gap like this
 survive.
@@ -97,9 +97,9 @@ survive.
 The two guards catch different failure modes, and the one that exists is the
 weaker of the pair:
 
-- **Idle guard** catches a *stalled* agent — output goes silent (hung tool call,
+- **Idle guard** catches a _stalled_ agent — output goes silent (hung tool call,
   deadlock, waiting on something that will never arrive).
-- **Wall-clock guard** catches a *looping* agent — one that stays productive-
+- **Wall-clock guard** catches a _looping_ agent — one that stays productive-
   looking, emits output continuously, and never converges. Retry loops,
   thrashing on a failing test, re-reading the same files.
 
@@ -125,17 +125,17 @@ uncapped OpEx exposure — a looping agent burns tokens the whole time it loops.
    uncommitted work in progress, so it gets a chance to flush. Remaining
    sub-question: the grace period's length (leaning 30s) and whether the idle
    guard should adopt the same treatment for consistency — a stalled agent
-   probably *can't* respond to `SIGTERM`, so keeping the two different is
+   probably _can't_ respond to `SIGTERM`, so keeping the two different is
    defensible, but it should be a deliberate asymmetry with a comment, not an
    accident.
 3. **Error discrimination.** `SpawnClaudeResult.idleKilled` is a boolean
    (`implement.ts:172`). Two guards need a reason discriminant so the thrown
-   `ImplementAgentError` names *which* budget tripped. Probably
+   `ImplementAgentError` names _which_ budget tripped. Probably
    `killedBy: 'idle' | 'wall-clock' | null`. This is a breaking-ish shape change
    to an internal type only — `ImplementAgentError`'s public surface is unchanged.
 4. **Interaction with the zero-commit check.** A guard trip currently throws at
    `implement.ts:134`, before the `commitsAhead` check at `:150`. If a
-   wall-clock kill happens *after* the agent made good commits, is that still a
+   wall-clock kill happens _after_ the agent made good commits, is that still a
    hard failure? Current behavior says yes. Is that right, or should a killed-
    but-committed run be surfaced differently (a distinct result state, or a
    PR marked for human triage)?
@@ -179,7 +179,7 @@ $ claude --version
 against a documented pin of `2.1.208` — 12 patch versions of drift, silently.
 
 > **Correction.** That measurement was taken on a developer laptop, not in CI, and
-> it overstates the finding. The live consumer's workflow *installs* the pinned
+> it overstates the finding. The live consumer's workflow _installs_ the pinned
 > CLI version before running, so in that pipeline the running version equals the
 > pin by construction and a comparison would always pass. The real value of this
 > check is narrower than first written: consumers who don't install-pin, and local
@@ -196,7 +196,7 @@ to any of those degrades or breaks a run, and the failure surfaces as a confusin
 downstream symptom (empty transcript, unparseable output, a flag error buried in
 `outputTail`) rather than as "your pin doesn't match."
 
-The cost of *not* checking is highest precisely where this harness runs: an
+The cost of _not_ checking is highest precisely where this harness runs: an
 unattended CI job with no human to notice the version moved.
 
 ### Open questions to settle before filing
@@ -211,11 +211,12 @@ unattended CI job with no human to notice the version moved.
    in reliability.
 
    Remaining sub-questions: what the opt-in looks like (a `strictCliVersion:
-   boolean`, or a `'warn' | 'error' | 'off'` enum — leaning the enum, since
+boolean`, or a `'warn' | 'error' | 'off'` enum — leaning the enum, since
    `'off'` is a real need for local dev), and what strict mode compares
    (exact match vs. `>=` vs. same major.minor).
+
 2. **Is this a guardrail or observability?** Now that the default is
-   non-blocking, it's mostly a *record* — which argues for the observed version
+   non-blocking, it's mostly a _record_ — which argues for the observed version
    living in `src/observability/` run metadata, with only the optional
    comparison in `src/guardrails/`. Splitting it that way keeps the directory
    semantics honest and feeds §3.3 directly. Needs a call before filing.
@@ -223,7 +224,7 @@ unattended CI job with no human to notice the version moved.
    currently required by the CLI entrypoint for a check that doesn't run.
    `undefined` should mean "don't compare, just record." Note this makes
    `CLI_VERSION` non-mandatory in `src/cli.ts:47`, which is a small breaking
-   change to the CLI contract in the *lenient* direction (previously-valid
+   change to the CLI contract in the _lenient_ direction (previously-valid
    invocations stay valid).
 4. **Where does the check run?** Alongside `findMissingEnvVars`
    (`implement.ts:81`) — before the spawn, so a mismatch costs zero tokens.
@@ -249,13 +250,13 @@ Captured at lower resolution. Each needs its own drill-down before filing.
 
 ### 3.1 No feedback loop (highest value)
 
-The paper (§5.3) puts this at the center of what a harness *is*: "orchestration
+The paper (§5.3) puts this at the center of what a harness _is_: "orchestration
 logic captures failures and routes them back to the model for retry — this is
 what creates the automated think → act → observe loop."
 
 Shopfloor is single-shot. Spawn, wait, check. The only post-run assertion is
-`commitsAhead !== 0` (`implement.ts:150`) — *did it commit anything*, not *is it
-correct*. The harness never runs the consumer's tests, typecheck, or lint after
+`commitsAhead !== 0` (`implement.ts:150`) — _did it commit anything_, not _is it
+correct_. The harness never runs the consumer's tests, typecheck, or lint after
 the agent finishes; it trusts the prompt to have done so, and the prompt is
 per-consumer and explicitly not owned by this package (`README.md:17-21`). A run
 that commits a broken build is indistinguishable from a green one.
@@ -297,7 +298,7 @@ through the process.** It's also a prerequisite for 3.4.
 
 Already named honestly in `README.md:152-162`, and that honesty should stay. But
 note where it places the project on the paper's §2 spectrum: tests + evals
-*together* are the stated mechanism, and without both "it's still vibe coding no
+_together_ are the stated mechanism, and without both "it's still vibe coding no
 matter how sophisticated the prompts are."
 
 Every test in this repo covers the harness's own pure functions. Nothing scores
@@ -318,12 +319,13 @@ first-class architectural decision" — because the package holds no context at
 all.
 
 Defensible as a v0.1 scope decision, but it means what ships today is closer to
-*process supervision* than to the "Agent = Model + Harness" claim at
+_process supervision_ than to the "Agent = Model + Harness" claim at
 `README.md:8`. Most of the 90% the paper attributes to the harness lives in files
 this package doesn't ship.
 
-**Partially addressed by §5 / #8**, which takes on the instructions layer. Memory,
-examples, and knowledge remain delegated.
+**Partially addressed by §5 / #8** (shipped as #24–#27), which took on the
+instructions layer and moved knowledge to partial. Memory, examples, and tools
+remain at zero.
 
 ### 3.6 Smaller items
 
@@ -345,15 +347,15 @@ it becomes load-bearing the moment those land.
 
 ### Current state — not an error today
 
-| Fact | Value |
-|---|---|
-| `package.json` version | `0.1.0` (`package.json:3`) |
-| Published on npm | `0.1.0`, at `2026-07-25T03:28Z` |
-| Git tags | none |
-| Changelog | none |
-| Release workflow | none — `ci.yml` runs lint/typecheck/test/build, never publishes |
+| Fact                   | Value                                                           |
+| ---------------------- | --------------------------------------------------------------- |
+| `package.json` version | `0.1.0` (`package.json:3`)                                      |
+| Published on npm       | `0.1.0`, at `2026-07-25T03:28Z`                                 |
+| Git tags               | none                                                            |
+| Changelog              | none                                                            |
+| Release workflow       | none — `ci.yml` runs lint/typecheck/test/build, never publishes |
 
-npm and git currently *agree*. The publish happened ~1 hour after commit
+npm and git currently _agree_. The publish happened ~1 hour after commit
 `001c55c`, and the only commit since (`1ba11e6`, three days later) touched
 `publishConfig` alone — no `src/` drift. But that's circumstance, not a
 guarantee, and establishing it required inferring provenance from timestamps.
@@ -374,7 +376,7 @@ guarantee, and establishing it required inferring provenance from timestamps.
 
 ### Why §1 makes this urgent
 
-The wall-clock fix changes *behavior without changing a type*. A consumer whose
+The wall-clock fix changes _behavior without changing a type_. A consumer whose
 runs quietly went three hours will start dying at 45 minutes, and `tsc` will
 report nothing. That is precisely the class of change a changelog exists for,
 and there is no channel to communicate it.
@@ -408,7 +410,7 @@ makes about hooks ("things you should never forget but often do").
 - **PR-time changeset enforcement, with an explicit empty changeset** as the
   escape hatch for non-shipping PRs. Chosen over path-filtering and over
   bot-reminder-only because it is the one option where "this doesn't ship" is
-  *recorded* rather than inferred from silence — and it degrades correctly with
+  _recorded_ rather than inferred from silence — and it degrades correctly with
   agents, which get an actionable red check rather than a silent no-release.
 - **Stay `0.x`; the wall-clock guard ships as `0.2.0`.** The consumer's exact pin
   already provides what `1.0.0` would buy. Accepted trade: a behavior break lands
@@ -433,7 +435,8 @@ is robust to agent-authored commits in a way that message parsing is not.
 ## 5. Context is delegated through a string that rots
 
 Deepens §3.5 with a concrete failure, and supersedes the closed #2. Tracked as
-**#8 — spec needed**, not yet agent-ready.
+**#8**, and **closed** by #24, #25, #26, and #27 — see "What was built" below,
+which records what shipped and what it deliberately did not close.
 
 ### The failure
 
@@ -455,11 +458,12 @@ framework rather than a harness and reverse its stated position on baking in
 opinions. This is also why #2 was closed — it shipped a default prompt on the
 explicit grounds of "deliberately reverses a stated scope decision."
 
-Mechanically: take a skills source as config, stage into a temp directory laid
-out as `<staged>/.claude/skills/<name>/`, pass it to the CLI as an additional
-directory, and **refuse before spawning if it resolves to zero skills.** Staging
-rather than writing into the consumer's repo matters because the agent commits its
-own work, and files it didn't create risk being swept into a commit.
+The mechanics proposed at the time — take a skills source as config, stage into
+a temp directory laid out as `<staged>/.claude/skills/<name>/`, pass it to the
+CLI as an additional directory, refuse if it resolves to zero skills — were
+**rejected during grilling** and are restated here only so the argument against
+them survives for whoever proposes them again; "What was built" below carries
+that argument.
 
 ### Documented behavior this relies on
 
@@ -481,12 +485,53 @@ From `code.claude.com/docs/en/skills`:
 
 ### Interim mitigation
 
-#5 adds validation now rather than waiting on this: an empty `standardsDir` still
-means "deliberately skip," while a non-empty value resolving to nothing fails
-before the CLI spawns. Stricter than #5's CLI-version warn, because a dead
-standards path silently changes what the agent produces. #8 eventually deletes
-`standardsDir` and makes the validation moot — acceptable, it is cheap and it
-stops the bleeding.
+#5 added validation rather than waiting on this: an empty `standardsDir` still
+meant "deliberately skip," while a non-empty value resolving to nothing failed
+before the CLI spawned. Stricter than #5's CLI-version warn, because a dead
+standards path silently changes what the agent produces. It was expected to be
+made moot by the deletion below; it was not, quite — see the refusal #27 put in
+its place.
+
+### What was built — #24, #25, #26, #27
+
+**Skills reach the agent through the CLI's own plugin discovery, not through a
+staged directory.** `pluginDirs` (`PLUGIN_DIRS`) passes each entry as its own
+`--plugin-dir`, session-scoped, validated before the spawn (#25); an unstated
+list loads the bundled `galosandoval/skills` plugin, installed as a tagged git
+dependency (#26); a stated list replaces that default rather than adding to it.
+`standardsDir` and its prompt placeholder are gone (#27), and this repository's
+own standards moved into this repository as ordinary docs (#24) rather than
+becoming something to ship.
+
+**Why staging into a synthesised `.claude/skills/` layout was dropped.** It was
+a second, independent model of how the CLI discovers skills — one that would
+drift from the real one, silently, in exactly the way the bare path it replaced
+did. `--plugin-dir` is the CLI's own supported entry point, so the harness
+asserts only what a plugin manifest asserts about itself and lets the CLI do
+discovery. Staging also bought a temp-directory lifecycle, a copy step, and a
+name-collision policy the plugin namespace already settles. The one thing
+staging was for — keeping files out of the consumer's git tree, since the agent
+commits its own work — `--plugin-dir` gives for free.
+
+**Removal had to fail loudly.** Deleting `standardsDir` alone would have left a
+consumer's CI-set `STANDARDS_DIR` meaning nothing: no type error, no runtime
+error, a run quietly poorer in context than its operator believed. So a stated
+value or a non-empty variable refuses before the spawn, naming the replacement;
+an empty one still means "deliberately skip". The field is therefore removed
+from the public type and still read at runtime, on purpose, with a note at the
+declaration saying so. A deprecation window where both paths worked was
+rejected: it means precedence logic in the resolver whose only purpose is to be
+deleted later.
+
+**What this does not close.** Of the paper's six context types (§3.5), this
+moves **instructions** from delegated to shipped, and **knowledge** from absent
+to partial — the bundled skills carry procedure, not the consumer's domain.
+**Memory**, **examples**, and **tools** remain at zero: every run still starts
+cold and a failed run still teaches the next one nothing. **Evals** (§3.4) —
+scoring whether a run produced good work, and whether it took a sound path to
+get there — remain the largest open gap, and nothing here touches them.
+"Native skills wiring" closed the context-by-rotting-string failure; it did not
+close context ownership.
 
 ---
 
@@ -508,7 +553,9 @@ The filed order, blockers first:
    and shouldn't describe something that doesn't exist yet.
 5. **#7 — recipe-chat-v1 upgrade.** Blocked by #4. Until this lands the wall-clock
    guard runs in no live pipeline — the difference between shipped and released.
-6. **#8 — skills wiring.** Blocked by #1. Needs its own grilling session first.
+6. **#8 — skills wiring.** Blocked by #1. Grilled, then split into #24 (standards
+   into this repo), #25 (`pluginDirs`), #26 (bundled plugin), and #27 (remove
+   `standardsDir`). All landed; see §5's "What was built".
 
 Still unfiled, in the order they're worth doing:
 

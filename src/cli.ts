@@ -1,83 +1,81 @@
 #!/usr/bin/env node
 import * as fs from 'node:fs'
-import * as os from 'node:os'
+import { runImplementAgent } from './orchestration/implement'
+import { ImplementAgentError } from './orchestration/implement-error'
 import * as path from 'node:path'
 import {
-  runImplementAgent,
-  ImplementAgentError,
+  FAILURE_REASON_FILE,
+  resolveOutputDir,
   type RunImplementAgentConfig
-} from './orchestration/implement'
+} from './orchestration/config'
 
 /**
  * Env-var-driven CLI entrypoint for {@link runImplementAgent}, for drop-in use
- * as a single CI step (mirrors recipe-chat-v1's original
- * `bun agent/implement/implement.ts` invocation style). Consumers who want a
- * typed config object instead should import `runImplementAgent` directly.
+ * as a single CI step:
+ *
+ * ```sh
+ * CLAUDE_CODE_OAUTH_TOKEN=*** PROMPT_FILE=./prompt.md npx shopfloor-implement 123
+ * ```
+ *
+ * Every other input resolves inside the harness, so this entrypoint owns only
+ * what it alone can do: read the issue number off `argv`, read the prompt
+ * template off disk, and write a failure reason for the CI job to surface.
+ * Consumers who want a typed config object instead should import
+ * `runImplementAgent` directly.
  */
 
-const ISSUE_NUMBER = required('ISSUE_NUMBER')
-const ISSUE_TITLE = required('ISSUE_TITLE')
-const BRANCH = required('BRANCH')
-const CLAUDE_CODE_OAUTH_TOKEN = required('CLAUDE_CODE_OAUTH_TOKEN')
-/** Path to the caller's own prompt template file — this package ships none. */
-const PROMPT_FILE = required('PROMPT_FILE')
-
-const STANDARDS_DIR = process.env.STANDARDS_DIR ?? ''
-const OUTPUT_DIR = process.env.OUTPUT_DIR ?? os.tmpdir()
-const SCREENSHOTS_DIR =
-  process.env.SCREENSHOTS_DIR ?? `.agent/verify/issue-${ISSUE_NUMBER}`
-const PROJECTS_DIR =
-  process.env.PROJECTS_DIR ?? path.join(os.homedir(), '.claude', 'projects')
-
-const config: RunImplementAgentConfig = {
-  issueNumber: ISSUE_NUMBER,
-  issueTitle: ISSUE_TITLE,
-  branch: BRANCH,
-  claudeCodeOAuthToken: CLAUDE_CODE_OAUTH_TOKEN,
-  standardsDir: STANDARDS_DIR,
-  promptTemplate: fs.readFileSync(PROMPT_FILE, 'utf8'),
-  prDescriptionFile: path.join(OUTPUT_DIR, 'pr_description.txt'),
-  verifyReportFile: path.join(OUTPUT_DIR, 'verify_report.md'),
-  screenshotsDir: SCREENSHOTS_DIR,
-  transcriptFile: path.join(OUTPUT_DIR, 'transcript.jsonl'),
-  projectsDir: PROJECTS_DIR,
-  runPolicy: {
-    model: required('MODEL'),
-    maxTurns: Number(required('MAX_TURNS')),
-    cliVersion: required('CLI_VERSION'),
-    idleMinutes: Number(required('IDLE_MINUTES')),
-    wallClockMinutes: Number(required('WALL_CLOCK_MINUTES')),
-    // The caller's own app-specific env vars (DB URLs, API keys, ...) — this
-    // package bakes in no such names of its own.
-    requiredEnvVars: required('REQUIRED_ENV_VARS')
-      .split(',')
-      .map((name) => name.trim())
-      .filter(Boolean)
-  }
+const input: RunImplementAgentConfig = {
+  issueNumber: process.argv[2] ?? process.env.ISSUE_NUMBER,
+  /** The caller's own prompt template — this package ships none. */
+  promptTemplate: readPromptTemplate()
 }
 
 main()
 
 async function main() {
   try {
-    const result = await runImplementAgent(config)
-    console.log(`\n${result.commitsAhead} commit(s) on ${BRANCH} this run.`)
+    const result = await runImplementAgent(input)
+    console.log(
+      `\n${result.commitsAhead} commit(s) on ${result.branch} this run.`
+    )
   } catch (error) {
     const message =
       error instanceof ImplementAgentError
         ? `${error.message}${error.outputTail ? `\n\n${error.outputTail}` : ''}`
         : String(error)
     console.error(`\nFAILED: ${message}`)
-    fs.writeFileSync(path.join(OUTPUT_DIR, 'failure_reason.txt'), message)
+    writeFailureReason(message)
     process.exit(1)
   }
 }
 
-function required(name: string): string {
-  const value = process.env[name]
-  if (!value) {
-    console.error(`Missing required env var: ${name}`)
+/** Reads `PROMPT_FILE`, failing with a named message rather than a stack trace. */
+function readPromptTemplate(): string {
+  const file = process.env.PROMPT_FILE
+  if (!file) {
+    console.error('Missing required env var: PROMPT_FILE')
     process.exit(1)
   }
-  return value
+  try {
+    return fs.readFileSync(file, 'utf8')
+  } catch {
+    console.error(`Could not read PROMPT_FILE: ${file}`)
+    process.exit(1)
+  }
+}
+
+/**
+ * Writes the failure where the run's outputs go, so a CI job can surface it as
+ * an artifact. Derived from `outputDir` alone rather than from a fully
+ * resolved config: the failures worth reporting most — a missing token, an
+ * unresolvable issue — are exactly the ones where resolution itself throws.
+ */
+function writeFailureReason(message: string): void {
+  try {
+    const outputDir = resolveOutputDir(input, process.env)
+    fs.writeFileSync(path.join(outputDir, FAILURE_REASON_FILE), message)
+  } catch {
+    // An unwritable output dir is not worth a second failure — the message is
+    // already on stderr.
+  }
 }

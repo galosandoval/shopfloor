@@ -21,6 +21,17 @@ describe('buildVerifyComment', () => {
     expect(body).toContain('[View the workflow run](')
   })
 
+  it('omits the run link when no run URL is known (a local run, not CI)', () => {
+    const body = buildVerifyComment({
+      ...base,
+      runUrl: undefined,
+      screenshots: ['.agent/verify/issue-5/recipes.png']
+    })
+    expect(body).toContain('Verified the recipes flow.')
+    expect(body).toContain('### Screenshots')
+    expect(body).not.toContain('[View the workflow run](')
+  })
+
   it('percent-encodes ref and filename segments but keeps slashes', () => {
     const body = buildVerifyComment({
       ...base,
