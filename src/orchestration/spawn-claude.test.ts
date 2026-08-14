@@ -22,6 +22,15 @@ const SILENT = 'setInterval(() => {}, 1000)'
 const IGNORES_SIGTERM =
   "process.on('SIGTERM', () => process.stdout.write('caught-sigterm'))"
 
+/**
+ * A budget that clears the stand-in child's own startup. Every budget runs from
+ * `spawn`, but the child cannot write, or install a signal handler, until node
+ * has booted — a few hundred ms on a loaded machine. Any test whose subject is
+ * what the *running* child does needs a budget above that, or it is really
+ * testing node's boot time.
+ */
+const AFTER_STARTUP_MS = 500
+
 function run(
   script: string,
   overrides: Partial<SpawnClaudeOptions> = {}
@@ -78,7 +87,7 @@ describe('spawnClaude runaway guards', () => {
 
     it('sends SIGTERM first, giving a looping agent a chance to flush', async () => {
       const result = await run(`${IGNORES_SIGTERM}; ${CHATTY}`, {
-        wallClockMs: 50
+        wallClockMs: AFTER_STARTUP_MS
       })
 
       expect(result.outputTail).toContain('caught-sigterm')
@@ -88,13 +97,15 @@ describe('spawnClaude runaway guards', () => {
     it('escalates to SIGKILL once the grace period expires', async () => {
       const startedAt = Date.now()
       const result = await run(`${IGNORES_SIGTERM}; ${CHATTY}`, {
-        wallClockMs: 50,
+        wallClockMs: AFTER_STARTUP_MS,
         sigtermGraceMs: 150
       })
 
       // Only the escalation can end a child that ignores SIGTERM, so surviving
       // past the grace period is the assertion that SIGKILL followed it.
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(150)
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(
+        AFTER_STARTUP_MS + 150
+      )
       expect(result.killedBy?.reason).toBe('wall-clock')
     })
 
@@ -115,21 +126,21 @@ describe('spawnClaude runaway guards', () => {
     it('goes straight to SIGKILL rather than waiting out a grace period', async () => {
       const startedAt = Date.now()
       const result = await run(`${IGNORES_SIGTERM}; ${SILENT}`, {
-        idleMs: 50,
+        idleMs: AFTER_STARTUP_MS,
         sigtermGraceMs: 5_000
       })
 
       // A child that ignores SIGTERM still dies well inside the grace period,
       // which it could only do if no SIGTERM step preceded the kill.
-      expect(Date.now() - startedAt).toBeLessThan(1_000)
+      expect(Date.now() - startedAt).toBeLessThan(AFTER_STARTUP_MS + 1_000)
       expect(result.killedBy?.reason).toBe('idle')
     })
 
     it('is held off by output, however long the run goes', async () => {
       const result = await run(
-        `${CHATTY}; setTimeout(() => process.exit(0), 80)`,
+        `${CHATTY}; setTimeout(() => process.exit(0), ${AFTER_STARTUP_MS * 2})`,
         {
-          idleMs: 40
+          idleMs: AFTER_STARTUP_MS
         }
       )
 
