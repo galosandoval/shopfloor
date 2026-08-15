@@ -246,6 +246,10 @@ function resolveRunPolicy(
       stated.maxTurns ??
       parsePositiveNumber(env.MAX_TURNS) ??
       DEFAULT_RUN_POLICY.maxTurns,
+    maxIterations:
+      stated.maxIterations ??
+      parsePositiveNumber(env.MAX_ITERATIONS) ??
+      DEFAULT_RUN_POLICY.maxIterations,
     idleMinutes:
       stated.idleMinutes ??
       parsePositiveNumber(env.IDLE_MINUTES) ??
@@ -272,6 +276,13 @@ function resolveRunPolicy(
     stated.wallClockMinutes ?? parsePositiveNumber(env.WALL_CLOCK_MINUTES)
   if (wallClockMinutes !== undefined)
     resolved.wallClockMinutes = wallClockMinutes
+
+  // Omitted rather than defaulted for the same reason: an absent gate is a
+  // single-shot run, and a fabricated one would be a command this package
+  // invented running in the consumer's checkout. An empty string reads as
+  // unstated — a caller unsetting the variable is not asking to run `''`.
+  const gateCommand = stated.gateCommand ?? env.GATE_COMMAND
+  if (gateCommand) resolved.gateCommand = gateCommand
 
   return resolved
 }

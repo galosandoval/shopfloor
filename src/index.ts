@@ -2,7 +2,7 @@
  * The package's public surface: the verbs a consumer calls, the error they
  * throw, the pure escape hatches the README documents (`evaluatePreflight`,
  * `buildVerifyComment`, `classifyCommand`, `evaluatePluginDirs`,
- * `checkTrajectory`), the bundled plugin's resolved location — API because
+ * `checkTrajectory`, `evaluateIteration`), the bundled plugin's resolved location — API because
  * a stated `pluginDirs` replaces the default, so naming it alongside your own
  * has to be writable rather than guessable — and the types
  * of what goes in and comes out. Resolvers, invocation assembly, transcript
@@ -25,6 +25,13 @@ export {
 } from './guardrails/run-policy'
 
 export { type CliVersionStrictness } from './guardrails/cli-version'
+
+export {
+  evaluateIteration,
+  type GateResult,
+  type IterationInput,
+  type IterationVerdict
+} from './orchestration/iteration'
 
 export {
   evaluatePreflight,

@@ -502,6 +502,13 @@ every other omission in this document got.
 
 ### 7. The inner loop is the least designed part of the design
 
+**Settled in shopfloor#40.** The three questions below are answered — the
+harness runs a caller-stated gate command, each iteration is a fresh spawn fed
+the previous failure, and the wall clock bounds the run while the idle guard
+bounds a spawn. The reasoning lives in
+[`CONTEXT.md`](../CONTEXT.md#the-inner-loops-three-decisions); the rest of this
+finding is kept as the record of what was open.
+
 §1 ranks it as where "the large majority of failures should be caught" and
 sequencing puts it near the front. Its entire specification is "a `while` in
 TypeScript" and "its own budget in `runPolicy`." Three questions decide whether

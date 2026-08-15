@@ -49,6 +49,10 @@ nothing else.
 Each was decided against; don't add them.
 
 - **Prompt content** beyond the harness's invocation defaults — per-consumer.
+  The one thing the harness appends for itself is an iterating run's gate
+  failure (shopfloor#40) — the command it ran, the output it got, and that the
+  run is not done until that command passes. Facts and contract; how to fix a
+  failing suite is procedure, and stays out.
 - **Opinionated coding standards for consumers** — theirs live in the
   repository being worked on; `standardsDir` was removed rather than repointed
   (#27). This repository's own standards are not shipped. Procedure is the

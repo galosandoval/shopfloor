@@ -52,6 +52,27 @@ describe('prepareClaudeInvocation', () => {
       expect(prompt).toBe('Standards: [{{STANDARDS_DIR}}]')
     })
 
+    it('appends the previous iteration’s gate failure', () => {
+      const { prompt } = prepareClaudeInvocation(
+        baseInput({
+          promptTemplate: 'Do the work.',
+          iterationFeedback: 'The gate `bun test` failed.'
+        })
+      )
+
+      expect(prompt).toBe('Do the work.\nThe gate `bun test` failed.\n')
+    })
+
+    it('leaves the prompt untouched when there is no feedback to carry', () => {
+      // A first iteration, and every run with no gate stated, must render
+      // byte-identically to a run from before the loop existed.
+      const { prompt } = prepareClaudeInvocation(
+        baseInput({ promptTemplate: 'Do the work.' })
+      )
+
+      expect(prompt).toBe('Do the work.')
+    })
+
     it('leaves unrecognized tokens untouched', () => {
       const { prompt } = prepareClaudeInvocation(
         baseInput({

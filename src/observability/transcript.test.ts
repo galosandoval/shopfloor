@@ -1,7 +1,12 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { captureTranscript, findNewestSessionFile } from './transcript'
+import {
+  captureTranscript,
+  findNewestSessionFile,
+  iterationTranscriptPath,
+  preserveIterationTranscript
+} from './transcript'
 
 let workdir: string
 
@@ -90,5 +95,52 @@ describe('captureTranscript', () => {
     fs.mkdirSync(dest)
 
     expect(captureTranscript({ projectsDir, destPath: dest })).toBe(false)
+  })
+})
+
+describe('iterationTranscriptPath', () => {
+  it('names the attempt beside the transcript it came from', () => {
+    expect(iterationTranscriptPath('/tmp/out/transcript.jsonl', 2)).toBe(
+      '/tmp/out/transcript.iteration-2.jsonl'
+    )
+  })
+
+  it('keeps the extension where a reader expects it', () => {
+    expect(iterationTranscriptPath('/tmp/out/transcript.jsonl', 1)).toMatch(
+      /\.jsonl$/
+    )
+  })
+
+  it('handles a transcript path with no extension', () => {
+    expect(iterationTranscriptPath('/tmp/out/transcript', 3)).toBe(
+      '/tmp/out/transcript.iteration-3'
+    )
+  })
+
+  it('follows a relocated transcript rather than a fixed directory', () => {
+    expect(iterationTranscriptPath('/elsewhere/run.jsonl', 1)).toBe(
+      '/elsewhere/run.iteration-1.jsonl'
+    )
+  })
+})
+
+describe('preserveIterationTranscript', () => {
+  it('keeps a copy of the attempt before the next one overwrites it', () => {
+    const transcript = path.join(workdir, 'transcript.jsonl')
+    fs.writeFileSync(transcript, '{"attempt":1}\n')
+
+    expect(preserveIterationTranscript(transcript, 1)).toBe(true)
+
+    // The next iteration overwrites the live transcript; the kept copy stands.
+    fs.writeFileSync(transcript, '{"attempt":2}\n')
+    expect(
+      fs.readFileSync(iterationTranscriptPath(transcript, 1), 'utf8')
+    ).toBe('{"attempt":1}\n')
+  })
+
+  it('returns false rather than throwing when there is nothing to keep', () => {
+    expect(
+      preserveIterationTranscript(path.join(workdir, 'absent.jsonl'), 1)
+    ).toBe(false)
   })
 })

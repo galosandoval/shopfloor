@@ -19,13 +19,13 @@ harness concern rather than as a flat file list.
 
 ## Module map
 
-| Directory            | Owns                                                                                                                                                                                                                                                                                                              |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/orchestration/` | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError` |
-| `src/guardrails/`    | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting            |
-| `src/observability/` | Session transcript capture (for CI-artifact upload), and the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell. Advisory: it reports, it never fails a run                                                   |
-| `src/index.ts`       | The public surface — nothing else is API                                                                                                                                                                                                                                                                          |
-| `src/cli.ts`         | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                    |
+| Directory            | Owns                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/orchestration/` | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError` |
+| `src/guardrails/`    | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting                                                                                                                            |
+| `src/observability/` | Session transcript capture (for CI-artifact upload), and the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell. Advisory: it reports, it never fails a run                                                                                                                                                                   |
+| `src/index.ts`       | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                          |
+| `src/cli.ts`         | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                    |
 
 ## Pure core, IO shell
 
@@ -49,8 +49,8 @@ produce. Anything that judges is either pure or does not belong here.
 The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `command-guard-hook`, `buildVerifyComment` / `postVerifyComment`,
 `evaluatePluginDirs` / `runPluginDirsCheck`, `checkTrajectory` /
-`runTrajectoryCheck`, `checkCliVersion` and `resolveImplementConfig` /
-`runImplementAgent`.
+`runTrajectoryCheck`, `evaluateIteration` / `runGate`, `checkCliVersion` and
+`resolveImplementConfig` / `runImplementAgent`.
 
 A new module lands in that shape: name the decision, export it as a pure
 function with its own input type, put it in `src/guardrails/` (a decision about
@@ -104,18 +104,76 @@ every default that can be _stated_ stays in the resolver.
 4. **Probe what's still unstated** — branch and issue title, via lazy `git` /
    `gh` calls in the shell. These run _after_ the preconditions, so a
    misconfigured run never pays for them.
-5. **Assemble the invocation** — `prepareClaudeInvocation`, pure: flags (one
-   `--plugin-dir` per validated plugin directory), the
-   rendered prompt, and the inline `--settings` payload that arms the
-   command-guard `PreToolUse` hook. Output always streams, because the idle
-   guard reads the child's output as its heartbeat.
-6. **Spawn** — `spawnClaude`, with the idle and wall-clock budgets armed. OAuth
-   only; `ANTHROPIC_API_KEY` is stripped from the child env so a run can never
-   fall through to a metered key.
-7. **Capture the transcript**, best-effort, for the caller to upload.
-8. **Check the result** — a runaway kill or non-zero exit fails the run; so does
-   a run that committed nothing. A missing PR description falls back rather than
-   discarding finished commits.
+5. **Iterate** — steps 5a–5d, once for a run with no gate stated, and up to
+   `runPolicy.maxIterations` times for one with a gate. This is the inner loop
+   (shopfloor#40); its three settled decisions are below.
+   1. **Assemble the invocation** — `prepareClaudeInvocation`, pure: flags (one
+      `--plugin-dir` per validated plugin directory), the rendered prompt with
+      the previous iteration's gate failure appended (nothing appended on the
+      first), and the inline `--settings` payload that arms the command-guard
+      `PreToolUse` hook. Output always streams, because the idle guard reads the
+      child's output as its heartbeat.
+   2. **Spawn** — `spawnClaude`, with the idle budget and _what is left of_ the
+      wall-clock budget armed. OAuth only; `ANTHROPIC_API_KEY` is stripped from
+      the child env so a run can never fall through to a metered key.
+   3. **Capture the transcript**, best-effort, for the caller to upload.
+   4. **Run the gate and decide** — `runGate` executes the caller's
+      `runPolicy.gateCommand`, and the pure `evaluateIteration` returns done,
+      iterate, or exhausted. A runaway kill or a non-zero CLI exit short-circuits
+      this and fails the run: the loop corrects work the gate judged, not a spawn
+      that never finished.
+6. **Check the result** — an exhausted budget with the gate still red fails the
+   run; so does a run that committed nothing. A missing PR description falls
+   back rather than discarding finished commits.
+
+### The inner loop's three decisions
+
+Each was open before shopfloor#40 and is settled here rather than left implicit
+in the code.
+
+- **The harness generates the signal.** `runPolicy.gateCommand` is a command the
+  _harness_ runs and reads the exit status of, not an instruction to the agent
+  to check itself. An agent reporting its own gate green is the
+  fluent-output-that-skipped-verification failure the loop exists to catch, so
+  the signal has to be observed rather than claimed. The command is
+  caller-stated, on the same footing as `requiredEnvVars`: `bun run typecheck`
+  is a consumer's vocabulary, and prompt environment content still ships to
+  nobody. Unstated, there is no signal and the run stays single-shot — the
+  behaviour of every run before this loop existed.
+- **Each iteration is a fresh spawn, not a `--resume`.** The static/dynamic
+  decision, taken toward static. Resuming would keep the reasoning that produced
+  the failing work inside the context of the turn meant to correct it, which is
+  the context rot the design doc warns about; it would also need a session id
+  this package does not parse out of the CLI's stream, and would be unavailable
+  exactly when a spawn was killed. The cost is real and named: every iteration
+  pays for its static context again. What makes the next turn different from the
+  last is `evaluateIteration`'s feedback — the gate command and a bounded tail
+  of its output, appended to the prompt.
+- **Wall-clock bounds the run; idle bounds a spawn.** A per-spawn ceiling would
+  make N iterations cost N × the stated budget, and every ceiling claimed
+  elsewhere fiction. So the wall clock is spent across the loop: each spawn is
+  armed with the remainder, and a run with none left fails rather than starting
+  another. Idle stays per-spawn because silence is a property of one live
+  process — there is no such thing as a process that fell quiet between spawns.
+  A single-iteration run is armed exactly as it was before the loop existed, so
+  the change is invisible to a run that never iterates. The gate's own runtime
+  is charged to the same clock: a gate is usually the whole test suite, and a
+  budget that billed only the spawns would be overrun by one gate per iteration.
+  The loop also stops a little above zero
+  (`MIN_ITERATION_WALL_CLOCK_MS`) rather than at it, so the run ends naming the
+  budget it spent instead of starting one last spawn for the guard to kill and
+  reporting a runaway agent.
+
+Two consequences of the loop that are not decisions, but are worth knowing. The
+gate runs on the run's own `env` rather than the CLI's `childEnv` — the
+OAuth-only rule constrains the agent's auth, and the gate is not the agent. And
+`transcriptFile` holds the **last** iteration's session, since every pass
+overwrites it, so each failed attempt is copied to
+`transcript.iteration-<n>.jsonl` before the next spawn replaces it: those are
+the attempts that explain why the run needed the loop, and they are the evidence
+a bare overwrite would destroy on exactly the runs worth auditing. This is not
+the outer loop's handoff artifact, which is a synthesis and a later step — it is
+just refusing to delete something the run already produced.
 
 The caller owns everything outside the run: checking out the branch, opening the
 PR, sandboxing, and any CI glue.
@@ -153,8 +211,18 @@ PR, sandboxing, and any CI glue.
 - **The two runaway guards catch different failures.** Idle catches a _stalled_
   agent; wall-clock catches a _looping_ one that stays chatty forever and is
   structurally immune to the idle guard. Neither substitutes for the other.
+- **The two runaway guards bound different scopes.** The idle budget is armed
+  in full on every spawn; the wall-clock budget belongs to the **run** and is
+  spent across its iterations. Anything that adds a spawn to a run must take its
+  wall-clock budget from the same remainder, or the ceiling stops being one.
 - **A wall-clock kill fails the run even if commits exist** — a run cut off
-  mid-loop never reached its own verify phase, so the work is unvetted.
+  mid-loop never reached its own verify phase, so the work is unvetted. It also
+  never becomes another iteration: only a gate verdict on a finished spawn
+  does.
+- **A run that spends its budget with the gate red fails.** Iterating is not a
+  best-effort wrapper around a failing run — a loop that returned unvetted work
+  as a success would be a more expensive version of the single-shot run it
+  replaced.
 - **Probes are best-effort and lazy.** A probe that answers nothing becomes an
   error naming what to state instead, never a silent default.
 

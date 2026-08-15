@@ -11,7 +11,10 @@
 import { runImplementAgent } from './implement'
 import { resolveBundledPluginDir } from './bundled-plugin'
 import { spawnClaude, type SpawnClaudeResult } from './spawn-claude'
-import { captureTranscript } from '../observability/transcript'
+import {
+  captureTranscript,
+  preserveIterationTranscript
+} from '../observability/transcript'
 import type { RunImplementAgentConfig } from './config'
 import { WALL_CLOCK_MINUTES_ENV_VAR } from '../guardrails/run-policy'
 
@@ -21,23 +24,32 @@ vi.mock('./spawn-claude', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./spawn-claude')>()),
   spawnClaude: vi.fn()
 }))
-vi.mock('../observability/transcript', () => ({
-  captureTranscript: vi.fn(() => true)
+vi.mock('../observability/transcript', async (importOriginal) => ({
+  // `iterationTranscriptPath` stays real — it is pure, and a stubbed one would
+  // let these assert a filename no run would ever write.
+  ...(await importOriginal<typeof import('../observability/transcript')>()),
+  captureTranscript: vi.fn(() => true),
+  preserveIterationTranscript: vi.fn(() => true)
 }))
 // Hoisted so the stubs a test reprograms are held as plain `vi.fn()`s: these
 // built-ins are heavily overloaded, and addressing them through `vi.mocked`
 // would mean casting past an overload set to stub one return.
-const { execFileSyncMock, statSyncMock, readFileSyncMock } = vi.hoisted(() => ({
-  execFileSyncMock: vi.fn(),
-  statSyncMock: vi.fn(),
-  readFileSyncMock: vi.fn()
-}))
+const { execFileSyncMock, statSyncMock, readFileSyncMock, spawnSyncMock } =
+  vi.hoisted(() => ({
+    execFileSyncMock: vi.fn(),
+    statSyncMock: vi.fn(),
+    readFileSyncMock: vi.fn(),
+    spawnSyncMock: vi.fn()
+  }))
 
 vi.mock('node:child_process', () => ({
   // The post-run commit count; a fresh mock per test overrides it where the
   // number is what's under test.
   execSync: vi.fn(() => '2\n'),
   execFileSync: execFileSyncMock,
+  // The quality gate — the only subprocess `runGate` runs. Real `runGate`
+  // either way: stubbing it would prove only that a stub was called.
+  spawnSync: spawnSyncMock,
   spawn: vi.fn()
 }))
 vi.mock('node:fs', () => ({
@@ -101,6 +113,23 @@ function armedWith() {
   return spawnClaudeMock.mock.calls[0][0]
 }
 
+/** The spawn options of the nth (1-based) iteration of a run that looped. */
+function spawnNumber(n: number) {
+  return spawnClaudeMock.mock.calls[n - 1][0]
+}
+
+/**
+ * What the caller's gate command exits with, per iteration — one entry per
+ * spawn, the last repeating once the list runs out.
+ */
+function gateExits(...statuses: number[]) {
+  let call = 0
+  spawnSyncMock.mockImplementation(() => {
+    const status = statuses[Math.min(call++, statuses.length - 1)]
+    return { status, stdout: `gate output ${call}`, stderr: '' }
+  })
+}
+
 function spawnResult(
   overrides: Partial<SpawnClaudeResult> = {}
 ): SpawnClaudeResult {
@@ -114,6 +143,7 @@ beforeEach(() => {
   // Implementations survive `clearAllMocks`, so every per-test override above
   // is restored to the happy default here rather than leaking into the next.
   runningCliVersion('2.1.220')
+  gateExits(0)
   // Every run resolves a plugin directory now — the bundled one when nothing
   // states a list — so a filesystem answering plugin probes is the baseline,
   // not a per-suite arrangement.
@@ -452,7 +482,275 @@ describe('runImplementAgent guard failures', () => {
       branch: 'feat/wall-clock-guard',
       commitsAhead: 2,
       transcriptCaptured: true,
-      prDescription: 'agent'
+      prDescription: 'agent',
+      iterations: 1
     })
+  })
+})
+
+/**
+ * The inner loop (shopfloor#40). `evaluateIteration` is tested pure in
+ * `iteration.test.ts`; everything here is the wiring that suite cannot prove —
+ * that the gate is actually run, that a failure actually respawns, that the
+ * next prompt actually carries the failure, and that the wall clock actually
+ * bounds the loop rather than each spawn.
+ */
+describe('runImplementAgent inner loop', () => {
+  const gated = (overrides: Partial<RunImplementAgentConfig> = {}) =>
+    baseInput({
+      ...overrides,
+      runPolicy: { gateCommand: 'bun run verify', ...overrides.runPolicy }
+    })
+
+  it('runs no gate at all when the caller stated none', async () => {
+    const result = await runImplementAgent(baseInput())
+
+    expect(spawnSyncMock).not.toHaveBeenCalled()
+    expect(spawnClaudeMock).toHaveBeenCalledOnce()
+    expect(result.iterations).toBe(1)
+  })
+
+  it('runs the stated gate in the run’s cwd after the spawn', async () => {
+    await runImplementAgent(gated())
+
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      'bun run verify',
+      expect.objectContaining({ cwd: '/repo', shell: true })
+    )
+  })
+
+  it('runs the gate on the run’s own env, without the agent’s OAuth token', async () => {
+    // The OAuth injection and the ANTHROPIC_API_KEY strip constrain the
+    // *agent's* auth; the gate is not the agent, and handing it the token
+    // would push a credential into a consumer command with no use for one.
+    await runImplementAgent(
+      gated({
+        env: { DATABASE_URL: 'postgres://x', ANTHROPIC_API_KEY: 'sk-x' }
+      })
+    )
+
+    const { env } = spawnSyncMock.mock.calls[0][1] as {
+      env: Record<string, string | undefined>
+    }
+    expect(env.DATABASE_URL).toBe('postgres://x')
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+  })
+
+  it('spawns once when the gate passes first time', async () => {
+    gateExits(0)
+
+    const result = await runImplementAgent(gated())
+
+    expect(spawnClaudeMock).toHaveBeenCalledOnce()
+    expect(result.iterations).toBe(1)
+  })
+
+  it('spawns again when the gate fails, and stops when it passes', async () => {
+    gateExits(1, 0)
+
+    const result = await runImplementAgent(gated())
+
+    expect(spawnClaudeMock).toHaveBeenCalledTimes(2)
+    expect(result.iterations).toBe(2)
+  })
+
+  it('feeds the gate’s failure into the next prompt', async () => {
+    gateExits(1, 0)
+
+    await runImplementAgent(gated())
+
+    expect(spawnNumber(2).prompt).toContain('bun run verify')
+    expect(spawnNumber(2).prompt).toContain('gate output 1')
+  })
+
+  it('never sends the same prompt twice', async () => {
+    gateExits(1, 0)
+
+    await runImplementAgent(gated())
+
+    expect(spawnNumber(2).prompt).not.toBe(spawnNumber(1).prompt)
+  })
+
+  it('leaves the first prompt untouched, gate or no gate', async () => {
+    gateExits(1, 0)
+
+    await runImplementAgent(gated())
+
+    expect(spawnNumber(1).prompt).toBe('Implement issue 4.')
+  })
+
+  it('fails the run when the gate is still red at the iteration ceiling', async () => {
+    gateExits(1)
+
+    await expect(
+      runImplementAgent(gated({ runPolicy: { maxIterations: 2 } }))
+    ).rejects.toThrow(/bun run verify.*2 iteration\(s\)/s)
+    expect(spawnClaudeMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('carries the gate’s output into that failure', async () => {
+    gateExits(1)
+
+    await expect(
+      runImplementAgent(gated({ runPolicy: { maxIterations: 1 } }))
+    ).rejects.toMatchObject({ outputTail: expect.stringContaining('gate') })
+  })
+
+  it('takes the gate command from GATE_COMMAND when the input states none', async () => {
+    await runImplementAgent(baseInput({ env: { GATE_COMMAND: 'make check' } }))
+
+    expect(spawnSyncMock).toHaveBeenCalledWith('make check', expect.anything())
+  })
+
+  it('arms every spawn with the idle budget in full — idle bounds a spawn', async () => {
+    gateExits(1, 0)
+
+    await runImplementAgent(gated({ runPolicy: { idleMinutes: 15 } }))
+
+    expect(spawnNumber(1).idleMs).toBe(15 * 60_000)
+    expect(spawnNumber(2).idleMs).toBe(15 * 60_000)
+  })
+
+  describe('the wall clock, spent across the loop', () => {
+    /** A spawn, or a gate, that takes `ms` of the run's clock. */
+    const burns = (ms: number) => () => {
+      vi.advanceTimersByTime(ms)
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    // Restored here rather than after each assertion, so a failing expectation
+    // cannot leak fake timers into the rest of the suite.
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('arms the second spawn with what the first one left', async () => {
+      gateExits(1, 0)
+      spawnClaudeMock.mockImplementation(async () => {
+        burns(60_000)()
+        return spawnResult()
+      })
+
+      await runImplementAgent(gated({ runPolicy: { wallClockMinutes: 45 } }))
+
+      expect(spawnNumber(1).wallClockMs).toBe(45 * 60_000)
+      expect(spawnNumber(2).wallClockMs).toBe(44 * 60_000)
+    })
+
+    it('charges the gate’s own time to the run, not to nobody', async () => {
+      // A gate is normally the whole test suite. Billing only the spawn would
+      // let N iterations overrun the stated ceiling by N gates.
+      let gateRuns = 0
+      spawnSyncMock.mockImplementation(() => {
+        burns(5 * 60_000)()
+        return { status: gateRuns++ === 0 ? 1 : 0, stdout: 'gate', stderr: '' }
+      })
+
+      await runImplementAgent(gated({ runPolicy: { wallClockMinutes: 45 } }))
+
+      expect(spawnNumber(2).wallClockMs).toBe(40 * 60_000)
+    })
+
+    it('fails rather than spawning into a spent wall clock', async () => {
+      gateExits(1)
+      spawnClaudeMock.mockImplementation(async () => {
+        burns(60_000)()
+        return spawnResult()
+      })
+
+      await expect(
+        runImplementAgent(
+          gated({ runPolicy: { wallClockMinutes: 1, maxIterations: 5 } })
+        )
+      ).rejects.toThrow(/wall-clock/)
+      expect(spawnClaudeMock).toHaveBeenCalledOnce()
+    })
+
+    it('stops before a spawn too small to be worth starting', async () => {
+      // 90s of budget, 60s spent: the 30s left would only buy a spawn the
+      // wall-clock guard kills, reported as a runaway rather than as the spent
+      // budget it is.
+      gateExits(1)
+      spawnClaudeMock.mockImplementation(async () => {
+        burns(60_000)()
+        return spawnResult()
+      })
+
+      await expect(
+        runImplementAgent(
+          gated({ runPolicy: { wallClockMinutes: 1.5, maxIterations: 5 } })
+        )
+      ).rejects.toThrow(/wall-clock budget is spent/)
+      expect(spawnClaudeMock).toHaveBeenCalledOnce()
+    })
+  })
+
+  it('does not iterate on a runaway kill — only the gate iterates', async () => {
+    gateExits(1, 0)
+    spawnClaudeMock.mockResolvedValue(
+      spawnResult({ killedBy: { reason: 'idle', budgetMs: 15 * 60_000 } })
+    )
+
+    await expect(runImplementAgent(gated())).rejects.toThrow(/idle guard/)
+    expect(spawnClaudeMock).toHaveBeenCalledOnce()
+    expect(spawnSyncMock).not.toHaveBeenCalled()
+  })
+
+  it('does not iterate on a non-zero CLI exit', async () => {
+    gateExits(1, 0)
+    spawnClaudeMock.mockResolvedValue(spawnResult({ exitCode: 2 }))
+
+    await expect(runImplementAgent(gated())).rejects.toThrow(/status 2/)
+    expect(spawnClaudeMock).toHaveBeenCalledOnce()
+  })
+
+  it('captures the transcript of the last iteration', async () => {
+    gateExits(1, 0)
+
+    const result = await runImplementAgent(gated())
+
+    expect(captureTranscript).toHaveBeenCalledTimes(2)
+    expect(result.transcriptCaptured).toBe(true)
+  })
+
+  it('keeps each failed attempt’s transcript before overwriting it', async () => {
+    // The failed attempts are the ones worth reading, and each is about to be
+    // replaced by the attempt that fixed it.
+    gateExits(1, 1, 0)
+
+    await runImplementAgent(
+      gated({
+        transcriptFile: '/tmp/out/transcript.jsonl',
+        runPolicy: { maxIterations: 3 }
+      })
+    )
+
+    expect(preserveIterationTranscript).toHaveBeenCalledWith(
+      '/tmp/out/transcript.jsonl',
+      1
+    )
+    expect(preserveIterationTranscript).toHaveBeenCalledWith(
+      '/tmp/out/transcript.jsonl',
+      2
+    )
+  })
+
+  it('keeps nothing extra for a run that never iterated', async () => {
+    await runImplementAgent(gated())
+
+    expect(preserveIterationTranscript).not.toHaveBeenCalled()
+  })
+
+  it('keeps no copy of the attempt that finished the run', async () => {
+    // It is still in `transcriptFile`; a second copy under a different name
+    // would be the same session twice.
+    gateExits(1, 0)
+
+    await runImplementAgent(gated())
+
+    expect(preserveIterationTranscript).toHaveBeenCalledOnce()
   })
 })
