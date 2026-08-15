@@ -1,8 +1,10 @@
 import {
   DEFAULT_PAT_SECRET,
+  DEFAULT_PROMPT_FILE,
   DEFAULT_WORKFLOW_FILE,
   OAUTH_TOKEN_SECRET,
-  resolveDoctorConfig
+  resolveDoctorConfig,
+  resolveInitConfig
 } from './setup-config'
 
 describe('resolveDoctorConfig', () => {
@@ -63,5 +65,29 @@ describe('resolveDoctorConfig', () => {
     expect(resolved.repo).toBeUndefined()
     expect(resolved.promptFile).toBeUndefined()
     expect(resolved.cliVersion).toBeUndefined()
+  })
+})
+
+describe('resolveInitConfig', () => {
+  it('has a prompt path to scaffold at where doctor has none to judge', () => {
+    expect(resolveInitConfig({}, {}).promptFile).toBe(DEFAULT_PROMPT_FILE)
+    expect(resolveDoctorConfig({}, {}).promptFile).toBeUndefined()
+  })
+
+  it('resolves a stated prompt path over the environment, and both over the default', () => {
+    expect(
+      resolveInitConfig({ promptFile: 'stated.md' }, { PROMPT_FILE: 'env.md' })
+        .promptFile
+    ).toBe('stated.md')
+    expect(resolveInitConfig({}, { PROMPT_FILE: 'env.md' }).promptFile).toBe(
+      'env.md'
+    )
+  })
+
+  it('resolves everything else exactly as the doctor does', () => {
+    const env = { REQUIRED_SECRETS: 'ONE,TWO', WORKFLOW_FILE: 'loop.yml' }
+    const { promptFile, ...shared } = resolveInitConfig({}, env)
+    expect(shared).toEqual(resolveDoctorConfig({}, env))
+    expect(promptFile).toBe(DEFAULT_PROMPT_FILE)
   })
 })

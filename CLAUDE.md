@@ -56,7 +56,12 @@ Each was decided against; don't add them.
   harness appends for itself is an iterating run's gate failure (shopfloor#40) —
   the command it ran, the output it got, and that the run is not done until that
   command passes. Facts and contract; how to fix a failing suite is procedure,
-  and stays out.
+  and stays out. **Amended by #43** (design §11): `init` scaffolds a per-phase
+  prompt _skeleton_ — a shim to the skills plugin carrying the six substituted
+  tokens — and fills its environment block from the consumer's own lockfile and
+  scripts. Read what that does and does not widen: the content is still the
+  consumer's, read off their project rather than shipped; what ships is the
+  shape, and a value that cannot be read is the sentinel rather than a default.
 - **Opinionated coding standards for consumers** — theirs live in the
   repository being worked on; `standardsDir` was removed rather than repointed
   (#27). This repository's own standards are not shipped. Procedure is the
@@ -67,8 +72,16 @@ Each was decided against; don't add them.
   run without). The **label vocabulary is the exception**, and a deliberate one:
   fixed names can be guaranteed, configurable ones can only be validated
   against bindings the package does not own (shopfloor#39, design §8).
-- **CI glue and workflow templates** — callers own `$GITHUB_OUTPUT`, exit codes,
-  branch checkout, the PR.
+- **CI glue** — callers own `$GITHUB_OUTPUT`, exit codes, branch checkout, the
+  PR. **Amended by #43**: `init` scaffolds a workflow template wired to the two
+  admitted trigger events. It is a starting point a consumer then owns, written
+  once when asked; nothing here reads it back or keeps it in sync.
 - **Evals** — a named, open gap, not an oversight to close casually.
+
+One capability class was added rather than removed, and it is worth stating
+because it did not exist before #43: **the package configures the consumer's
+repository** — creating labels, scaffolding files. Only when a human runs
+`init`, never as a side effect of a run, and never over a file whose contents
+it cannot account for. A run's own side is verify-and-refuse.
 
 Multi-step procedures belong in skills, not in this file.

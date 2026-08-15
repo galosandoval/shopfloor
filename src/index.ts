@@ -151,3 +151,31 @@ export {
 export { probeSetup } from './setup/probe-setup'
 
 export { type DoctorConfig } from './setup/setup-config'
+
+/**
+ * `init` (shopfloor#43): doctor plus writers. The pure `planInit` is exported
+ * alongside the shell for the same reason `evaluateSetup` is — a consumer
+ * wanting to see what would be written, without writing it, should not have to
+ * run the writers to find out. The scaffold builders stay internal: what they
+ * emit is checked by the doctor a caller already has, and every export is a
+ * compatibility commitment.
+ */
+export {
+  runInit,
+  formatInitResult,
+  type RunInitInput,
+  type RunInitResult
+} from './setup/run-init'
+
+export {
+  planInit,
+  formatInitPlan,
+  type CreateLabelsAction,
+  type InitAction,
+  type InitInput,
+  type InitPlan,
+  type InitSkip,
+  type WriteFileAction
+} from './setup/init'
+
+export { type ProjectFacts } from './setup/scaffold'

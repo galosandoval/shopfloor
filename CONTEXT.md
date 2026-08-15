@@ -19,17 +19,18 @@ harness concern rather than as a flat file list.
 
 ## Module map
 
-| Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/orchestration/`   | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError` |
-| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting                                             |
-| `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run             |
-| `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI                                                                                                                                                             |
-| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                       |
-| `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                          |
-| `src/cli.ts`           | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                    |
-| `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                  |
-| `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                        |
+| Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/orchestration/`   | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                   |
+| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting                                                                               |
+| `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                               |
+| `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository |
+| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                         |
+| `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `src/cli.ts`           | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                                                      |
+| `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                                                    |
+| `src/init-cli.ts`      | Thin bin entrypoint (`shopfloor-init`); prints the report and exits non-zero on a **write that failed** — never on the setup it cannot fix, which it names and leaves to the operator                                                                                                                                                                                                                                                                               |
+| `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                                                          |
 
 ## Pure core, IO shell
 
@@ -55,8 +56,8 @@ The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `evaluateAuthorization` / `runAuthorization`,
 `evaluatePluginDirs` / `runPluginDirsCheck`, `checkTrajectory` /
 `runTrajectoryCheck`, `evaluateIteration` / `runGate`, `evaluateSetup` /
-`probeSetup`, `checkCliVersion` and `resolveImplementConfig` /
-`runImplementAgent`.
+`probeSetup`, `planInit` / `runInit`, `checkCliVersion` and
+`resolveImplementConfig` / `runImplementAgent`.
 
 `probeSetup` is the one shell not named `run*`, and deliberately: it runs
 nothing and decides nothing — it gathers, and every other `run*` in this
@@ -289,6 +290,30 @@ PR, sandboxing, and any CI glue.
   code. Collapsing the two would make a doctor that cannot find `gh`
   indistinguishable from a repository that is misconfigured, and a diagnostic
   that cries wolf on its own blind spots is one people stop running.
+- **`init` writes only what the verdict says is missing, and only what it can
+  account for.** The scaffolder plans from `evaluateSetup`'s checks rather than
+  from its own reading of the repository, which is what makes running it twice
+  a no-op instead of two sets of writes that happen to agree. Three refusals
+  fall out of the same rule and are deliberate: an `unknown` label read creates
+  nothing (creating six labels on an unreadable probe is a durable write to a
+  shared human workspace made on no evidence); an existing file is overwritten
+  only after an operator confirms, and a run with no TTY declines rather than
+  assuming yes; and a prompt with no environment fences is left alone entirely,
+  because its environment is prose this package cannot locate and rewriting it
+  would destroy the one thing `init` exists to fill.
+- **A value `init` cannot determine is a sentinel, never a guess.** The
+  environment block is filled from the project's lockfile and `package.json`
+  scripts, and anything unreadable becomes `TODO(shopfloor)` — which the
+  doctor's `prompt-environment-block` check already fails on. This is the
+  mechanism the design's Residual was missing: a scaffold that emitted a
+  plausible default would replicate the `standardsDir` failure shape, present
+  and wrong and silent, in the one file a run cannot work without.
+- **Creating labels belongs to `init`, not to a run.** The design's §8 chose
+  creating them at startup, weighed against zero-setup installs; once `init`
+  exists that alternative is gone, so the write happens at a moment a human
+  asked for it and the run's side is verify-and-refuse. Nothing in
+  `runImplementAgent` has ever created one, so this is the decision being
+  settled rather than code being reverted.
 
 ## Standards in repo, procedures in skills
 
