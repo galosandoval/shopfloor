@@ -23,7 +23,7 @@ harness concern rather than as a flat file list.
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/orchestration/` | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError` |
 | `src/guardrails/`    | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting            |
-| `src/observability/` | Session transcript capture, for CI-artifact upload                                                                                                                                                                                                                                                                |
+| `src/observability/` | Session transcript capture (for CI-artifact upload), and the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell. Advisory: it reports, it never fails a run                                                   |
 | `src/index.ts`       | The public surface — nothing else is API                                                                                                                                                                                                                                                                          |
 | `src/cli.ts`         | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                    |
 
@@ -48,13 +48,16 @@ produce. Anything that judges is either pure or does not belong here.
 
 The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `command-guard-hook`, `buildVerifyComment` / `postVerifyComment`,
-`evaluatePluginDirs` / `runPluginDirsCheck`, `checkCliVersion` and
-`resolveImplementConfig` / `runImplementAgent`.
+`evaluatePluginDirs` / `runPluginDirsCheck`, `checkTrajectory` /
+`runTrajectoryCheck`, `checkCliVersion` and `resolveImplementConfig` /
+`runImplementAgent`.
 
 A new module lands in that shape: name the decision, export it as a pure
 function with its own input type, put it in `src/guardrails/` (a decision about
-whether or how a run may proceed) or `src/orchestration/` (a decision about what
-to run), and let the shell own every side effect. The shell should read gather →
+whether or how a run may proceed), `src/orchestration/` (a decision about what
+to run), or `src/observability/` (a judgement about a run that already
+finished — it reports, it does not decide anything the run then obeys), and let
+the shell own every side effect. The shell should read gather →
 decide → act, with the interesting logic in the middle function rather than
 tangled through the IO.
 

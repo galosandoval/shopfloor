@@ -1,8 +1,8 @@
 /**
- * The package's public surface: the four verbs a consumer calls, the error
- * they throw, the three pure escape hatches the README documents
- * (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`,
- * `evaluatePluginDirs`), the bundled plugin's resolved location — API because
+ * The package's public surface: the verbs a consumer calls, the error they
+ * throw, the pure escape hatches the README documents (`evaluatePreflight`,
+ * `buildVerifyComment`, `classifyCommand`, `evaluatePluginDirs`,
+ * `checkTrajectory`), the bundled plugin's resolved location — API because
  * a stated `pluginDirs` replaces the default, so naming it alongside your own
  * has to be writable rather than guessable — and the types
  * of what goes in and comes out. Resolvers, invocation assembly, transcript
@@ -66,3 +66,23 @@ export {
   type PostVerifyCommentInput,
   type PostVerifyCommentResult
 } from './guardrails/post-verify'
+
+export {
+  checkTrajectory,
+  formatScorecard,
+  DEFAULT_HEADROOM_FRACTION,
+  DEFAULT_GATE_COMMAND_PATTERNS,
+  TRAJECTORY_INVARIANT_IDS,
+  type CheckTrajectoryOptions,
+  type TranscriptEvent,
+  type TrajectoryEvidence,
+  type TrajectoryFinding,
+  type TrajectoryInvariantId,
+  type TrajectoryStatus
+} from './observability/trajectory'
+
+export {
+  runTrajectoryCheck,
+  type RunTrajectoryCheckInput,
+  type RunTrajectoryCheckResult
+} from './observability/run-trajectory-check'
