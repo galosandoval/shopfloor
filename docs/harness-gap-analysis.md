@@ -280,6 +280,14 @@ runner."
 
 ### 3.3 Observability is a file copy
 
+**Partly closed by shopfloor#42.** The stream is parsed now, and a run reports
+its tokens and cost as `usage` on the run result — the "highest-leverage add"
+below, taken before the outer loop rather than after it (design review finding
+6). What that ticket did _not_ add is the rest of this section's list: no
+latency, no tool-call counts, no turn count, no drift signal, and nothing yet
+consumes the numbers as a ceiling. Those stay open, and the analysis below
+stands as written.
+
 `captureTranscript` copies the newest JSONL and returns a boolean. Nothing parses
 it.
 

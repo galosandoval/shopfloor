@@ -19,6 +19,11 @@ import {
   captureTranscript,
   preserveIterationTranscript
 } from '../observability/transcript'
+import {
+  mergeRunUsage,
+  NO_RUN_USAGE,
+  type RunUsage
+} from '../observability/usage'
 import { prepareClaudeInvocation } from './claude-invocation'
 import {
   describeRunawayKill,
@@ -63,6 +68,15 @@ export interface RunImplementAgentResult {
    * `runPolicy.gateCommand` is stated — only a run with a gate can iterate.
    */
   iterations: number
+  /**
+   * What the run spent, summed over every one of its iterations, read off the
+   * CLI's own `stream-json` (shopfloor#42). It sits beside `iterations`
+   * deliberately: the inner loop bounds a run by attempts, and this is the
+   * budget those attempts actually multiply. Check
+   * {@link RunUsage.source} before treating the numbers as a total — see
+   * `usage.ts`.
+   */
+  usage: RunUsage
 }
 
 /**
@@ -104,7 +118,7 @@ export async function runImplementAgent(
   }
   delete (childEnv as Record<string, unknown>).ANTHROPIC_API_KEY
 
-  const { iterations, transcriptCaptured } = await runIterations({
+  const { iterations, transcriptCaptured, usage } = await runIterations({
     config,
     env,
     childEnv,
@@ -124,7 +138,11 @@ export async function runImplementAgent(
   )
   if (!Number.isFinite(commitsAhead) || commitsAhead === 0) {
     throw new ImplementAgentError(
-      'Agent finished but made no commits on the branch.'
+      'Agent finished but made no commits on the branch.',
+      undefined,
+      // The most expensive way to produce nothing, and the failure most worth
+      // seeing a price on.
+      usage
     )
   }
 
@@ -145,7 +163,8 @@ export async function runImplementAgent(
     transcriptCaptured,
     prDescription,
     cliVersion,
-    iterations
+    iterations,
+    usage
   }
 }
 
@@ -185,9 +204,11 @@ interface IterationLoopContext {
  * the evidence on exactly the runs worth auditing. A single-shot run writes no
  * such file, so nothing changes for a consumer who never states a gate.
  */
-async function runIterations(
-  ctx: IterationLoopContext
-): Promise<{ iterations: number; transcriptCaptured: boolean }> {
+async function runIterations(ctx: IterationLoopContext): Promise<{
+  iterations: number
+  transcriptCaptured: boolean
+  usage: RunUsage
+}> {
   const { config, env, cwd } = ctx
   const idleMs = resolveIdleMs(config.runPolicy, env)
   const wallClockMs = resolveWallClockMs(config.runPolicy, env)
@@ -207,10 +228,15 @@ async function runIterations(
 
   let transcriptCaptured = false
   let iterationFeedback: string | undefined
+  // Spend, like the wall clock and unlike the idle budget, belongs to the run:
+  // every iteration is a fresh session paying for its static context again, and
+  // a total that reported only the last one would understate an iterating run by
+  // exactly the multiple the loop introduced.
+  let usage = NO_RUN_USAGE
 
   for (let iteration = 1; ; iteration++) {
     const startedAt = Date.now()
-    const { exitCode, killedBy, outputTail } = await spawnClaude({
+    const spawnResult = await spawnClaude({
       ...prepareClaudeInvocation({
         promptTemplate: config.promptTemplate,
         issueNumber: config.issueNumber,
@@ -240,7 +266,11 @@ async function runIterations(
     // captureTranscript resolves the session this iteration just wrote.
     transcriptCaptured = captureRunTranscript()
 
-    requireFinishedSpawn({ exitCode, killedBy, outputTail })
+    // Folded before the spawn is judged, so the failures below carry what the
+    // run had already spent rather than losing it on the way out.
+    usage = mergeRunUsage(usage, spawnResult.usage)
+
+    requireFinishedSpawn(spawnResult, usage)
 
     // The gate runs on the run's own environment, not the CLI's: the OAuth
     // token and the stripped `ANTHROPIC_API_KEY` exist to keep the *agent* off
@@ -264,9 +294,9 @@ async function runIterations(
     })
 
     if (verdict.kind === 'done')
-      return { iterations: iteration, transcriptCaptured }
+      return { iterations: iteration, transcriptCaptured, usage }
     if (verdict.kind === 'exhausted') {
-      throw new ImplementAgentError(verdict.reason, gate?.outputTail)
+      throw new ImplementAgentError(verdict.reason, gate?.outputTail, usage)
     }
 
     // Keep this attempt's transcript before the next spawn overwrites it: a
@@ -288,20 +318,28 @@ async function runIterations(
  * It also ends the loop rather than feeding another iteration, whichever way it
  * failed: the loop corrects work the *gate* judged, and a spawn that never
  * finished produced nothing to judge.
+ *
+ * @param usage - What the run had spent, this spawn included. It rides out on
+ * the failure because a killed run is the one whose cost is least visible and
+ * most worth knowing, and it never reaches a run result to be reported on.
  */
-function requireFinishedSpawn({
-  exitCode,
-  killedBy,
-  outputTail
-}: SpawnClaudeResult): void {
+function requireFinishedSpawn(
+  { exitCode, killedBy, outputTail }: SpawnClaudeResult,
+  usage: RunUsage
+): void {
   if (killedBy) {
-    throw new ImplementAgentError(describeRunawayKill(killedBy), outputTail)
+    throw new ImplementAgentError(
+      describeRunawayKill(killedBy),
+      outputTail,
+      usage
+    )
   }
 
   if (exitCode !== 0) {
     throw new ImplementAgentError(
       `Claude CLI exited with status ${exitCode}.`,
-      outputTail
+      outputTail,
+      usage
     )
   }
 }

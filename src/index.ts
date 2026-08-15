@@ -111,6 +111,14 @@ export {
   type TrajectoryStatus
 } from './observability/trajectory'
 
+/**
+ * What a run spent (shopfloor#42). The types only: `usage` lands on the run
+ * result, and a consumer reads it there. The parse and the fold behind it stay
+ * internal — every export is a compatibility commitment, and nothing outside
+ * this package needs to fold a stream this package is the one spawning.
+ */
+export { type RunUsage, type TokenUsage } from './observability/usage'
+
 export {
   runTrajectoryCheck,
   type RunTrajectoryCheckInput,

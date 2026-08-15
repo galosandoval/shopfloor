@@ -23,9 +23,9 @@ harness concern rather than as a flat file list.
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/orchestration/`   | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError` |
 | `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting                                             |
-| `src/observability/`   | Session transcript capture (for CI-artifact upload), and the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell. Advisory: it reports, it never fails a run                                                                                                                                                                   |
+| `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run             |
 | `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI                                                                                                                                                             |
-| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                          |
+| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                       |
 | `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                          |
 | `src/cli.ts`           | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                    |
 | `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                  |
@@ -127,7 +127,9 @@ every default that can be _stated_ stays in the resolver.
       child's output as its heartbeat.
    2. **Spawn** — `spawnClaude`, with the idle budget and _what is left of_ the
       wall-clock budget armed. OAuth only; `ANTHROPIC_API_KEY` is stripped from
-      the child env so a run can never fall through to a metered key.
+      the child env so a run can never fall through to a metered key. The
+      child's stdout is metered as it arrives (shopfloor#42) and the spawn
+      reports what it spent.
    3. **Capture the transcript**, best-effort, for the caller to upload.
    4. **Run the gate and decide** — `runGate` executes the caller's
       `runPolicy.gateCommand`, and the pure `evaluateIteration` returns done,
@@ -246,6 +248,32 @@ PR, sandboxing, and any CI glue.
   in full on every spawn; the wall-clock budget belongs to the **run** and is
   spent across its iterations. Anything that adds a spawn to a run must take its
   wall-clock budget from the same remainder, or the ceiling stops being one.
+- **The run result names its spend, and nothing in this package acts on it
+  yet.** `usage` (shopfloor#42) is the CLI's `stream-json` parsed as it arrives
+  — the stream the idle guard was already reading for a heartbeat, and that the
+  harness otherwise dropped. It lands on `RunImplementAgentResult`, summed over
+  every iteration, because a loop that multiplies spend by N and measures only
+  attempts is a ceiling on the wrong axis (design review finding 6). **Its
+  consumer today is the caller** — CI glue reporting a run's cost, and evals,
+  for which §3.3 of the gap analysis names this the prerequisite. The ceiling
+  that reads it is the outer loop's, and it is not built; that this is a
+  measurement and not yet a guardrail is deliberate, and the order the design
+  asked for. Which is why metering breaks the package's usual pure/shell pairing
+  and has no `run*` half: it decides nothing. It reports, like everything else
+  in `src/observability/`. A **failed** run reports on
+  `ImplementAgentError.usage` instead, since it never reaches a result — and
+  the runs worth costing are exactly the ones that did not finish. Only a
+  refusal from before the spawn carries none, where the answer is nothing.
+- **A spend total is only a total when every spawn reported one.** `usage.source`
+  keeps the CLI's own tally apart from this package's sum over the messages it
+  watched go by, for the reason the doctor keeps `unknown` apart from `wrong`: a
+  killed run's partial count read as a total would misstate exactly the runs
+  worth costing. Misstate, not understate — an observed sum undercounts output
+  and cache-creation but *over*counts input and cache-read, since every turn
+  re-sends the conversation and each message restates the prefix the turns
+  before it already reported. `RunUsage.source` documents the split per bucket. A metering failure never fails a run — an unreadable
+  diagnostic must not cause an outage, and unlike authorization the failure here
+  is neither financial-and-adversarial nor a permission to spend.
 - **A wall-clock kill fails the run even if commits exist** — a run cut off
   mid-loop never reached its own verify phase, so the work is unvetted. It also
   never becomes another iteration: only a gate verdict on a finished spawn

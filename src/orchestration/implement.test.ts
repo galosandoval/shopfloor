@@ -8,13 +8,16 @@
  * `runImplementAgent` itself.
  */
 
+import { execSync } from 'node:child_process'
 import { runImplementAgent } from './implement'
+import { ImplementAgentError } from './implement-error'
 import { resolveBundledPluginDir } from './bundled-plugin'
 import { spawnClaude, type SpawnClaudeResult } from './spawn-claude'
 import {
   captureTranscript,
   preserveIterationTranscript
 } from '../observability/transcript'
+import { NO_RUN_USAGE } from '../observability/usage'
 import type { RunImplementAgentConfig } from './config'
 import { WALL_CLOCK_MINUTES_ENV_VAR } from '../guardrails/run-policy'
 
@@ -133,7 +136,20 @@ function gateExits(...statuses: number[]) {
 function spawnResult(
   overrides: Partial<SpawnClaudeResult> = {}
 ): SpawnClaudeResult {
-  return { exitCode: 0, killedBy: null, outputTail: '', ...overrides }
+  return {
+    exitCode: 0,
+    killedBy: null,
+    outputTail: '',
+    usage: NO_RUN_USAGE,
+    ...overrides
+  }
+}
+
+/** A spawn that metered `costUsd` and a round number of output tokens. */
+function spent(costUsd: number, outputTokens: number): SpawnClaudeResult {
+  return spawnResult({
+    usage: { ...NO_RUN_USAGE, outputTokens, costUsd, source: 'reported' }
+  })
 }
 
 beforeEach(() => {
@@ -484,6 +500,123 @@ describe('runImplementAgent guard failures', () => {
       transcriptCaptured: true,
       prDescription: 'agent',
       iterations: 1
+    })
+  })
+})
+
+/**
+ * Spend on the run result (shopfloor#42). The parsing and the fold are tested
+ * pure over recorded stream lines in `usage.test.ts`; what these prove is the
+ * part that suite cannot — that what the spawn metered reaches the result at
+ * all, and that an iterating run reports the sum rather than its last attempt.
+ */
+describe('runImplementAgent run spend', () => {
+  it('reports what the spawn metered', async () => {
+    spawnClaudeMock.mockResolvedValue(spent(0.25, 400))
+
+    const result = await runImplementAgent(baseInput())
+
+    expect(result.usage).toEqual(
+      expect.objectContaining({
+        outputTokens: 400,
+        costUsd: 0.25,
+        source: 'reported'
+      })
+    )
+  })
+
+  it('sums every iteration, since the loop is what multiplies the spend', async () => {
+    gateExits(1, 0)
+    spawnClaudeMock
+      .mockResolvedValueOnce(spent(0.25, 400))
+      .mockResolvedValueOnce(spent(0.75, 600))
+
+    const result = await runImplementAgent(
+      baseInput({ runPolicy: { gateCommand: 'bun run verify' } })
+    )
+
+    expect(result.iterations).toBe(2)
+    expect(result.usage).toEqual(
+      expect.objectContaining({ outputTokens: 1000, costUsd: 1 })
+    )
+  })
+
+  it('reports zeroes rather than nothing when the stream said nothing', async () => {
+    const result = await runImplementAgent(baseInput())
+
+    expect(result.usage).toEqual(
+      expect.objectContaining({ outputTokens: 0, costUsd: undefined })
+    )
+  })
+
+  /**
+   * A failed run never reaches a run result, and the runs worth costing are
+   * exactly the ones that did not finish — so the failure carries the spend
+   * out instead.
+   */
+  describe('on a run that failed', () => {
+    /** The `usage` on the `ImplementAgentError` a run threw. */
+    const usageOnFailure = async (input: RunImplementAgentConfig) => {
+      const error = await runImplementAgent(input).catch((thrown) => thrown)
+      expect(error).toBeInstanceOf(ImplementAgentError)
+      return (error as ImplementAgentError).usage
+    }
+
+    it('carries the spend of a run a guard killed', async () => {
+      spawnClaudeMock.mockResolvedValue(
+        spawnResult({
+          killedBy: { reason: 'idle', budgetMs: 900_000 },
+          usage: spent(0.25, 400).usage
+        })
+      )
+
+      expect(await usageOnFailure(baseInput())).toEqual(
+        expect.objectContaining({ outputTokens: 400, costUsd: 0.25 })
+      )
+    })
+
+    it('carries the spend of a run the CLI exited non-zero on', async () => {
+      spawnClaudeMock.mockResolvedValue(
+        spawnResult({ exitCode: 2, usage: spent(0.25, 400).usage })
+      )
+
+      expect(await usageOnFailure(baseInput())).toEqual(
+        expect.objectContaining({ outputTokens: 400 })
+      )
+    })
+
+    it('carries every iteration’s spend when the attempt ceiling is exhausted', async () => {
+      gateExits(1)
+      spawnClaudeMock.mockResolvedValue(spent(0.25, 400))
+
+      const usage = await usageOnFailure(
+        baseInput({ runPolicy: { gateCommand: 'bun run verify' } })
+      )
+
+      // The default ceiling is three attempts, all of them paid for.
+      expect(usage).toEqual(
+        expect.objectContaining({ outputTokens: 1200, costUsd: 0.75 })
+      )
+    })
+
+    it('prices the most expensive way to produce nothing — a run that never committed', async () => {
+      // `Once`, not a lasting override: implementations survive
+      // `clearAllMocks`, and a run reads the commit count exactly once.
+      vi.mocked(execSync).mockReturnValueOnce('0\n')
+      spawnClaudeMock.mockResolvedValue(spent(0.25, 400))
+
+      expect(await usageOnFailure(baseInput())).toEqual(
+        expect.objectContaining({ outputTokens: 400 })
+      )
+    })
+
+    it('carries nothing for a run that refused before it spawned', async () => {
+      const refused = await runImplementAgent(
+        baseInput({ runPolicy: { requiredEnvVars: ['DATABASE_URL'] } })
+      ).catch((thrown) => thrown)
+
+      expect(refused.message).toContain('DATABASE_URL')
+      expect(refused.usage).toBeUndefined()
     })
   })
 })

@@ -150,11 +150,63 @@ A resolved run answers with `RunImplementAgentResult`:
 | `transcriptCaptured` | `boolean`               | Whether the session transcript was found and copied to `transcriptFile`              |
 | `cliVersion`         | `string \| undefined`   | The CLI version this run spawned; undefined when that probe failed or was unreadable |
 | `iterations`         | `number`                | How many times the run spawned the CLI — always `1` without a `gateCommand`          |
+| `usage`              | `RunUsage`              | What the run spent, summed over its iterations — see below                           |
 
 `prDescription: 'fallback'` and `transcriptCaptured: false` are **not**
 failures — the run committed either way. They are there so CI glue can say so
 in the PR rather than presenting generated prose as the agent's own, or an
 absent transcript as an uploaded one.
+
+#### What a run spent
+
+The CLI's `stream-json` output already flows through the harness process — the
+idle guard reads it as a heartbeat — and `usage` is that stream parsed as it
+arrives rather than dropped. It exists because the inner loop bounds a run by
+_attempts_, and attempts are not the budget the loop multiplies.
+
+| Field                      | Type                       | Meaning                                          |
+| -------------------------- | -------------------------- | ------------------------------------------------ |
+| `inputTokens`              | `number`                   | Uncached input tokens                            |
+| `outputTokens`             | `number`                   | Output tokens                                    |
+| `cacheCreationInputTokens` | `number`                   | Tokens written to the prompt cache               |
+| `cacheReadInputTokens`     | `number`                   | Tokens served from it                            |
+| `costUsd`                  | `number \| undefined`      | USD, when the stream reported it                 |
+| `source`                   | `'reported' \| 'observed'` | Whether these are the CLI's own tally or this package's sum |
+
+**`source` is the field to read first.** `'reported'` means every spawn reached
+its terminal `result` event and these are the CLI's own numbers. `'observed'`
+means at least one did not — a run a guard killed, or one whose stream was
+unreadable — and the totals are then this package's sum over the `assistant`
+messages it watched go by, each counted at the snapshot taken when its message
+started.
+
+**An `'observed'` total is not a total, and it is not uniformly a floor
+either** — the buckets degrade in opposite directions:
+
+- `outputTokens` and `cacheCreationInputTokens` **undercount**. The snapshot
+  precedes the message's final count, and a run killed mid-message contributes
+  nothing at all. Read them as a lower bound.
+- `inputTokens` and `cacheReadInputTokens` **overcount**, usually by a lot.
+  Every turn re-sends the conversation, so each message restates the prefix its
+  predecessors already reported; summing across N turns counts the same tokens
+  up to N times. On a multi-turn run these can exceed the CLI's own tally by a
+  large multiple. Read them as evidence that work happened, not as a quantity.
+
+A `'observed'` total carries no `costUsd` even where one was seen: a cost is a
+whole session's, and pairing a complete price with an incomplete token count is
+the misreading `source` exists to prevent.
+
+The numbers are always present. A run whose stream said nothing about usage
+reports zeroes with `source: 'observed'`, so "free" is never confused with
+"unmeasured". Nothing about this fails a run: an unreadable diagnostic must not
+cause an outage, so a malformed line is skipped and the run continues.
+
+**A failed run reports its spend too**, on the error rather than on a result it
+never produces — `ImplementAgentError.usage`. A guard kill, a non-zero CLI
+exit, an exhausted attempt ceiling, and a run that committed nothing all spent
+real tokens, and those are the runs whose cost is least visible. It is
+`undefined` only for a failure that refused before the spawn, where the answer
+is genuinely nothing.
 
 ### Resolution order
 
