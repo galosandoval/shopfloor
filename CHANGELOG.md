@@ -1,5 +1,173 @@
 # @galosandoval/shopfloor
 
+## 0.11.0
+
+### Minor Changes
+
+- [#58](https://github.com/galosandoval/shopfloor/pull/58) [`7ec0942`](https://github.com/galosandoval/shopfloor/commit/7ec0942bcb2271d9f37efad251b2c6d25c0423ec) Thanks [@galosandoval](https://github.com/galosandoval)! - Add the authorization guard — the spend gate (shopfloor#41).
+
+  On a public repository, anyone who can add a label can start a run that spends
+  the maintainer's Claude subscription. Until now the only thing standing between
+  a stranger and that spend was a line of YAML in each consumer's workflow
+  (`github.actor == '<name>'`), with no test anywhere. This ships it as a typed,
+  tested guard.
+
+  **New API.** `evaluateAuthorization` (pure: probed permission + actor → verdict)
+  and `runAuthorization` (the shell: probes
+  `gh api repos/{repo}/collaborators/{actor}/permission`, returns the verdict,
+  writes nothing). `SPENDING_PERMISSIONS` and the input/verdict types are exported
+  alongside them.
+
+  **New bin: `shopfloor-authorize`.** Prints the verdict and exits non-zero on any
+  refusal, so a job that has installed nothing can run it first:
+
+  ```yaml
+  - run: npx -y @galosandoval/shopfloor@<version> shopfloor-authorize
+  ```
+
+  `GITHUB_ACTOR` and `GITHUB_REPOSITORY` come from the runner; `GH_TOKEN` must be
+  able to read the repository's collaborator permissions. A spend gate that runs
+  after the runner's setup has already let the spend happen, which is why it is
+  its own bin rather than a step inside the existing ones.
+
+  **New failure mode, and it is deliberate: this guard refuses on uncertainty.**
+  Every other guardrail in this package proceeds when its signal is unreadable,
+  because a missing diagnostic should not cause an outage. This one does the
+  opposite — an errored probe, an empty answer, or a permission level it does not
+  recognize all refuse. Concretely, a run triggered by an authorized maintainer
+  will now **fail** if `gh` is missing, unauthenticated, rate-limited, or the
+  token cannot read collaborator permissions. That is the intended direction: an
+  unreadable permission is not permission. The verdict distinguishes
+  `not-permitted` (the probe answered no) from `undetermined` (it answered
+  nothing usable), so a broken token is not reported as a trespasser.
+
+  Only `admin`, `maintain`, and `write` may spend — a `triage` collaborator can
+  add a label, and labeling is not spending. That set (`SPENDING_PERMISSIONS`,
+  exported) is fixed rather than configurable, for the reason the label
+  vocabulary is: a stated set could only be validated against a role model this
+  package does not own, and one consumer writing `['read']` would undo the guard
+  with no error anywhere. An actor or repository that is not a well-formed GitHub
+  login / `owner/repo` is `undetermined` and never probed.
+
+  Nothing existing changes: no current export, verb, or run behaviour is touched,
+  and a consumer who does not call the new guard is unaffected. Consumers should
+  replace their workflow's `github.actor == '<name>'` condition with a setup-free
+  job running `shopfloor-authorize`; the YAML check is not deleted by this
+  release, since it is in the consumer's repository.
+
+- [#57](https://github.com/galosandoval/shopfloor/pull/57) [`5c9010f`](https://github.com/galosandoval/shopfloor/commit/5c9010f5ad21404bc4d3f152aed4413028a2ea66) Thanks [@galosandoval](https://github.com/galosandoval)! - Add the inner loop: a run can now retry itself in process, bounded by its own
+  budget.
+
+  State `runPolicy.gateCommand` (`GATE_COMMAND`) and `runImplementAgent` runs that
+  command itself after each spawn, in the run's `cwd`. A non-zero exit spawns the
+  CLI again with the failing command and a 4 KB tail of its output appended to the
+  prompt, up to `runPolicy.maxIterations` (`MAX_ITERATIONS`, default `3`). The
+  pure decision behind it, `evaluateIteration`, is exported. The result carries
+  `iterations`.
+
+  **The new failure mode, named: a run that previously spawned the CLI exactly
+  once may now spawn it repeatedly.** Everything a single run costs — tokens, API
+  spend, wall-clock, commits on the branch, transcript captures — multiplies by up
+  to `maxIterations`. Only a run that states a gate command can iterate, so
+  upgrading changes nothing until you state one; but a consumer who sets
+  `GATE_COMMAND` in CI is opting every run in that environment into up to three
+  spawns, and `MAX_ITERATIONS` is the one number bounding that. Nothing here reads
+  the gate from your prompt or infers one.
+
+  **`wallClockMinutes` now bounds the run, not one spawn.** Each iteration is
+  armed with what is left of the budget rather than a fresh copy of it, and the
+  gate's own runtime is charged to the same clock — so the ceiling covers spawns
+  and gates together. A run with under a minute left fails instead of spawning
+  again. A single-iteration run is armed exactly as before, so no existing
+  behaviour changes — but if you were reading that number as a per-spawn ceiling,
+  it is now a per-run one. `idleMinutes` is unchanged and stays per-spawn: silence
+  is a property of one live process.
+
+  **A spent budget with the gate still red fails the run**, throwing
+  `ImplementAgentError` naming the gate and the budget. The loop does not return
+  unvetted work as a success. A runaway kill or a non-zero CLI exit still fails
+  immediately and never iterates.
+
+  **A run that iterates writes extra transcripts.** `transcriptFile` still holds
+  the session that finished the run, and each failed attempt is now kept beside it
+  as `transcript.iteration-<n>.jsonl` before the next spawn overwrites it. If your
+  CI glue uploads the output directory wholesale it will pick these up; if it
+  uploads `transcriptFile` by name, nothing changes. `runTrajectoryCheck` still
+  grades `transcriptFile`. A run with no gate stated writes none of them.
+
+  The gate command runs through a shell in your checkout, on the run's own
+  environment — no OAuth token is injected into it and `ANTHROPIC_API_KEY` is not
+  stripped from it, since that pair constrains the agent's auth and the gate is
+  not the agent. Treat the command as the trusted configuration it is: it must
+  come from your own config, never from an issue, a comment, or anything the agent
+  wrote.
+
+  `RunImplementAgentResult` gains a required `iterations` field; a caller
+  constructing that type by hand (a test fixture, a stub) now has to supply it.
+
+## 0.10.0
+
+### Minor Changes
+
+- [#55](https://github.com/galosandoval/shopfloor/pull/55) [`6f4133d`](https://github.com/galosandoval/shopfloor/commit/6f4133d49fb85daebe048a3623440ca8117ef1ef) Thanks [@galosandoval](https://github.com/galosandoval)! - Add `shopfloor doctor` — one non-interactive command that says which of a
+  consumer's setup bindings is wrong.
+
+  Everything a consumer must get right to run this harness is an untyped string
+  binding that fails silently when it is wrong: two secrets, the label
+  vocabulary, the workflow's trigger wiring, a prompt carrying six exact
+  `{{TOKEN}}` placeholders, a CLI pin. `npx shopfloor-doctor` probes all of it
+  and names each failure.
+
+  **New bin: `shopfloor-doctor`.** Reads `PROMPT_FILE`, `WORKFLOW_FILE`
+  (default `.github/workflows/agent-implement.yml`), `REQUIRED_SECRETS`
+  (default `CLAUDE_CODE_OAUTH_TOKEN,AGENT_PAT`), `AGENT_PAT_SECRET`,
+  `CLI_VERSION`, and `GITHUB_REPOSITORY`. Read-only and idempotent — it creates
+  no labels, sets no secrets, and writes no files — and **exits non-zero on a
+  failing verdict**, so a CI step can gate on it.
+
+  **New API:** `evaluateSetup` (pure verdict over gathered facts), `probeSetup`
+  (the IO shell), `formatSetupReport`, and the constants a consumer can act on —
+  `REQUIRED_LABELS`, `PROMPT_TOKENS`, `ENVIRONMENT_BLOCK_START` /
+  `ENVIRONMENT_BLOCK_END` / `ENVIRONMENT_UNFILLED_SENTINEL` — plus the
+  `SetupFacts` / `SetupVerdict` / `SetupCheck` / `DoctorConfig` types. The check
+  ids, the admitted events, and the config defaults stay internal on purpose.
+
+  **Nothing about an existing run changes.** No new refusal, no new precondition,
+  no behaviour change to `runImplementAgent`; this is additive, and a consumer
+  who never runs the doctor is unaffected.
+
+  **Failure modes worth knowing before you gate CI on it.**
+
+  - **Three statuses, and only `fail` sets the exit code.** A check whose probe
+    answered nothing — `gh` absent, no `PROMPT_FILE` pointed at, no pin stated —
+    reports `unknown` and passes. A green doctor therefore means "nothing was
+    found wrong", not "everything was checked": read the unchecked list.
+  - **The workflow's `on:` block is read by a shallow scan, not a YAML parser.**
+    Trigger wiring written in an unusual shape can read as absent, which surfaces
+    as a `workflow-triggers` failure. It errs toward reporting a problem, never
+    toward a silent pass.
+  - **Two checks need network access** — the default branch's workflow files come
+    from the GitHub API, because `workflow_run` fires only from the default
+    branch and the local checkout usually isn't it. Offline, that check reports
+    `unknown`.
+  - **Two checks fail on a setup that is correct for the harness as it ships
+    today.** `workflow-triggers` requires `workflow_run.completed`, the outer
+    loop's machine edge, which is designed and unbuilt; `label-vocabulary`
+    requires six fixed labels nothing creates yet. Both are the loop's real
+    bindings, and both will fail a consumer running only the `implement` phase
+    until those land — read the report before wiring the exit code into a
+    blocking CI step.
+  - **A green `pat-workflow-scope` is an inference, not proof.** A stored
+    secret's scopes cannot be read by anything but Actions, so the check judges
+    the token the operator is running as. A correctly-scoped laptop with a
+    wrongly-scoped `AGENT_PAT` passes.
+  - **The PAT half of `workflow-run-prerequisites` is a reference check** — it
+    asks whether the workflow mentions `secrets.<PAT>` at all, not whether the
+    pushing step uses it.
+  - **Environment-scoped secrets read as missing.** Repository and organization
+    secrets are both probed; environment secrets are invisible to `gh secret
+list`, so name only visible secrets in `REQUIRED_SECRETS`.
+
 ## 0.9.0
 
 ### Minor Changes
