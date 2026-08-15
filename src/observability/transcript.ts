@@ -37,6 +37,51 @@ export function findNewestSessionFile(projectsDir: string): string | undefined {
 }
 
 /**
+ * Where iteration `n` of a looping run keeps its own copy of the transcript:
+ * `transcript.jsonl` → `transcript.iteration-1.jsonl`. Pure — a path
+ * derivation, not a decision.
+ *
+ * Derived from `transcriptFile` rather than taking a directory of its own, so
+ * a caller who moved the transcript moves the whole set with it, and the trail
+ * lands wherever the run's other outputs already do.
+ */
+export function iterationTranscriptPath(
+  transcriptFile: string,
+  iteration: number
+): string {
+  const { dir, name, ext } = path.parse(transcriptFile)
+  return path.join(dir, `${name}.iteration-${iteration}${ext}`)
+}
+
+/**
+ * Keep iteration `iteration`'s transcript before the next spawn overwrites
+ * `transcriptFile`, at {@link iterationTranscriptPath}. Returns true when a
+ * copy was made.
+ *
+ * Only a run that iterates ever calls this, so a single-shot run's output
+ * directory is exactly what it was before the inner loop existed — no empty
+ * convention to explain to a consumer who never opted in.
+ *
+ * Best-effort and silent on failure, like every other transcript path here: a
+ * failed copy costs an audit artifact, and failing the run over it would cost
+ * the work.
+ */
+export function preserveIterationTranscript(
+  transcriptFile: string,
+  iteration: number
+): boolean {
+  try {
+    fs.copyFileSync(
+      transcriptFile,
+      iterationTranscriptPath(transcriptFile, iteration)
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Copy the agent's session transcript (the newest JSONL under `projectsDir`)
  * to `destPath`, best-effort. Returns true when a transcript was written.
  * Never throws — transcript capture is observability only and must never

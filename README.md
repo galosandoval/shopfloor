@@ -96,8 +96,13 @@ await runImplementAgent({
     // Every field is optional and merges over DEFAULT_RUN_POLICY.
     maxTurns: 150,
     idleMinutes: 15,
-    // Omitted, a run has no wall-clock ceiling — only the idle guard.
+    // Omitted, a run has no wall-clock ceiling — only the idle guard. This
+    // bounds the whole run, iterations included, not one spawn.
     wallClockMinutes: 45,
+    // The quality gate the HARNESS runs after each spawn. Omitted, a run is
+    // single-shot; stated, a failure respawns with the failure fed back in.
+    gateCommand: 'bun run typecheck && bun run test',
+    maxIterations: 3,
     // The CLI version this policy was validated against. A mismatch on
     // major.minor warns by default; 'error' refuses the run, 'off' skips.
     cliVersion: '2.1.220',
@@ -144,6 +149,7 @@ A resolved run answers with `RunImplementAgentResult`:
 | `prDescription`      | `'agent' \| 'fallback'` | Whether the agent wrote its own PR description, or this run supplied one             |
 | `transcriptCaptured` | `boolean`               | Whether the session transcript was found and copied to `transcriptFile`              |
 | `cliVersion`         | `string \| undefined`   | The CLI version this run spawned; undefined when that probe failed or was unreadable |
+| `iterations`         | `number`                | How many times the run spawned the CLI — always `1` without a `gateCommand`          |
 
 `prDescription: 'fallback'` and `transcriptCaptured: false` are **not**
 failures — the run committed either way. They are there so CI glue can say so
@@ -176,6 +182,8 @@ you state, or one the environment already carries, never spawns a subprocess.
 | `runPolicy.maxTurns`             | `MAX_TURNS`                 | —               | `150`                                                 |
 | `runPolicy.idleMinutes`          | `IDLE_MINUTES`              | —               | `15`                                                  |
 | `runPolicy.wallClockMinutes`     | `WALL_CLOCK_MINUTES`        | —               | none — the run has no wall-clock ceiling              |
+| `runPolicy.gateCommand`          | `GATE_COMMAND`              | —               | none — the run is single-shot                         |
+| `runPolicy.maxIterations`        | `MAX_ITERATIONS`            | —               | `3` — reachable only with a gate stated               |
 | `runPolicy.cliVersion`           | `CLI_VERSION`               | —               | none — the running version is recorded, not compared  |
 | `runPolicy.cliVersionStrictness` | `CLI_VERSION_STRICTNESS`    | —               | `'warn'`                                              |
 | `runPolicy.requiredEnvVars`      | `REQUIRED_ENV_VARS`         | —               | `[]`                                                  |
@@ -220,7 +228,65 @@ wedged somewhere that cannot service a signal handler anyway.
 **A killed run is a hard failure even if the agent had already committed.** It
 never reached its own verify phase, so those commits are unvetted
 work-in-progress. That is deliberately stricter than the missing-PR-description
-case below, where the commits were finished and only the prose was absent.
+case below, where the commits were finished and only the prose was absent. A
+kill ends the run outright; it never becomes another iteration.
+
+**The two guards bound different things**, and the difference only shows up on
+a run that iterates. The **idle budget is per spawn** — it measures one live
+process going quiet, and there is no such thing as a process that fell silent
+between spawns. The **wall-clock budget is per run**: each spawn is armed with
+what is left of it, and a run with none left fails rather than starting another.
+A single-iteration run is armed exactly as it was before the inner loop existed.
+
+#### The inner loop
+
+State a `runPolicy.gateCommand` (`GATE_COMMAND`) and a run stops being
+single-shot. After each spawn the **harness** runs that command in the run's
+`cwd`; a non-zero exit spawns the CLI again with the command and a 4 KB tail of
+its output appended to the prompt, up to `runPolicy.maxIterations`
+(`MAX_ITERATIONS`, default `3`). Omit the gate and nothing changes: one spawn,
+as before.
+
+Three things about it are worth stating plainly, because each was a decision:
+
+- **The harness generates the signal, not the agent.** The gate is a command
+  this package runs and observes the exit status of. An agent's own report that
+  its gate passed is not a signal — a fluent run that skipped verification is
+  exactly what the loop exists to catch. The command is yours: this package
+  ships no build-tool vocabulary, on the same footing as `requiredEnvVars`. It
+  runs through a shell, so a chain (`&&`) works, and it is trusted input from
+  your configuration — never from the issue, the agent, or anything the run
+  read.
+- **Each iteration is a fresh spawn, not a `--resume`.** Resuming would keep the
+  reasoning that produced the failing work in the context of the turn meant to
+  correct it. The cost is named rather than hidden: every iteration pays for its
+  static context again.
+- **A spent budget fails the run.** A gate still red at `maxIterations`, or a
+  run with too little wall clock left to be worth another attempt (under a
+  minute), throws an `ImplementAgentError` naming the gate and the budget. It
+  does not return unvetted work as a success. Stopping a little above zero is
+  deliberate: a spawn given seconds would be killed by the wall-clock guard, and
+  the run would then report a runaway agent instead of the spent budget it is.
+
+Two details worth knowing before you wire this up:
+
+- **The gate's own runtime is charged to the wall clock.** A gate is normally
+  the whole test suite, and time the run spends inside it is time the run spent.
+  `wallClockMinutes` therefore bounds spawns _and_ gates together.
+- **The gate runs on the run's own environment, not the CLI's child env.** No
+  OAuth token is injected into it, and `ANTHROPIC_API_KEY` is not stripped from
+  it — that pair exists to keep the _agent_ off a metered key, and your test
+  suite is not the agent. Your `requiredEnvVars` are there as usual.
+- **`transcriptFile` holds the last iteration's transcript, and the failed
+  attempts land beside it.** Each pass overwrites `transcriptFile`, so before
+  iterating the attempt that just failed is kept at
+  `transcript.iteration-<n>.jsonl` in the same directory. `runTrajectoryCheck`
+  still grades `transcriptFile` — the session that finished the run — and you
+  can point it at an earlier attempt to grade that one instead. A single-shot
+  run writes no `iteration-` files at all.
+
+`evaluateIteration` — the pure function that decides iterate / done /
+exhausted — is exported, so the rule can be tested or reused without a run.
 
 #### Pre-spawn preconditions
 
@@ -362,6 +428,80 @@ lives in the harness, not in this entrypoint. Inside GitHub Actions the
 branch, repository, and commit come from the runner's own `GITHUB_*`
 variables, so a workflow step restates none of them. A failed run writes its
 reason to `failure_reason.txt` under `OUTPUT_DIR` and exits non-zero.
+
+### Authorization — the spend gate
+
+On a public repository, anyone who can add a label can start a run that spends
+your Claude subscription. This is the only guardrail here whose failure mode is
+financial and adversarial rather than operational, so it ships as its own bin
+and runs in a job that has installed nothing:
+
+```yaml
+jobs:
+  authorize:
+    if: github.event.label.name == 'agent:implement'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.AGENT_PAT }}
+    steps:
+      # No checkout, no toolchain, no install — the guard runs before the spend
+      # it guards. A refusal exits non-zero, which fails this job, which skips
+      # every job that `needs:` it.
+      - run: npx -y @galosandoval/shopfloor@<version> shopfloor-authorize
+```
+
+`GITHUB_ACTOR` and `GITHUB_REPOSITORY` come from the runner. The probe is
+`gh api repos/{repo}/collaborators/{actor}/permission`, and the run proceeds
+only for `admin`, `maintain`, or `write` — a `triage` collaborator can label an
+issue and therefore trigger the loop, and labeling is not spending.
+
+That set (`SPENDING_PERMISSIONS`, exported) is **fixed rather than
+configurable**, for the reason the label vocabulary is: a stated set could only
+be validated against a role model this package does not own, and the failure
+mode here is not a broken diagnostic but a silently reopened spend gate.
+
+**It refuses on uncertainty, and it is the only guard here that does.**
+Everywhere else in this package an unreadable signal proceeds, because a
+missing diagnostic should not cause an outage. Here an unreadable signal means
+"I do not know whether this person may spend your money." So a `gh` that is
+missing, unauthenticated, rate-limited, or answering with a permission level
+the guard does not recognize all refuse, and the verdict says which of two
+things happened:
+
+| `refusal`       | Means                                                    |
+| --------------- | -------------------------------------------------------- |
+| `not-permitted` | The probe answered, and the answer was no                |
+| `undetermined`  | The probe answered nothing usable — refused, not assumed |
+
+They are kept apart for the reason the doctor keeps `unknown` apart from
+`wrong`: one is a trespasser and the other is a broken token, and a message
+that conflates them files an outage under a security incident. The refusal
+names the actor and what would unblock them.
+
+**It writes nothing.** Unlike preflight refusal, this one neither labels nor
+comments — a refusal that commented would hand any drive-by triager a way to
+make the harness write to your repository. The exit code is the whole output.
+
+For a caller that wants the verdict rather than a process:
+
+```ts
+import { runAuthorization } from '@galosandoval/shopfloor'
+
+const { verdict } = await runAuthorization({
+  actor: 'octocat',
+  repo: 'galosandoval/recipe-chat'
+})
+if (!verdict.authorized) {
+  console.error(`${verdict.refusal}: ${verdict.reason}`)
+}
+```
+
+`evaluateAuthorization` is the pure decision underneath, if you probed the
+permission another way, and `SPENDING_PERMISSIONS` is the set it judges
+against. An actor or repository that is not a well-formed GitHub login /
+`owner/repo` is `undetermined` and never probed: the probe path is built by
+interpolation, and a target that could address a different endpoint is not one
+whose answer is worth trusting.
 
 ### Preflight refusal
 
@@ -618,11 +758,15 @@ or `review` module has an obvious home:
 - `src/orchestration/` — `runImplementAgent` (the orchestrator),
   `resolveImplementConfig` (pure configuration resolution),
   `prepareClaudeInvocation` (pure CLI-invocation assembly), `spawnClaude`
-  (the subprocess, with both runaway guards armed around it), and
+  (the subprocess, with both runaway guards armed around it),
+  `evaluateIteration` / `runGate` (the inner loop's decision and the gate it
+  decides on), and
   `resolveBundledPluginDir` (where the bundled plugin landed — filesystem work,
   so it sits in the shell rather than in the configuration resolver).
 - `src/guardrails/` — the run-policy contract (idle/wall-clock/max-turns
-  resolvers), the pure CLI-version comparison, preflight refusal, the command
+  resolvers), the pure CLI-version comparison, preflight refusal, authorization
+  (`evaluateAuthorization` / `runAuthorization` — the spend gate, and the one
+  guard that refuses on uncertainty), the command
   policy and its `PreToolUse` hook script, plugin-directory validation, and
   verify-comment posting (a
   feedback-loop guardrail: posting proof back to the PR).
@@ -635,15 +779,19 @@ or `review` module has an obvious home:
   shell. It judges a consumer's configuration rather than a run, and writes
   nothing at all.
 
-The package exports the five verbs (`runImplementAgent`, `runPreflight`,
-`postVerifyComment`, `runTrajectoryCheck`, `probeSetup`) and `ImplementAgentError`, the
-documented pure escape hatches (`evaluatePreflight`, `buildVerifyComment`,
-`classifyCommand`, `checkTrajectory` with `formatScorecard`, `evaluateSetup`
-with `formatSetupReport`, and
+The package exports the six verbs (`runImplementAgent`, `runPreflight`,
+`runAuthorization`, `postVerifyComment`, `runTrajectoryCheck`, `probeSetup`) and
+`ImplementAgentError`, the
+documented pure escape hatches (`evaluatePreflight`, `evaluateAuthorization`,
+`buildVerifyComment`,
+`classifyCommand`, `checkTrajectory` with `formatScorecard`, `evaluateIteration`
+(the inner loop's iterate/done/exhausted rule), `evaluateSetup` with
+`formatSetupReport`, and
 `evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
 CI glue can pre-validate a plugin directory without starting a run),
 `resolveBundledPluginDir` (where the bundled plugin landed),
-`DEFAULT_RUN_POLICY`, and the input/result types — including
+`DEFAULT_RUN_POLICY`, `SPENDING_PERMISSIONS` (the fixed set the spend gate
+judges against), and the input/result types — including
 `CliVersionStrictness`, the union behind the strictness table above. The
 resolvers, the invocation assembler, and the transcript helpers are internals —
 import from source if you're vendoring, but they aren't API.

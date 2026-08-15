@@ -15,9 +15,18 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { execFileSync, execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { captureTranscript } from '../observability/transcript'
+import {
+  captureTranscript,
+  preserveIterationTranscript
+} from '../observability/transcript'
 import { prepareClaudeInvocation } from './claude-invocation'
-import { describeRunawayKill, spawnClaude } from './spawn-claude'
+import {
+  describeRunawayKill,
+  spawnClaude,
+  type SpawnClaudeResult
+} from './spawn-claude'
+import { evaluateIteration } from './iteration'
+import { runGate } from './gate'
 import {
   findMissingEnvVars,
   resolveIdleMs,
@@ -49,16 +58,26 @@ export interface RunImplementAgentResult {
    * independently of whether a pin was stated to compare against.
    */
   cliVersion?: string
+  /**
+   * How many times this run spawned the CLI. Always 1 unless
+   * `runPolicy.gateCommand` is stated — only a run with a gate can iterate.
+   */
+  iterations: number
 }
 
 /**
- * Runs the agent once: resolves the caller's configuration (filling anything
+ * Runs the agent: resolves the caller's configuration (filling anything
  * unstated from the environment, a `git` / `gh` probe, or a package default),
  * settles every pre-spawn precondition (see {@link verifyPreconditions}),
- * spawns the Claude Code CLI with both runaway guards armed, captures the session transcript, and
- * verifies the run actually committed. Throws {@link ImplementAgentError} on
- * any failure — callers own translating that into their own CI-glue (writing a
- * failure-reason file, exiting non-zero).
+ * spawns the Claude Code CLI with both runaway guards armed, captures the
+ * session transcript, and verifies the run actually committed. Throws
+ * {@link ImplementAgentError} on any failure — callers own translating that
+ * into their own CI-glue (writing a failure-reason file, exiting non-zero).
+ *
+ * With a `runPolicy.gateCommand` stated it runs that gate after each spawn and
+ * spawns again on a failure, carrying the failure into the next prompt, until
+ * the gate passes or a budget is spent (shopfloor#40). Without one it is
+ * single-shot, as it has always been.
  */
 export async function runImplementAgent(
   input: RunImplementAgentConfig
@@ -77,23 +96,6 @@ export async function runImplementAgent(
   const issueTitle =
     config.issueTitle ?? probeIssueTitle(config.issueNumber, config.repo, cwd)
 
-  const { args, prompt } = prepareClaudeInvocation({
-    promptTemplate: config.promptTemplate,
-    issueNumber: config.issueNumber,
-    issueTitle,
-    branch,
-    prDescriptionFile: config.prDescriptionFile,
-    pluginDirs,
-    verifyReportFile: config.verifyReportFile,
-    screenshotsDir: config.screenshotsDir,
-    model: config.runPolicy.model,
-    maxTurns: config.runPolicy.maxTurns,
-    commandGuardHookPath: resolveCommandGuardHookPath(),
-    // Always stream: the idle guard below watches the CLI's output for a
-    // heartbeat, and `--print` text stays silent until the session ends.
-    streamOutput: true
-  })
-
   // Never let the child fall through to a metered API key, even if the
   // invoking environment happens to have one set — auth must be OAuth-only.
   const childEnv = {
@@ -102,45 +104,16 @@ export async function runImplementAgent(
   }
   delete (childEnv as Record<string, unknown>).ANTHROPIC_API_KEY
 
-  const idleMs = resolveIdleMs(config.runPolicy, env)
-  const wallClockMs = resolveWallClockMs(config.runPolicy, env)
-  const captureRunTranscript = () =>
-    captureTranscript({
-      projectsDir: config.projectsDir,
-      destPath: config.transcriptFile
-    })
-
-  const { exitCode, killedBy, outputTail } = await spawnClaude({
-    args,
-    prompt,
-    env: childEnv,
+  const { iterations, transcriptCaptured } = await runIterations({
+    config,
+    env,
+    childEnv,
     cwd,
-    idleMs,
-    wallClockMs,
-    onSpawnError: captureRunTranscript
+    pluginDirs,
+    branch,
+    issueTitle,
+    commandGuardHookPath: resolveCommandGuardHookPath()
   })
-
-  // Copy the agent's session transcript out for the caller to upload as an
-  // audit artifact. Best-effort; there's exactly one session per run, so the
-  // newest-JSONL scan inside captureTranscript resolves it unambiguously.
-  const transcriptCaptured = captureRunTranscript()
-
-  // A killed run fails before the commit check below, and deliberately stays
-  // that way for the wall-clock guard too: a run cut off mid-loop never
-  // reached its own verify phase, so whatever it committed is unvetted
-  // work-in-progress. That is why this doesn't follow the leniency the missing
-  // PR description gets further down — there, the commits were finished and
-  // only the prose was absent.
-  if (killedBy) {
-    throw new ImplementAgentError(describeRunawayKill(killedBy), outputTail)
-  }
-
-  if (exitCode !== 0) {
-    throw new ImplementAgentError(
-      `Claude CLI exited with status ${exitCode}.`,
-      outputTail
-    )
-  }
 
   // The agent commits its own TDD work; a zero-commit run is a failure, not a PR.
   const commitsAhead = Number(
@@ -166,7 +139,171 @@ export async function runImplementAgent(
     )
   }
 
-  return { branch, commitsAhead, transcriptCaptured, prDescription, cliVersion }
+  return {
+    branch,
+    commitsAhead,
+    transcriptCaptured,
+    prDescription,
+    cliVersion,
+    iterations
+  }
+}
+
+/**
+ * Everything the inner loop needs that the run already settled. One type rather
+ * than a dozen parameters, since every field travels together and none of it is
+ * decided here.
+ */
+interface IterationLoopContext {
+  config: ResolvedImplementConfig
+  /** The run's own environment — what the gate sees. */
+  env: Record<string, string | undefined>
+  /** The CLI's environment: OAuth token injected, `ANTHROPIC_API_KEY` stripped. */
+  childEnv: NodeJS.ProcessEnv
+  cwd: string
+  pluginDirs: string[]
+  branch: string
+  issueTitle: string
+  commandGuardHookPath: string
+}
+
+/**
+ * The inner loop (shopfloor#40): spawn, run the caller's gate, and — while the
+ * budgets allow — spawn again carrying what the gate said. A run with no
+ * `gateCommand` stated leaves after one pass, exactly as every run did before
+ * this loop existed.
+ *
+ * The decision itself is `evaluateIteration`, pure and next door; this is the
+ * IO around it. It throws rather than returning a failure, because every way
+ * out of this loop other than a passing gate is a failed run.
+ *
+ * **`transcriptFile` is the last iteration's, and no earlier one is lost.**
+ * Each pass copies the session it just wrote over `config.transcriptFile`, so
+ * before iterating, the attempt that just failed is kept beside it at
+ * `transcript.iteration-<n>.jsonl`. Those failed attempts are the ones that
+ * explain why a run needed the loop at all, and overwriting them would destroy
+ * the evidence on exactly the runs worth auditing. A single-shot run writes no
+ * such file, so nothing changes for a consumer who never states a gate.
+ */
+async function runIterations(
+  ctx: IterationLoopContext
+): Promise<{ iterations: number; transcriptCaptured: boolean }> {
+  const { config, env, cwd } = ctx
+  const idleMs = resolveIdleMs(config.runPolicy, env)
+  const wallClockMs = resolveWallClockMs(config.runPolicy, env)
+  const captureRunTranscript = () =>
+    captureTranscript({
+      projectsDir: config.projectsDir,
+      destPath: config.transcriptFile
+    })
+
+  // The run's wall clock, spent across every spawn rather than granted afresh
+  // to each: a ceiling that reset per iteration would be N times the number the
+  // caller stated. The idle budget is per-spawn on purpose — it measures one
+  // live process going quiet.
+  let spentMs = 0
+  const remainingWallClockMs = () =>
+    wallClockMs === undefined ? undefined : wallClockMs - spentMs
+
+  let transcriptCaptured = false
+  let iterationFeedback: string | undefined
+
+  for (let iteration = 1; ; iteration++) {
+    const startedAt = Date.now()
+    const { exitCode, killedBy, outputTail } = await spawnClaude({
+      ...prepareClaudeInvocation({
+        promptTemplate: config.promptTemplate,
+        issueNumber: config.issueNumber,
+        issueTitle: ctx.issueTitle,
+        branch: ctx.branch,
+        prDescriptionFile: config.prDescriptionFile,
+        pluginDirs: ctx.pluginDirs,
+        verifyReportFile: config.verifyReportFile,
+        screenshotsDir: config.screenshotsDir,
+        model: config.runPolicy.model,
+        maxTurns: config.runPolicy.maxTurns,
+        commandGuardHookPath: ctx.commandGuardHookPath,
+        iterationFeedback,
+        // Always stream: the idle guard watches the CLI's output for a
+        // heartbeat, and `--print` text stays silent until the session ends.
+        streamOutput: true
+      }),
+      env: ctx.childEnv,
+      cwd,
+      idleMs,
+      wallClockMs: remainingWallClockMs(),
+      onSpawnError: captureRunTranscript
+    })
+
+    // Copy the agent's session transcript out for the caller to upload as an
+    // audit artifact. Best-effort; the newest-JSONL scan inside
+    // captureTranscript resolves the session this iteration just wrote.
+    transcriptCaptured = captureRunTranscript()
+
+    requireFinishedSpawn({ exitCode, killedBy, outputTail })
+
+    // The gate runs on the run's own environment, not the CLI's: the OAuth
+    // token and the stripped `ANTHROPIC_API_KEY` exist to keep the *agent* off
+    // a metered key, and the gate is not the agent. Handing it the token would
+    // push a credential into a consumer command with no use for one.
+    const gate = config.runPolicy.gateCommand
+      ? runGate(config.runPolicy.gateCommand, { cwd, env })
+      : undefined
+
+    // Charged after the gate, not just after the spawn: a gate is normally the
+    // whole test suite, and time the run spends inside it is time the run
+    // spent. Billing only the spawn would let N iterations overrun the ceiling
+    // by N gates.
+    spentMs += Date.now() - startedAt
+
+    const verdict = evaluateIteration({
+      iteration,
+      maxIterations: config.runPolicy.maxIterations,
+      gate,
+      remainingWallClockMs: remainingWallClockMs()
+    })
+
+    if (verdict.kind === 'done')
+      return { iterations: iteration, transcriptCaptured }
+    if (verdict.kind === 'exhausted') {
+      throw new ImplementAgentError(verdict.reason, gate?.outputTail)
+    }
+
+    // Keep this attempt's transcript before the next spawn overwrites it: a
+    // failed attempt is the one worth reading, and it is about to be replaced
+    // by the attempt that fixed it.
+    preserveIterationTranscript(config.transcriptFile, iteration)
+    iterationFeedback = verdict.feedback
+  }
+}
+
+/**
+ * Fails the run unless the spawn ended on its own terms. A killed run fails
+ * before the commit check, and deliberately stays that way for the wall-clock
+ * guard too: a run cut off mid-loop never reached its own verify phase, so
+ * whatever it committed is unvetted work-in-progress. That is why this doesn't
+ * follow the leniency the missing PR description gets — there, the commits were
+ * finished and only the prose was absent.
+ *
+ * It also ends the loop rather than feeding another iteration, whichever way it
+ * failed: the loop corrects work the *gate* judged, and a spawn that never
+ * finished produced nothing to judge.
+ */
+function requireFinishedSpawn({
+  exitCode,
+  killedBy,
+  outputTail
+}: SpawnClaudeResult): void {
+  if (killedBy) {
+    throw new ImplementAgentError(describeRunawayKill(killedBy), outputTail)
+  }
+
+  if (exitCode !== 0) {
+    throw new ImplementAgentError(
+      `Claude CLI exited with status ${exitCode}.`,
+      outputTail
+    )
+  }
 }
 
 /**

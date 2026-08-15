@@ -32,6 +32,12 @@ export interface ClaudeInvocationInput {
    *  tool-call time rather than caught after the fact. Omitted leaves the
    *  session on the ambient settings alone. */
   commandGuardHookPath?: string
+  /** What the previous iteration's quality gate said, from
+   *  `evaluateIteration` (shopfloor#40). Appended to the rendered prompt, which
+   *  is what makes a second spawn something other than a rerun of the first.
+   *  Omitted on the first iteration and on every run with no gate stated, so
+   *  the prompt stays byte-identical to a pre-loop run's. */
+  iterationFeedback?: string
   /** Streams incrementally instead of staying silent until the whole session
    *  ends: a local idle-timeout needs that heartbeat to have any signal to
    *  watch. Omitted/false keeps the arg vector byte-identical to before this
@@ -64,9 +70,18 @@ export function prepareClaudeInvocation(
     SCREENSHOTS_DIR: input.screenshotsDir
   }
 
-  const prompt = input.promptTemplate.replace(/\{\{(\w+)\}\}/g, (token, key) =>
-    key in substitutions ? substitutions[key] : token
+  const rendered = input.promptTemplate.replace(
+    /\{\{(\w+)\}\}/g,
+    (token, key) => (key in substitutions ? substitutions[key] : token)
   )
+
+  // Appended rather than substituted into a placeholder: the feedback must
+  // reach an iterating run whatever the consumer's template says, and a
+  // template with no token for it would otherwise silently drop the one thing
+  // that distinguishes this turn from the last.
+  const prompt = input.iterationFeedback
+    ? `${rendered}\n${input.iterationFeedback}\n`
+    : rendered
 
   const args = [
     '--print',

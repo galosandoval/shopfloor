@@ -52,7 +52,11 @@ Each was decided against; don't add them.
   The doctor's environment fences are the boundary case, and they stay on this
   side of it: a fence and a `TODO(shopfloor)` sentinel are prompt _format_, the
   minimum that makes "unfilled" machine-checkable rather than a judgement about
-  prose. What goes between them is still never shipped.
+  prose. What goes between them is still never shipped. The one thing the
+  harness appends for itself is an iterating run's gate failure (shopfloor#40) —
+  the command it ran, the output it got, and that the run is not done until that
+  command passes. Facts and contract; how to fix a failing suite is procedure,
+  and stays out.
 - **Opinionated coding standards for consumers** — theirs live in the
   repository being worked on; `standardsDir` was removed rather than repointed
   (#27). This repository's own standards are not shipped. Procedure is the

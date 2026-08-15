@@ -37,7 +37,8 @@
   },
   "bin": {
     "shopfloor-implement": "./dist/cli.js",
-    "shopfloor-doctor": "./dist/doctor-cli.js"
+    "shopfloor-doctor": "./dist/doctor-cli.js",
+    "shopfloor-authorize": "./dist/authorize-cli.js"
   },
   "files": [
     "dist",

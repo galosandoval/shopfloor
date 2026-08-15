@@ -363,9 +363,11 @@ describe('resolveImplementConfig', () => {
         baseEnv({
           MODEL: 'claude-sonnet-5',
           MAX_TURNS: '80',
+          MAX_ITERATIONS: '5',
           IDLE_MINUTES: '9',
           CLI_VERSION: '2.1.208',
           WALL_CLOCK_MINUTES: '45',
+          GATE_COMMAND: 'bun run typecheck && bun run test',
           REQUIRED_ENV_VARS: 'DATABASE_URL, GH_TOKEN'
         })
       )
@@ -373,12 +375,56 @@ describe('resolveImplementConfig', () => {
       expect(runPolicy).toEqual({
         model: 'claude-sonnet-5',
         maxTurns: 80,
+        maxIterations: 5,
         idleMinutes: 9,
         cliVersion: '2.1.208',
         cliVersionStrictness: DEFAULT_CLI_VERSION_STRICTNESS,
         wallClockMinutes: 45,
+        gateCommand: 'bun run typecheck && bun run test',
         requiredEnvVars: ['DATABASE_URL', 'GH_TOKEN']
       })
+    })
+
+    it('states no gate command, so a default run is single-shot', () => {
+      const { runPolicy } = resolveImplementConfig(baseInput(), baseEnv())
+
+      expect(runPolicy.gateCommand).toBeUndefined()
+    })
+
+    it('prefers a stated gate command over the environment', () => {
+      const { runPolicy } = resolveImplementConfig(
+        baseInput({ runPolicy: { gateCommand: 'npm test' } }),
+        baseEnv({ GATE_COMMAND: 'bun test' })
+      )
+
+      expect(runPolicy.gateCommand).toBe('npm test')
+    })
+
+    it('reads an empty GATE_COMMAND as no gate at all', () => {
+      const { runPolicy } = resolveImplementConfig(
+        baseInput(),
+        baseEnv({ GATE_COMMAND: '' })
+      )
+
+      expect(runPolicy.gateCommand).toBeUndefined()
+    })
+
+    it('prefers a stated iteration budget over the environment', () => {
+      const { runPolicy } = resolveImplementConfig(
+        baseInput({ runPolicy: { maxIterations: 2 } }),
+        baseEnv({ MAX_ITERATIONS: '9' })
+      )
+
+      expect(runPolicy.maxIterations).toBe(2)
+    })
+
+    it('ignores a non-numeric iteration budget from the environment', () => {
+      const { runPolicy } = resolveImplementConfig(
+        baseInput(),
+        baseEnv({ MAX_ITERATIONS: 'as many as it takes' })
+      )
+
+      expect(runPolicy.maxIterations).toBe(DEFAULT_RUN_POLICY.maxIterations)
     })
 
     it('prefers a stated policy field over the environment', () => {
