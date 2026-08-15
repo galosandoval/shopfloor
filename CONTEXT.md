@@ -264,11 +264,14 @@ PR, sandboxing, and any CI glue.
   `ImplementAgentError.usage` instead, since it never reaches a result — and
   the runs worth costing are exactly the ones that did not finish. Only a
   refusal from before the spawn carries none, where the answer is nothing.
-- **A spend total is a floor unless every spawn reported one.** `usage.source`
+- **A spend total is only a total when every spawn reported one.** `usage.source`
   keeps the CLI's own tally apart from this package's sum over the messages it
   watched go by, for the reason the doctor keeps `unknown` apart from `wrong`: a
-  killed run's partial count read as a total would understate exactly the runs
-  worth costing. A metering failure never fails a run — an unreadable
+  killed run's partial count read as a total would misstate exactly the runs
+  worth costing. Misstate, not understate — an observed sum undercounts output
+  and cache-creation but *over*counts input and cache-read, since every turn
+  re-sends the conversation and each message restates the prefix the turns
+  before it already reported. `RunUsage.source` documents the split per bucket. A metering failure never fails a run — an unreadable
   diagnostic must not cause an outage, and unlike authorization the failure here
   is neither financial-and-adversarial nor a permission to spend.
 - **A wall-clock kill fails the run even if commits exist** — a run cut off

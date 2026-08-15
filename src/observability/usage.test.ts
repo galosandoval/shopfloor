@@ -169,7 +169,7 @@ describe('accumulateUsage', () => {
     })
   })
 
-  it('reports no cost alongside a floor, even were the stream to state one', () => {
+  it('reports no cost alongside an observed count, even were the stream to state one', () => {
     // A whole session's price beside a partial token count is the misreading
     // `source` exists to prevent, so the observed branch drops the cost.
     const acc = { ...fold([ASSISTANT_LINE]), costUsd: 0.5 }
@@ -224,6 +224,12 @@ describe('mergeRunUsage', () => {
     const observed: RunUsage = { ...reported, source: 'observed' }
 
     expect(mergeRunUsage(reported, observed).source).toBe('observed')
+  })
+
+  it('drops the cost of a degraded run even where an iteration reported one', () => {
+    const observed: RunUsage = { ...reported, source: 'observed' }
+
+    expect(mergeRunUsage(reported, observed).costUsd).toBeUndefined()
   })
 })
 

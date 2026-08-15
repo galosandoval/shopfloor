@@ -171,14 +171,26 @@ _attempts_, and attempts are not the budget the loop multiplies.
 | `cacheCreationInputTokens` | `number`                   | Tokens written to the prompt cache               |
 | `cacheReadInputTokens`     | `number`                   | Tokens served from it                            |
 | `costUsd`                  | `number \| undefined`      | USD, when the stream reported it                 |
-| `source`                   | `'reported' \| 'observed'` | Whether these are the CLI's own tally or a floor |
+| `source`                   | `'reported' \| 'observed'` | Whether these are the CLI's own tally or this package's sum |
 
 **`source` is the field to read first.** `'reported'` means every spawn reached
 its terminal `result` event and these are the CLI's own numbers. `'observed'`
 means at least one did not — a run a guard killed, or one whose stream was
-unreadable — and the totals are then a **floor**, not a total: they hold only
-the messages this process watched go by, each counted at the usage snapshot
-taken when it started.
+unreadable — and the totals are then this package's sum over the `assistant`
+messages it watched go by, each counted at the snapshot taken when its message
+started.
+
+**An `'observed'` total is not a total, and it is not uniformly a floor
+either** — the buckets degrade in opposite directions:
+
+- `outputTokens` and `cacheCreationInputTokens` **undercount**. The snapshot
+  precedes the message's final count, and a run killed mid-message contributes
+  nothing at all. Read them as a lower bound.
+- `inputTokens` and `cacheReadInputTokens` **overcount**, usually by a lot.
+  Every turn re-sends the conversation, so each message restates the prefix its
+  predecessors already reported; summing across N turns counts the same tokens
+  up to N times. On a multi-turn run these can exceed the CLI's own tally by a
+  large multiple. Read them as evidence that work happened, not as a quantity.
 
 A `'observed'` total carries no `costUsd` even where one was seen: a cost is a
 whole session's, and pairing a complete price with an incomplete token count is

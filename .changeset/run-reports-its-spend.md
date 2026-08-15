@@ -20,11 +20,15 @@ consumer is your CI glue, and evals.
 **Read `source` before treating the numbers as a total.** `'reported'` means
 every spawn reached its terminal `result` event and these are the CLI's own
 figures. `'observed'` means at least one did not — a run a guard killed, or one
-whose stream was unreadable — and the totals are then a **floor**: only the
-messages the harness watched go by, each counted at the usage snapshot taken
-when it started, which is short of that message's final output count. A run that
-iterated reports the sum across its iterations, and degrades to `'observed'` if
-any single iteration did.
+whose stream was unreadable — and the totals are then the harness's own sum over
+the `assistant` messages it watched go by, each counted at the snapshot taken
+when its message started. **That sum is not a total, and not uniformly a floor.**
+`outputTokens` and `cacheCreationInputTokens` undercount, since the snapshot
+precedes the message's final count and a run killed mid-message contributes
+nothing. `inputTokens` and `cacheReadInputTokens` overcount, usually by a lot:
+every turn re-sends the conversation, so summing across N turns counts the same
+prefix up to N times. A run that iterated reports the sum across its iterations,
+and degrades to `'observed'` if any single iteration did.
 
 A `'observed'` total carries no `costUsd` even where one was seen: a cost covers
 a whole session, and a complete price beside an incomplete token count is

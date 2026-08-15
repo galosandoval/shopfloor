@@ -46,12 +46,26 @@ export interface RunUsage extends TokenUsage {
    * sum over the assistant messages it happened to see (`observed`).
    *
    * The distinction is load-bearing and not cosmetic: **an `observed` total is
-   * a floor, not a total.** An `assistant` event carries the usage snapshot
-   * taken when its message started, so its output count is short of the
-   * message's final one, and a run killed mid-message contributes nothing at
-   * all. A consumer charting spend, or a future ceiling deciding whether to
-   * spawn again, has to know which of the two it is holding — collapsing them
-   * would let a killed run's floor be read as its cost.
+   * not comparable to a reported one, and it is not uniformly a floor.** Each
+   * bucket degrades differently, because an `assistant` event is one message's
+   * snapshot rather than a share of a session:
+   *
+   * - `outputTokens` is a **floor**. The snapshot is taken when the message
+   *   started, so it is short of that message's final count, and a run killed
+   *   mid-message contributes nothing at all.
+   * - `inputTokens` and `cacheReadInputTokens` are **neither bound**, and
+   *   typically overshoot. Every turn re-sends the conversation, so each
+   *   message restates the prefix the turns before it already reported;
+   *   summing across N turns counts the same tokens up to N times, and a
+   *   multi-turn run's observed input can exceed the CLI's own tally by a
+   *   large multiple. Read them as a signal that work happened, not as a
+   *   quantity.
+   * - `cacheCreationInputTokens` is per-request, so it sums honestly and is a
+   *   floor for the same reason `outputTokens` is.
+   *
+   * A consumer charting spend, or a future ceiling deciding whether to spawn
+   * again, has to know which of the two it is holding — collapsing them would
+   * let a killed run's partial count be read as its cost.
    */
   source: 'reported' | 'observed'
 }
@@ -89,8 +103,8 @@ export function emptyUsageAccumulator(): UsageAccumulator {
 /**
  * The identity for {@link mergeRunUsage} — a run that has not spawned yet. Its
  * `source` is `reported` deliberately: a spend of nothing is fully accounted
- * for, and starting at `observed` would mark every run's total a floor before
- * it had spent anything.
+ * for, and starting at `observed` would mark every run's total unreliable
+ * before it had spent anything.
  */
 export const NO_RUN_USAGE: RunUsage = { ...NO_TOKENS, source: 'reported' }
 
@@ -145,8 +159,9 @@ export function accumulateUsage(
  *
  * The observed branch reports **no cost**, and not merely because a stream
  * without a `result` event never carried one. A cost is a whole session's,
- * while observed tokens are a floor — pairing them would put a complete price
- * next to an incomplete count, which is the one reading `source` exists to
+ * while observed tokens are a per-message sum that no bucket makes comparable
+ * to it ({@link RunUsage.source}) — pairing them would put a complete price
+ * next to a count that is not one, which is the one reading `source` exists to
  * prevent.
  */
 export function summarizeUsage(acc: UsageAccumulator): RunUsage {
@@ -162,22 +177,22 @@ export function summarizeUsage(acc: UsageAccumulator): RunUsage {
  *
  * The source degrades to `observed` if either side did: a run is only fully
  * accounted for when every one of its spawns was, and a total that is part
- * tally and part floor is a floor.
+ * tally and part per-message sum reads as neither. A degraded total drops the
+ * cost the way
+ * {@link summarizeUsage} does, and for the same reason — the cost an iteration
+ * did report is that session's whole price, so keeping it beside a token count
+ * missing another session's spend is the misreading `source` exists to prevent.
  */
 export function mergeRunUsage(a: RunUsage, b: RunUsage): RunUsage {
+  const source =
+    a.source === 'reported' && b.source === 'reported' ? 'reported' : 'observed'
+
   const costUsd =
-    a.costUsd === undefined && b.costUsd === undefined
+    source === 'observed' || (a.costUsd === undefined && b.costUsd === undefined)
       ? undefined
       : (a.costUsd ?? 0) + (b.costUsd ?? 0)
 
-  return {
-    ...addTokens(a, b),
-    costUsd,
-    source:
-      a.source === 'reported' && b.source === 'reported'
-        ? 'reported'
-        : 'observed'
-  }
+  return { ...addTokens(a, b), costUsd, source }
 }
 
 // --- The line reader ----------------------------------------------------------
