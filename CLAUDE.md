@@ -49,12 +49,20 @@ nothing else.
 Each was decided against; don't add them.
 
 - **Prompt content** beyond the harness's invocation defaults — per-consumer.
+  The doctor's environment fences are the boundary case, and they stay on this
+  side of it: a fence and a `TODO(shopfloor)` sentinel are prompt _format_, the
+  minimum that makes "unfilled" machine-checkable rather than a judgement about
+  prose. What goes between them is still never shipped.
 - **Opinionated coding standards for consumers** — theirs live in the
   repository being worked on; `standardsDir` was removed rather than repointed
   (#27). This repository's own standards are not shipped. Procedure is the
   narrow exception, and only as a default: the bundled skills plugin arrives
   with an install, and a stated `pluginDirs` replaces it outright.
-- **Consumer env-var names** — `requiredEnvVars` is caller-stated.
+- **Consumer env-var names** — `requiredEnvVars` is caller-stated, and so are
+  the doctor's `requiredSecrets` (with a default naming the two the loop cannot
+  run without). The **label vocabulary is the exception**, and a deliberate one:
+  fixed names can be guaranteed, configurable ones can only be validated
+  against bindings the package does not own (shopfloor#39, design §8).
 - **CI glue and workflow templates** — callers own `$GITHUB_OUTPUT`, exit codes,
   branch checkout, the PR.
 - **Evals** — a named, open gap, not an oversight to close casually.

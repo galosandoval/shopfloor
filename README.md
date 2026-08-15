@@ -494,6 +494,122 @@ partial scripts like `test:e2e`; a repo whose gate is something else states
 findings out) and `formatScorecard` renders findings as markdown — both
 exported for callers assembling their own reporting.
 
+### Setup doctor
+
+Everything above is a string binding a consumer has to get right on their own:
+two secrets, the label vocabulary, a workflow's trigger wiring, a prompt
+carrying six exact tokens, a CLI pin. None of them errors when it is wrong —
+they rot silently, which is what `{{STANDARDS_DIR}}` did. One command says
+which one is wrong:
+
+```sh
+PROMPT_FILE=./agent/implement/prompt.md npx shopfloor-doctor
+```
+
+```
+shopfloor doctor
+
+✓ gh is authenticated
+✓ token carries workflow scope
+✗ repository secrets: CLAUDE_CODE_OAUTH_TOKEN, AGENT_PAT
+✗ label vocabulary
+✓ claude CLI matches the pin
+✗ prompt placeholder tokens
+? prompt environment block is filled
+✓ workflow trigger events
+✓ workflow_run prerequisites
+```
+
+Nine checks, each a binding named where it fails:
+
+| Check                        | Fails when                                                                              |
+| ---------------------------- | --------------------------------------------------------------------------------------- |
+| `gh-auth`                    | `gh` is not authenticated                                                               |
+| `pat-workflow-scope`         | The token you are running as has no `workflow` scope                                    |
+| `repo-secrets`               | A required secret is in neither the repository's nor the organization's secrets         |
+| `label-vocabulary`           | One of the six labels the loop transitions over does not exist                          |
+| `cli-version-pin`            | The running `claude --version` differs from the pin on `major.minor`                    |
+| `prompt-tokens`              | The prompt is missing a substituted token, or carries an unrecognized one               |
+| `prompt-environment-block`   | The prompt's environment block is empty or still carries the `TODO(shopfloor)` sentinel |
+| `workflow-triggers`          | The workflow is not wired to `issues.labeled` and `workflow_run.completed`              |
+| `workflow-run-prerequisites` | The workflow is off the default branch, or never references the PAT at all              |
+
+**Read-only, and the exit code is the point.** It creates no labels, sets no
+secrets, and writes no files, so it is idempotent and safe in CI; it exits
+non-zero when any check fails, and zero otherwise.
+
+**Three statuses, and only one of them fails the exit code.** `✓` passed, `✗`
+found a wrong binding, and `?` means the check could not be evaluated — `gh`
+isn't installed, no `PROMPT_FILE` was pointed at, no pin was stated. An unknown
+prints and does not fail: a doctor that cannot read `gh` must not be
+indistinguishable from a repository that is misconfigured.
+
+Two of the checks encode requirements that are invisible in the YAML they
+check. `pat-workflow-scope` and the PAT half of `workflow-run-prerequisites`
+exist because **a push made with the built-in `GITHUB_TOKEN` fires no
+downstream events** — so a loop wired to `workflow_run` never retriggers unless
+the push used the PAT. And `workflow_run` **fires only from a workflow file on
+the default branch**, which is why that check reads the default branch through
+the API rather than the checkout it is running in.
+
+**What a green doctor does not prove.** Three limits, stated so the report is
+read for what it is:
+
+- **The stored PAT's scopes cannot be read.** A secret is write-only to
+  everything but Actions, and `gh secret list` returns names alone. So
+  `pat-workflow-scope` judges the token _you_ are running as and infers the
+  rest: a machine whose local `gh` is scoped correctly passes even if the
+  stored `AGENT_PAT` is not. It catches the common case — nobody ever added the
+  scope — and is not proof.
+- **The PAT check is a reference check.** `workflow-run-prerequisites` asks
+  whether the workflow mentions `secrets.<PAT>` anywhere, not whether the
+  _pushing_ step uses it; deciding that needs job semantics a shallow read
+  doesn't have. It catches "nothing uses the PAT", not "the wrong step uses
+  `GITHUB_TOKEN`".
+- **Environment-scoped secrets are invisible.** Repository and organization
+  secrets are both read; a secret defined on a deployment environment is not,
+  and reports as missing. State `REQUIRED_SECRETS` to name only what this
+  doctor can see.
+
+**`workflow-triggers` fails on today's shipped harness.** `workflow_run.completed`
+is the machine edge of the outer loop, which is designed and not yet built — so
+a consumer correctly set up for the `implement` phase alone sees this check fail
+until that lands. It is checked now because the doctor's job is to report the
+bindings the loop needs, and a check added after the loop is the check that
+never gets added. Same for `label-vocabulary`: the six labels are fixed and
+package-owned, and nothing creates them yet.
+
+| Variable            | Default                                 | What it points at                            |
+| ------------------- | --------------------------------------- | -------------------------------------------- |
+| `PROMPT_FILE`       | — (prompt checks report unknown)        | The prompt template to check                 |
+| `WORKFLOW_FILE`     | `.github/workflows/agent-implement.yml` | The agent workflow                           |
+| `REQUIRED_SECRETS`  | `CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_PAT`  | Comma-separated; a stated list replaces both |
+| `AGENT_PAT_SECRET`  | `AGENT_PAT`                             | Which secret holds the PAT                   |
+| `CLI_VERSION`       | — (no pin, nothing to compare)          | The pin to compare `claude --version` to     |
+| `GITHUB_REPOSITORY` | inferred by `gh` from the checkout      | `owner/repo`                                 |
+
+The environment block is the half of a prompt this package never ships — gate
+commands, database URLs, seeded fixtures. Fence it so "unfilled" is
+machine-checkable rather than a judgement about prose:
+
+```markdown
+<!-- shopfloor:environment -->
+
+Run the gate with `bun run typecheck && bun run test`.
+
+<!-- /shopfloor:environment -->
+```
+
+A prompt with no fences reports unknown rather than failing — an existing
+prompt carrying its environment as plain prose is not wrong, only unverifiable.
+
+`probeSetup()` gathers the facts and `evaluateSetup(facts)` is the pure verdict
+underneath — both exported, along with `formatSetupReport`, `REQUIRED_LABELS`,
+`PROMPT_TOKENS`, and the environment-block constants, for callers assembling
+their own reporting. The check ids, the admitted events, and the configuration
+defaults are deliberately not API: every export is a commitment, and the
+scaffolder that would want them does not exist yet.
+
 ## Module layout
 
 Organized by harness concern rather than a flat file list, so a future `plan`
@@ -514,11 +630,16 @@ or `review` module has an obvious home:
   and the trajectory checker that grades a finished run over that transcript:
   the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck`
   shell. It reports; it never fails a run.
+- `src/setup/` — the setup doctor: the pure `evaluateSetup` /
+  `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup`
+  shell. It judges a consumer's configuration rather than a run, and writes
+  nothing at all.
 
-The package exports the four verbs (`runImplementAgent`, `runPreflight`,
-`postVerifyComment`, `runTrajectoryCheck`) and `ImplementAgentError`, the
+The package exports the five verbs (`runImplementAgent`, `runPreflight`,
+`postVerifyComment`, `runTrajectoryCheck`, `probeSetup`) and `ImplementAgentError`, the
 documented pure escape hatches (`evaluatePreflight`, `buildVerifyComment`,
-`classifyCommand`, `checkTrajectory` with `formatScorecard`, and
+`classifyCommand`, `checkTrajectory` with `formatScorecard`, `evaluateSetup`
+with `formatSetupReport`, and
 `evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
 CI glue can pre-validate a plugin directory without starting a run),
 `resolveBundledPluginDir` (where the bundled plugin landed),
