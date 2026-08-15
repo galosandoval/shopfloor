@@ -2,7 +2,8 @@
  * The package's public surface: the verbs a consumer calls, the error they
  * throw, the pure escape hatches the README documents (`evaluatePreflight`,
  * `buildVerifyComment`, `classifyCommand`, `evaluatePluginDirs`,
- * `checkTrajectory`, `evaluateIteration`), the bundled plugin's resolved location — API because
+ * `checkTrajectory`, `evaluateIteration`, `evaluateSetup`), the bundled
+ * plugin's resolved location — API because
  * a stated `pluginDirs` replaces the default, so naming it alongside your own
  * has to be writable rather than guessable — and the types
  * of what goes in and comes out. Resolvers, invocation assembly, transcript
@@ -93,3 +94,30 @@ export {
   type RunTrajectoryCheckInput,
   type RunTrajectoryCheckResult
 } from './observability/run-trajectory-check'
+
+/**
+ * The doctor. The constants exported alongside it are the ones a consumer can
+ * act on today — the labels to create, the tokens a prompt must carry, the
+ * fences that make an environment block checkable. The check ids, the admitted
+ * events, and the config defaults stay internal until something outside this
+ * package needs them: every export is a compatibility commitment, and `init`
+ * does not exist yet.
+ */
+export {
+  evaluateSetup,
+  formatSetupReport,
+  ENVIRONMENT_BLOCK_END,
+  ENVIRONMENT_BLOCK_START,
+  ENVIRONMENT_UNFILLED_SENTINEL,
+  PROMPT_TOKENS,
+  REQUIRED_LABELS,
+  type SetupCheck,
+  type SetupCheckId,
+  type SetupCheckStatus,
+  type SetupFacts,
+  type SetupVerdict
+} from './setup/setup'
+
+export { probeSetup } from './setup/probe-setup'
+
+export { type DoctorConfig } from './setup/setup-config'

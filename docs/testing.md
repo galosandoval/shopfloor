@@ -48,10 +48,16 @@ part of the change — not a follow-up.
 
 ## Where mocking is allowed
 
-Only in the orchestrator's wiring tests, and only at the process boundary:
+Only in a shell's wiring tests, and only at the process boundary:
 `spawnClaude`, `node:child_process`, `node:fs`, and transcript capture. Those
 tests exist to prove the shell hands the right things across that boundary, so
-the boundary is what they stub.
+the boundary is what they stub. The orchestrator's are the model; `probeSetup`'s
+are the same shape one module over — a shell is a shell.
+
+Prefer the real thing where the layout _is_ the thing under test:
+`run-plugin-dirs.test.ts` and `probe-setup.test.ts` both write fixture files
+into a temp directory rather than stubbing `fs`, because a stubbed filesystem
+could only restate the layout the probe assumes instead of checking it.
 
 Two rules hold there:
 

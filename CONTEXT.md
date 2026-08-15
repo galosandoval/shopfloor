@@ -24,8 +24,10 @@ harness concern rather than as a flat file list.
 | `src/orchestration/` | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError` |
 | `src/guardrails/`    | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting                                                                                                                            |
 | `src/observability/` | Session transcript capture (for CI-artifact upload), and the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell. Advisory: it reports, it never fails a run                                                                                                                                                                   |
+| `src/setup/`         | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI                                                                                                                                                             |
 | `src/index.ts`       | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                          |
 | `src/cli.ts`         | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                    |
+| `src/doctor-cli.ts`  | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                  |
 
 ## Pure core, IO shell
 
@@ -49,14 +51,21 @@ produce. Anything that judges is either pure or does not belong here.
 The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `command-guard-hook`, `buildVerifyComment` / `postVerifyComment`,
 `evaluatePluginDirs` / `runPluginDirsCheck`, `checkTrajectory` /
-`runTrajectoryCheck`, `evaluateIteration` / `runGate`, `checkCliVersion` and
-`resolveImplementConfig` / `runImplementAgent`.
+`runTrajectoryCheck`, `evaluateIteration` / `runGate`, `evaluateSetup` /
+`probeSetup`, `checkCliVersion` and `resolveImplementConfig` /
+`runImplementAgent`.
+
+`probeSetup` is the one shell not named `run*`, and deliberately: it runs
+nothing and decides nothing — it gathers, and every other `run*` in this
+package acts on a verdict.
 
 A new module lands in that shape: name the decision, export it as a pure
 function with its own input type, put it in `src/guardrails/` (a decision about
 whether or how a run may proceed), `src/orchestration/` (a decision about what
-to run), or `src/observability/` (a judgement about a run that already
-finished — it reports, it does not decide anything the run then obeys), and let
+to run), `src/observability/` (a judgement about a run that already
+finished — it reports, it does not decide anything the run then obeys), or
+`src/setup/` (a judgement about the consumer's configuration, made before any
+run exists), and let
 the shell own every side effect. The shell should read gather →
 decide → act, with the interesting logic in the middle function rather than
 tangled through the IO.
@@ -225,6 +234,11 @@ PR, sandboxing, and any CI glue.
   replaced.
 - **Probes are best-effort and lazy.** A probe that answers nothing becomes an
   error naming what to state instead, never a silent default.
+- **The doctor holds "unknown" apart from "wrong".** A setup check whose probe
+  answered nothing reports `unknown` and does not fail the verdict or the exit
+  code. Collapsing the two would make a doctor that cannot find `gh`
+  indistinguishable from a repository that is misconfigured, and a diagnostic
+  that cries wolf on its own blind spots is one people stop running.
 
 ## Standards in repo, procedures in skills
 
