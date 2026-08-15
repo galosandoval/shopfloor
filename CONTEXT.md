@@ -307,7 +307,12 @@ PR, sandboxing, and any CI glue.
   doctor's `prompt-environment-block` check already fails on. This is the
   mechanism the design's Residual was missing: a scaffold that emitted a
   plausible default would replicate the `standardsDir` failure shape, present
-  and wrong and silent, in the one file a run cannot work without.
+  and wrong and silent, in the one file a run cannot work without. **The
+  workflow's sentinels get their own check for the same reason** —
+  `workflow-unfilled`. Greppable is not machine-checkable: a `workflow_run`
+  block whose `workflows:` names a sentinel is still wired to the event, so
+  `workflow-triggers` passes and the edge fires from nothing. A sentinel
+  nothing refuses on is prose with a `TODO` in front of it.
 - **Creating labels belongs to `init`, not to a run.** The design's §8 chose
   creating them at startup, weighed against zero-setup installs; once `init`
   exists that alternative is gone, so the write happens at a moment a human

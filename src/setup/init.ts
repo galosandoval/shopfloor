@@ -31,8 +31,9 @@ import {
   ENVIRONMENT_BLOCK_END,
   ENVIRONMENT_BLOCK_START,
   ENVIRONMENT_UNFILLED_SENTINEL,
+  LABEL_VOCABULARY,
   onDefaultBranch,
-  REQUIRED_LABELS,
+  type LabelDefinition,
   type SetupCheck,
   type SetupCheckId,
   type SetupFacts,
@@ -48,12 +49,19 @@ export interface InitInput {
   project: ProjectFacts
   /** Repository-relative path the prompt is scaffolded at. */
   promptFile: string
+  /** This package's own version, for pinning what the scaffolded workflow invokes. */
+  packageVersion?: string
 }
 
-/** Create the labels the vocabulary requires and the repository does not have. */
+/**
+ * Create the labels the vocabulary requires and the repository does not have.
+ * Carries each label's whole definition rather than its name: the writer is a
+ * `gh` call, and a name alone would have it create six labels whose colour and
+ * meaning GitHub picks.
+ */
 export interface CreateLabelsAction {
   kind: 'create-labels'
-  labels: string[]
+  labels: LabelDefinition[]
   why: string
 }
 
@@ -86,14 +94,6 @@ export interface InitPlan {
   skipped: InitSkip[]
   /** Failing checks no writer here addresses — secrets, auth, the CLI pin. */
   unfixable: SetupCheck[]
-  /**
-   * What is left for a human after these writes, that no check reports. A
-   * freshly scaffolded workflow is the case this exists for: with no workflow
-   * on disk, `workflow-run-prerequisites` reports `unknown` rather than
-   * failing, so the merge that the machine edge fires from would be named
-   * nowhere at all.
-   */
-  next: string[]
   /** True when a run would write nothing at all. */
   noop: boolean
 }
@@ -125,14 +125,6 @@ export function planInit(input: InitInput): InitPlan {
     unfixable: input.verdict.failures.filter(
       (failure) => !addressed.has(failure.id)
     ),
-    next:
-      workflow.action && !onDefaultBranch(input.facts)
-        ? [
-            `merge ${input.facts.workflowFile} to the default branch — a ` +
-              'workflow_run trigger fires from nowhere else, so the machine ' +
-              'edge stays dead until it is there.'
-          ]
-        : [],
     noop: actions.length === 0
   }
 
@@ -151,14 +143,23 @@ interface PlannedStep {
   addresses: SetupCheckId[]
 }
 
-function statusOf(verdict: SetupVerdict, id: SetupCheckId): SetupCheck {
+function checkFor(verdict: SetupVerdict, id: SetupCheckId): SetupCheck {
   const check = verdict.checks.find((candidate) => candidate.id === id)
   if (!check) throw new Error(`evaluateSetup produced no ${id} check`)
   return check
 }
 
+/**
+ * Whether something this would write still carries the scaffold's sentinel —
+ * the one question three separate decisions here turn on, so it is one concept
+ * rather than three spellings of the same `includes`.
+ */
+function unfilled(contents: string): boolean {
+  return contents.includes(ENVIRONMENT_UNFILLED_SENTINEL)
+}
+
 function planLabels({ facts, verdict }: InitInput): PlannedStep {
-  const check = statusOf(verdict, 'label-vocabulary')
+  const check = checkFor(verdict, 'label-vocabulary')
   if (check.status === 'ok') return { addresses: [] }
   if (facts.repoLabels === 'unknown') {
     return {
@@ -178,7 +179,7 @@ function planLabels({ facts, verdict }: InitInput): PlannedStep {
     addresses: ['label-vocabulary'],
     action: {
       kind: 'create-labels',
-      labels: REQUIRED_LABELS.filter((label) => !present.includes(label)),
+      labels: LABEL_VOCABULARY.filter((label) => !present.includes(label.name)),
       why: 'a transition onto a label that does not exist fails silently.'
     }
   }
@@ -198,21 +199,12 @@ function planLabels({ facts, verdict }: InitInput): PlannedStep {
  * single run, over a file `init` itself wrote.
  */
 function planPrompt(input: InitInput): PlannedStep {
-  const { facts, verdict, project, promptFile } = input
-  const addresses: SetupCheckId[] = [
-    'prompt-tokens',
-    'prompt-environment-block'
-  ]
+  const { facts, project, promptFile } = input
 
   if (facts.promptTemplate === null) {
     const contents = buildPromptScaffold(project)
     return {
-      // A scaffold whose block this project could not fill still leaves
-      // `prompt-environment-block` failing, by design — the sentinel is the
-      // point. The report says so rather than claiming it fixed.
-      addresses: contents.includes(ENVIRONMENT_UNFILLED_SENTINEL)
-        ? ['prompt-tokens']
-        : addresses,
+      addresses: promptChecksFixedBy(contents),
       action: {
         kind: 'write-file',
         file: promptFile,
@@ -229,65 +221,76 @@ function planPrompt(input: InitInput): PlannedStep {
     ENVIRONMENT_BLOCK_END
   )
   if (body === null) {
-    return {
-      addresses: [],
-      skip: {
-        what: promptFile,
-        why:
-          'it carries no environment fences, so its environment is prose this ' +
-          'command cannot locate — and rewriting it would destroy the one thing ' +
-          'init exists to fill. Fence it, or move it aside and re-run.'
-      }
-    }
+    return leaveAlone(
+      promptFile,
+      'it carries no environment fences, so its environment is prose this ' +
+        'command cannot locate — and rewriting it would destroy the one thing ' +
+        'init exists to fill. Fence it, or move it aside and re-run.'
+    )
   }
 
-  const filled =
-    body.trim() !== '' && !body.includes(ENVIRONMENT_UNFILLED_SENTINEL)
-  const tokens = statusOf(verdict, 'prompt-tokens')
+  return planPromptRewrite(input, body)
+}
+
+/**
+ * What a prompt write actually makes pass. A block this project could not fill
+ * still leaves `prompt-environment-block` failing, by design — the sentinel is
+ * the point — and claiming that check fixed would drop it from the report's
+ * "still yours to fix".
+ */
+function promptChecksFixedBy(contents: string): SetupCheckId[] {
+  return unfilled(contents)
+    ? ['prompt-tokens']
+    : ['prompt-tokens', 'prompt-environment-block']
+}
+
+/** A decision not to write, and what the operator does instead. */
+function leaveAlone(what: string, why: string): PlannedStep {
+  return { addresses: [], skip: { what, why } }
+}
+
+/**
+ * The rewrite half, over a prompt that exists and whose environment block this
+ * could find: whether there is anything a rewrite would improve, and if so
+ * what it keeps.
+ */
+function planPromptRewrite(input: InitInput, body: string): PlannedStep {
+  const { verdict, project, promptFile } = input
+  const filled = body.trim() !== '' && !unfilled(body)
+  const tokens = checkFor(verdict, 'prompt-tokens')
   if (tokens.status === 'ok' && filled) return { addresses: [] }
 
   const rebuilt = buildEnvironmentBlock(project)
-  if (tokens.status === 'ok') {
+  if (tokens.status === 'ok' && unfilled(rebuilt)) {
     // Nothing to fix but the block, and this cannot fix it either.
-    if (rebuilt.includes(ENVIRONMENT_UNFILLED_SENTINEL)) {
-      return {
-        addresses: [],
-        skip: {
-          what: promptFile,
-          why:
-            `its environment block still carries ${ENVIRONMENT_UNFILLED_SENTINEL}, ` +
-            'and this project states nothing that would fill it — a rewrite ' +
-            'would produce the same sentinel. Fill it by hand.'
-        }
-      }
-    }
+    return leaveAlone(
+      promptFile,
+      `its environment block still carries ${ENVIRONMENT_UNFILLED_SENTINEL}, ` +
+        'and this project states nothing that would fill it — a rewrite ' +
+        'would produce the same sentinel. Fill it by hand.'
+    )
   }
 
   const environment = filled
     ? `${ENVIRONMENT_BLOCK_START}${body}${ENVIRONMENT_BLOCK_END}`
     : rebuilt
-  const why = [
-    tokens.status === 'fail' ? tokens.detail : undefined,
-    filled
-      ? 'Your environment block is kept exactly as it is.'
-      : 'Its environment block is refilled from this project.'
-  ]
-    .filter(Boolean)
-    .join(' ')
+  const contents = buildPromptScaffold(project, environment)
 
   return {
-    // Only what the write actually makes pass: a rebuilt block that still
-    // carries the sentinel leaves `prompt-environment-block` failing, and
-    // claiming it would drop it from the report's "still yours to fix".
-    addresses: environment.includes(ENVIRONMENT_UNFILLED_SENTINEL)
-      ? ['prompt-tokens']
-      : addresses,
+    addresses: promptChecksFixedBy(contents),
     action: {
       kind: 'write-file',
       file: promptFile,
-      contents: buildPromptScaffold(project, environment),
+      contents,
       mode: 'overwrite',
-      why
+      why: [
+        tokens.status === 'fail' ? tokens.detail : undefined,
+        filled
+          ? 'Your environment block is kept exactly as it is.'
+          : 'Its environment block is refilled from this project.'
+      ]
+        .filter(Boolean)
+        .join(' ')
     }
   }
 }
@@ -303,11 +306,22 @@ function planPrompt(input: InitInput): PlannedStep {
  * lives would be a write that changed nothing, so that check counts as
  * addressed only for a workflow already merged: an unmerged one stays in the
  * report, where "merge it" is the operator's next step.
+ *
+ * `workflow-unfilled` is never claimed. The scaffold's sentinels are values
+ * this command declined to guess, so a write that emits them has not fixed
+ * them — the check stays failing, which is the whole reason it exists.
  */
-function planWorkflow({ facts, verdict, promptFile }: InitInput): PlannedStep {
+function planWorkflow({
+  facts,
+  verdict,
+  promptFile,
+  packageVersion
+}: InitInput): PlannedStep {
   const contents = buildWorkflowScaffold({
     patSecret: facts.patSecret,
-    promptFile
+    promptFile,
+    ...(facts.pinnedCliVersion ? { cliVersion: facts.pinnedCliVersion } : {}),
+    ...(packageVersion ? { packageVersion } : {})
   })
   const addresses: SetupCheckId[] = onDefaultBranch(facts)
     ? ['workflow-triggers', 'workflow-run-prerequisites']
@@ -321,12 +335,20 @@ function planWorkflow({ facts, verdict, promptFile }: InitInput): PlannedStep {
         file: facts.workflowFile,
         contents,
         mode: 'create',
-        why: 'nothing triggers the loop without it.'
+        // The merge rides on the action that creates the need for it. With no
+        // workflow on disk `workflow-run-prerequisites` reports unknown rather
+        // than failing, so nothing in the report would otherwise say that the
+        // machine edge stays dead until this file is on the default branch.
+        why: onDefaultBranch(facts)
+          ? 'nothing triggers the loop without it.'
+          : 'nothing triggers the loop without it. Merge it to the default ' +
+            'branch — a workflow_run trigger fires from nowhere else, so the ' +
+            'machine edge stays dead until it is there.'
       }
     }
   }
 
-  const triggers = statusOf(verdict, 'workflow-triggers')
+  const triggers = checkFor(verdict, 'workflow-triggers')
   const referencesPat = facts.workflow.includes(`secrets.${facts.patSecret}`)
   if (triggers.status !== 'fail' && referencesPat) return { addresses: [] }
 
@@ -346,9 +368,23 @@ function planWorkflow({ facts, verdict, promptFile }: InitInput): PlannedStep {
 }
 
 /**
+ * One action, named the way every report here names it. The single spelling:
+ * the plan, the confirmation prompt, the applied list, and the failure lines
+ * all render an action through this, so none of them drifts from the others.
+ */
+export function describeAction(action: InitAction): string {
+  return action.kind === 'create-labels'
+    ? `create ${action.labels.length} label(s): ${action.labels
+        .map((label) => label.name)
+        .join(', ')}`
+    : `${action.mode} ${action.file}`
+}
+
+/**
  * Render a plan for a terminal, before anything is written. The operator is
  * being asked to approve durable writes to their own repository, so the plan
- * they approve is the plan they can read.
+ * they approve is the plan they can read — every action with the reason it is
+ * in the plan, rather than a bare list of paths.
  */
 export function formatInitPlan(plan: InitPlan): string {
   const lines = ['shopfloor init', '']
@@ -360,11 +396,7 @@ export function formatInitPlan(plan: InitPlan): string {
   } else {
     lines.push('Will write:')
     for (const action of plan.actions) {
-      lines.push(
-        action.kind === 'create-labels'
-          ? `- create ${action.labels.length} label(s): ${action.labels.join(', ')}`
-          : `- ${action.mode} ${action.file}`
-      )
+      lines.push(`- ${describeAction(action)} — ${action.why}`)
     }
   }
 
@@ -378,11 +410,6 @@ export function formatInitPlan(plan: InitPlan): string {
     for (const check of plan.unfixable) {
       lines.push(`- ${check.id}: ${check.detail}`)
     }
-  }
-
-  if (plan.next.length > 0) {
-    lines.push('', 'Then, by hand:')
-    for (const step of plan.next) lines.push(`- ${step}`)
   }
 
   return lines.join('\n')

@@ -29,21 +29,67 @@ import {
   type WorkflowTriggers
 } from './parse-facts'
 
+/** One label in the vocabulary, with what GitHub needs to create it. */
+export interface LabelDefinition {
+  name: string
+  /**
+   * What a transition onto it means. Carried rather than left to GitHub's
+   * default of nothing: six bare names in a shared label list is a vocabulary
+   * only the person who created it can read.
+   */
+  description: string
+  /** Six hex digits, no leading `#` — what `gh label create --color` takes. */
+  color: string
+}
+
 /**
  * The label vocabulary the loop transitions over: the harness's own run state,
  * and the process lifecycle either side of it. Fixed rather than configurable
  * — a name the harness does not own is a binding it cannot guarantee, and the
  * missing `ready-for-human` label is the concrete failure that argument came
  * from.
+ *
+ * The colours are the vocabulary's own shape, not decoration: the two process
+ * labels are green and blue, and the four `agent:` run states run from neutral
+ * through to red as a run goes wrong.
  */
-export const REQUIRED_LABELS = [
-  'ready-for-agent',
-  'ready-for-human',
-  'agent:implement',
-  'agent:in-progress',
-  'agent:blocked',
-  'agent:exhausted'
-] as const
+export const LABEL_VOCABULARY: readonly LabelDefinition[] = [
+  {
+    name: 'ready-for-agent',
+    description: 'Spec is ready for an agent to implement',
+    color: '0E8A16'
+  },
+  {
+    name: 'ready-for-human',
+    description: 'The agent is done — a human owns the next move',
+    color: '1D76DB'
+  },
+  {
+    name: 'agent:implement',
+    description: 'The implement phase owns this issue',
+    color: 'C5DEF5'
+  },
+  {
+    name: 'agent:in-progress',
+    description: 'A run is in flight — do not start a second one on this issue',
+    color: 'FBCA04'
+  },
+  {
+    name: 'agent:blocked',
+    description: 'A run refused or could not proceed — a human must unblock it',
+    color: 'D93F0B'
+  },
+  {
+    name: 'agent:exhausted',
+    description: 'A run hit its ceiling without passing the gate',
+    color: 'B60205'
+  }
+]
+
+/** The vocabulary by name — what a presence check compares against. */
+export const REQUIRED_LABELS: readonly string[] = LABEL_VOCABULARY.map(
+  (label) => label.name
+)
 
 /**
  * The scope the PAT is load-bearing for. `workflow` is what lets a token write
@@ -113,6 +159,7 @@ export type SetupCheckId =
   | 'prompt-tokens'
   | 'prompt-environment-block'
   | 'workflow-triggers'
+  | 'workflow-unfilled'
   | 'workflow-run-prerequisites'
 
 /**
@@ -386,14 +433,50 @@ function checkEnvironmentBlock(facts: SetupFacts): SetupCheck {
 }
 
 /**
- * The two workflow checks, which share one parse: what the workflow is
- * triggered by, and — when it carries the machine edge — whether the
- * conditions `workflow_run` silently requires actually hold.
+ * The three workflow checks, two of which share one parse: what the workflow is
+ * triggered by, whether anything in it was scaffolded and never filled, and —
+ * when it carries the machine edge — whether the conditions `workflow_run`
+ * silently requires actually hold.
  */
 function checkWorkflow(facts: SetupFacts): SetupCheck[] {
   const triggers =
     facts.workflow === null ? null : parseTriggers(facts.workflow)
-  return [checkTriggers(facts, triggers), checkWorkflowRun(facts, triggers)]
+  return [
+    checkTriggers(facts, triggers),
+    checkWorkflowUnfilled(facts),
+    checkWorkflowRun(facts, triggers)
+  ]
+}
+
+/**
+ * The workflow's own sentinel, refused on rather than left to be noticed.
+ *
+ * Without this, a freshly scaffolded repository reads fully green while the
+ * values `init` deliberately declined to guess — which CI workflow's
+ * completion retriggers the loop, and which `claude` version to install — sit
+ * there inert. `workflow-triggers` cannot catch it: a `workflow_run` block
+ * whose `workflows:` names a sentinel is still syntactically wired to the
+ * event, so the edge passes its own check and fires from nothing. That is the
+ * `standardsDir` shape exactly — present, plausible, wrong, and silent — and
+ * this is the machine edge it is checkable on.
+ */
+function checkWorkflowUnfilled(facts: SetupFacts): SetupCheck {
+  const check = reports(
+    'workflow-unfilled',
+    'workflow carries no unfilled placeholder'
+  )
+  if (facts.workflow === null) {
+    return check.unknown('no readable workflow to check.')
+  }
+  return facts.workflow.includes(ENVIRONMENT_UNFILLED_SENTINEL)
+    ? check.fail(
+        `${facts.workflowFile} still carries ${ENVIRONMENT_UNFILLED_SENTINEL} — ` +
+          'a scaffolded value nobody filled in. Every one of them is inert by ' +
+          'construction rather than guessed, so what is missing is a value, ' +
+          'not a fix: replace each occurrence, or delete the wiring that ' +
+          'depends on it.'
+      )
+    : check.ok('nothing left unfilled')
 }
 
 function checkTriggers(

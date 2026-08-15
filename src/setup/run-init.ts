@@ -11,9 +11,12 @@
 
 import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
+import { createRequire } from 'node:module'
 import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
+  describeAction,
   formatInitPlan,
   planInit,
   type InitAction,
@@ -60,11 +63,13 @@ export async function runInit(
   // disagree — and the prompt path is exactly the field where they would.
   const facts = await probeSetup({ ...config, cwd })
   const verdict = evaluateSetup(facts)
+  const packageVersion = selfVersion()
   const plan = planInit({
     facts,
     verdict,
     project: probeProject(cwd),
-    promptFile: config.promptFile
+    promptFile: config.promptFile,
+    ...(packageVersion ? { packageVersion } : {})
   })
 
   const applied: InitAction[] = []
@@ -82,10 +87,10 @@ export async function runInit(
     }
 
     try {
-      await apply(action, { cwd, repo: config.repo })
+      await apply(action, config.repo ? { cwd, repo: config.repo } : { cwd })
       applied.push(action)
     } catch (error) {
-      errors.push(`${describe(action)}: ${String(error)}`)
+      errors.push(`${describeAction(action)}: ${String(error)}`)
     }
   }
 
@@ -124,10 +129,14 @@ function readPackageScripts(cwd: string): Record<string, string> | null {
   }
 }
 
-async function apply(
-  action: InitAction,
-  where: { cwd: string; repo?: string }
-): Promise<void> {
+/** Where a write lands: the checkout for files, the repository for labels. */
+interface WriteTarget {
+  cwd: string
+  /** `owner/repo`; omitted when `gh` should infer it from the checkout. */
+  repo?: string
+}
+
+async function apply(action: InitAction, where: WriteTarget): Promise<void> {
   if (action.kind === 'create-labels') {
     for (const label of action.labels) {
       // No `--force`: it would rewrite an existing label's colour and
@@ -138,7 +147,11 @@ async function apply(
       await execFileAsync('gh', [
         'label',
         'create',
-        label,
+        label.name,
+        '--color',
+        label.color,
+        '--description',
+        label.description,
         ...(where.repo ? ['--repo', where.repo] : [])
       ])
     }
@@ -150,10 +163,48 @@ async function apply(
   fs.writeFileSync(target, action.contents)
 }
 
-function describe(action: InitAction): string {
-  return action.kind === 'create-labels'
-    ? `create labels ${action.labels.join(', ')}`
-    : `${action.mode} ${action.file}`
+/**
+ * This package's own version, for pinning what the scaffolded workflow
+ * invokes. Found by walking up from the loaded bundle to the manifest that
+ * shipped it, rather than from `process.cwd()` — the cwd is the *consumer's*
+ * project, whose version would pin their workflow to a number about them.
+ *
+ * Undefined when nothing answers, which the scaffold writes as the sentinel:
+ * an unpinned `npx` silently changes what the loop runs, and a guess about
+ * which version is worse than a value that refuses.
+ */
+function selfVersion(): string | undefined {
+  const from = bundleFile()
+  if (!from) return undefined
+  let dir = path.dirname(from)
+  for (;;) {
+    try {
+      const manifest: unknown = createRequire(from)(
+        path.join(dir, 'package.json')
+      )
+      if (
+        manifest &&
+        typeof manifest === 'object' &&
+        (manifest as { name?: unknown }).name === '@galosandoval/shopfloor'
+      ) {
+        const version = (manifest as { version?: unknown }).version
+        return typeof version === 'string' ? version : undefined
+      }
+    } catch {
+      // No manifest here; keep walking.
+    }
+    const parent = path.dirname(dir)
+    if (parent === dir) return undefined
+    dir = parent
+  }
+}
+
+/** The file this bundle was loaded as, in either module format. */
+function bundleFile(): string | undefined {
+  const moduleUrl = import.meta.url as string | undefined
+  if (moduleUrl) return fileURLToPath(moduleUrl)
+  if (typeof __filename === 'string') return __filename
+  return undefined
 }
 
 /**
@@ -188,7 +239,9 @@ export function formatInitResult(result: RunInitResult): string {
 
   if (result.declined.length > 0) {
     lines.push('', 'Declined, so left as they were:')
-    for (const action of result.declined) lines.push(`- ${describe(action)}`)
+    for (const action of result.declined) {
+      lines.push(`- ${describeAction(action)}`)
+    }
   }
 
   if (result.errors.length > 0) {
