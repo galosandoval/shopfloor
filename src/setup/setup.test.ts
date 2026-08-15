@@ -190,13 +190,13 @@ describe('evaluateSetup', () => {
       expect(check.detail).toContain('VERIFY_REPORT_FILE')
     })
 
-    it('fails an unrecognized token, which today renders as literal text', () => {
+    it('fails an unrecognized token, which a run refuses to spawn over', () => {
       const check = statusOf('prompt-tokens', {
         promptTemplate: `${GOOD_PROMPT}\n{{STANDARDS_DIR}}`
       })
       expect(check.status).toBe('fail')
       expect(check.detail).toContain('{{STANDARDS_DIR}}')
-      expect(check.detail).toContain('literal text')
+      expect(check.detail).toContain('refuses before spawning')
     })
 
     it('reads a token whatever whitespace it was written with', () => {

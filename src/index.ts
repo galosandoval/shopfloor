@@ -3,7 +3,7 @@
  * throw, the pure escape hatches the README documents (`evaluatePreflight`,
  * `buildVerifyComment`, `classifyCommand`, `evaluatePluginDirs`,
  * `checkTrajectory`, `evaluateIteration`, `evaluateSetup`,
- * `evaluateAuthorization`), the bundled
+ * `evaluateAuthorization`, `evaluatePromptReadiness`), the bundled
  * plugin's resolved location — API because
  * a stated `pluginDirs` replaces the default, so naming it alongside your own
  * has to be writable rather than guessable — and the types
@@ -77,6 +77,18 @@ export {
 } from './guardrails/plugin-dirs'
 
 export { runPluginDirsCheck } from './guardrails/run-plugin-dirs'
+
+/**
+ * The unfilled-prompt refusal (shopfloor#44), pure and exported for the same
+ * reason its siblings are: a consumer's own tooling can ask the question this
+ * package asks before every spawn, against whatever token table it renders
+ * with. `PROMPT_TOKENS` is this package's, and already exported below.
+ */
+export {
+  evaluatePromptReadiness,
+  type PromptReadinessInput,
+  type PromptReadinessVerdict
+} from './guardrails/prompt-readiness'
 
 export { resolveBundledPluginDir } from './orchestration/bundled-plugin'
 

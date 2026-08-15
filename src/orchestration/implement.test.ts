@@ -20,6 +20,7 @@ import {
 import { NO_RUN_USAGE } from '../observability/usage'
 import type { RunImplementAgentConfig } from './config'
 import { WALL_CLOCK_MINUTES_ENV_VAR } from '../guardrails/run-policy'
+import { ENVIRONMENT_UNFILLED_SENTINEL } from '../setup/setup'
 
 // Only the subprocess is stubbed; `describeRunawayKill` is pure, and a stubbed
 // one would let these assert a failure message no run would ever print.
@@ -329,6 +330,51 @@ describe('runImplementAgent removed standards directory', () => {
 
     await expect(runImplementAgent(stated)).rejects.toThrow(/standardsDir/)
     expect(spawnClaudeMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('runImplementAgent unfilled-prompt precondition', () => {
+  it('refuses a prompt still carrying the scaffolder’s sentinel', async () => {
+    await expect(
+      runImplementAgent(
+        baseInput({
+          promptTemplate: `Implement issue {{ISSUE_NUMBER}}.\n${ENVIRONMENT_UNFILLED_SENTINEL}: the gate command.`
+        })
+      )
+    ).rejects.toThrow(ENVIRONMENT_UNFILLED_SENTINEL)
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses a token nothing substitutes, naming it', async () => {
+    await expect(
+      runImplementAgent(
+        baseInput({ promptTemplate: 'Standards live in {{STANDARDS_DIR}}.' })
+      )
+    ).rejects.toThrow(/\{\{STANDARDS_DIR\}\}/)
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses before probing anything — no tokens, no subprocesses', async () => {
+    await expect(
+      runImplementAgent(
+        baseInput({
+          promptTemplate: `${ENVIRONMENT_UNFILLED_SENTINEL}: fill me.`
+        })
+      )
+    ).rejects.toThrow(ImplementAgentError)
+
+    expect(execFileSyncMock).not.toHaveBeenCalled()
+    expect(statSyncMock).not.toHaveBeenCalled()
+  })
+
+  it('spawns a run whose prompt is filled', async () => {
+    await runImplementAgent(
+      baseInput({
+        promptTemplate: 'Implement {{ISSUE_NUMBER}} on {{BRANCH}}. Run tests.'
+      })
+    )
+
+    expect(spawnClaudeMock).toHaveBeenCalledOnce()
   })
 })
 

@@ -5,6 +5,10 @@
  * subprocess; this module only computes what to spawn with.
  */
 
+import { PROMPT_TOKENS } from '../setup/setup'
+
+type PromptToken = (typeof PROMPT_TOKENS)[number]
+
 export interface ClaudeInvocationInput {
   /** Raw contents of the prompt template, with `{{PLACEHOLDER}}` tokens to render. */
   promptTemplate: string
@@ -61,7 +65,10 @@ export interface ClaudeInvocation {
 export function prepareClaudeInvocation(
   input: ClaudeInvocationInput
 ): ClaudeInvocation {
-  const substitutions: Record<string, string> = {
+  // Keyed on the doctor's own table rather than on `string`, so a token added
+  // here without being added there — or the reverse — is a type error rather
+  // than a check that quietly disagrees with what a run renders.
+  const substitutions: Record<PromptToken, string> = {
     ISSUE_NUMBER: input.issueNumber,
     ISSUE_TITLE: input.issueTitle,
     BRANCH: input.branch,
@@ -72,7 +79,7 @@ export function prepareClaudeInvocation(
 
   const rendered = input.promptTemplate.replace(
     /\{\{(\w+)\}\}/g,
-    (token, key) => (key in substitutions ? substitutions[key] : token)
+    (token, key: string) => (isPromptToken(key) ? substitutions[key] : token)
   )
 
   // Appended rather than substituted into a placeholder: the feedback must
@@ -114,6 +121,16 @@ export function prepareClaudeInvocation(
   }
 
   return { args, prompt }
+}
+
+/**
+ * Whether a template's `{{TOKEN}}` is one this module substitutes. Anything
+ * else renders as itself — and refuses the run one level up
+ * (`evaluatePromptReadiness`), which is the only reason a prompt reaching here
+ * still carries one.
+ */
+function isPromptToken(key: string): key is PromptToken {
+  return (PROMPT_TOKENS as readonly string[]).includes(key)
 }
 
 /**

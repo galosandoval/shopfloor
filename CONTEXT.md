@@ -22,7 +22,7 @@ harness concern rather than as a flat file list.
 | Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/orchestration/`   | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                   |
-| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting                                                                               |
+| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the command policy and its `PreToolUse` hook script, verify-comment posting                      |
 | `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                               |
 | `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository |
 | `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                         |
@@ -56,7 +56,8 @@ The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `evaluateAuthorization` / `runAuthorization`,
 `evaluatePluginDirs` / `runPluginDirsCheck`, `checkTrajectory` /
 `runTrajectoryCheck`, `evaluateIteration` / `runGate`, `evaluateSetup` /
-`probeSetup`, `planInit` / `runInit`, `checkCliVersion` and
+`probeSetup`, `planInit` / `runInit`, `checkCliVersion`,
+`evaluatePromptReadiness` and
 `resolveImplementConfig` / `runImplementAgent`.
 
 `probeSetup` is the one shell not named `run*`, and deliberately: it runs
@@ -109,7 +110,9 @@ every default that can be _stated_ stays in the resolver.
    the pure resolver, which leaves `pluginDirs` undefined precisely so
    "unstated" stays distinguishable from "stated as empty".
 3. **Verify preconditions** — first, and before any probe spends time or any
-   token is spent: the caller's required env vars, that every plugin directory
+   token is spent: the caller's required env vars, that the prompt carries
+   neither `init`'s sentinel nor a token nothing substitutes
+   (`evaluatePromptReadiness`, shopfloor#44), that every plugin directory
    — the bundled one included,
    with no exemption — is a plugin carrying skills and neither hooks nor MCP
    servers, and the running `claude --version` against the policy's pin.
@@ -313,6 +316,28 @@ PR, sandboxing, and any CI glue.
   block whose `workflows:` names a sentinel is still wired to the event, so
   `workflow-triggers` passes and the edge fires from nothing. A sentinel
   nothing refuses on is prose with a `TODO` in front of it.
+- **And the run refuses on it too, not just the doctor.** shopfloor#44 closes
+  the design's one open item: a prompt still carrying the sentinel, or a
+  `{{TOKEN}}` outside the substituted six, fails among the preconditions rather
+  than rendering as literal text and buying a full run that dies on a command
+  the repository does not have. The check reads the **template**, not the
+  rendered prompt: on tokens that is the same verdict — rendering only ever
+  removes known ones — and reading it early is what puts the refusal ahead of
+  the `git` and `gh` probes. On the sentinel the two differ, deliberately: one
+  arriving inside a substituted _value_, an issue title say, is the issue's
+  data, and refusing over it would let any issue's prose block the loop. A
+  **missing** token still refuses nothing — leaving one out is a consumer's
+  choice, and the doctor's `prompt-tokens` check is where it is reported.
+- **The run and the doctor are not one check, and the run is the stricter.**
+  The doctor reads the sentinel only inside the environment fences and
+  tolerates spaces and lower-casing in a token; the run refuses on a sentinel
+  anywhere in the prompt, and on any identifier-shaped `{{ token }}`
+  substitution would not render — `{{ ISSUE_NUMBER }}` included, since the
+  renderer matches `{{TOKEN}}` and nothing else, so a spaced one reaches the
+  agent as literal text exactly like a misspelling. The split runs the way the
+  invariants above already do: a diagnostic tolerates what it cannot be sure
+  about, a gate on spend does not. Making them one matcher is a change to the
+  doctor's strictness, not to this guard.
 - **Creating labels belongs to `init`, not to a run.** The design's §8 chose
   creating them at startup, weighed against zero-setup installs; once `init`
   exists that alternative is gone, so the write happens at a moment a human
