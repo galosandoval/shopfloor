@@ -9,7 +9,7 @@ const input = (overrides: Partial<AuthorizationInput> = {}) =>
   ({
     actor: 'galosandoval',
     repo: 'galosandoval/recipe-chat',
-    probe: { read: true, permission: 'admin' },
+    probe: { answered: true, permission: 'admin' },
     ...overrides
   }) satisfies AuthorizationInput
 
@@ -17,7 +17,7 @@ describe('evaluateAuthorization', () => {
   describe('permitted', () => {
     it.each(SPENDING_PERMISSIONS)('authorizes %s', (permission) => {
       const verdict = evaluateAuthorization(
-        input({ probe: { read: true, permission } })
+        input({ probe: { answered: true, permission } })
       )
 
       expect(verdict).toEqual({ authorized: true, permission })
@@ -25,7 +25,7 @@ describe('evaluateAuthorization', () => {
 
     it('reads the permission case- and whitespace-insensitively', () => {
       const verdict = evaluateAuthorization(
-        input({ probe: { read: true, permission: ' Admin\n' } })
+        input({ probe: { answered: true, permission: ' Admin\n' } })
       )
 
       expect(verdict).toEqual({ authorized: true, permission: 'admin' })
@@ -37,7 +37,7 @@ describe('evaluateAuthorization', () => {
       'refuses %s as not-permitted',
       (permission) => {
         const verdict = evaluateAuthorization(
-          input({ actor: 'drive-by', probe: { read: true, permission } })
+          input({ actor: 'drive-by', probe: { answered: true, permission } })
         )
 
         expect(verdict).toMatchObject({
@@ -49,7 +49,7 @@ describe('evaluateAuthorization', () => {
 
     it('names the actor, the permission they have, and what would unblock them', () => {
       const verdict = evaluateAuthorization(
-        input({ actor: 'drive-by', probe: { read: true, permission: 'read' } })
+        input({ actor: 'drive-by', probe: { answered: true, permission: 'read' } })
       )
 
       if (verdict.authorized) throw new Error('expected a refusal')
@@ -63,7 +63,7 @@ describe('evaluateAuthorization', () => {
   describe('undetermined', () => {
     it('refuses an unreadable probe', () => {
       const verdict = evaluateAuthorization(
-        input({ probe: { read: false, detail: 'gh: command not found' } })
+        input({ probe: { answered: false, detail: 'gh: command not found' } })
       )
 
       expect(verdict).toMatchObject({
@@ -74,7 +74,7 @@ describe('evaluateAuthorization', () => {
 
     it('carries the probe failure into the reason', () => {
       const verdict = evaluateAuthorization(
-        input({ probe: { read: false, detail: 'HTTP 404: Not Found' } })
+        input({ probe: { answered: false, detail: 'HTTP 404: Not Found' } })
       )
 
       if (verdict.authorized) throw new Error('expected a refusal')
@@ -82,9 +82,17 @@ describe('evaluateAuthorization', () => {
       expect(verdict.reason).toContain('galosandoval')
     })
 
+    it('refuses when no probe was taken at all', () => {
+      const verdict = evaluateAuthorization(input({ probe: undefined }))
+
+      if (verdict.authorized) throw new Error('expected a refusal')
+      expect(verdict.refusal).toBe('undetermined')
+      expect(verdict.reason).toContain('never probed')
+    })
+
     it('refuses a permission string it does not recognize rather than guessing', () => {
       const verdict = evaluateAuthorization(
-        input({ probe: { read: true, permission: 'custom-role-7' } })
+        input({ probe: { answered: true, permission: 'custom-role-7' } })
       )
 
       expect(verdict).toMatchObject({
@@ -95,7 +103,7 @@ describe('evaluateAuthorization', () => {
 
     it('refuses an empty permission', () => {
       const verdict = evaluateAuthorization(
-        input({ probe: { read: true, permission: '   ' } })
+        input({ probe: { answered: true, permission: '   ' } })
       )
 
       expect(verdict).toMatchObject({
@@ -149,12 +157,10 @@ describe('evaluateAuthorization', () => {
 })
 
 describe('isProbeableTarget', () => {
+  // The rejections are covered through `evaluateAuthorization` above; what is
+  // only assertable here is the accept, which is what tells the shell to spend
+  // a subprocess.
   it('accepts a well-formed login and owner/repo', () => {
     expect(isProbeableTarget('galo-sandoval', 'acme/widgets.js')).toBe(true)
-  })
-
-  it('rejects anything that would redirect the probe path', () => {
-    expect(isProbeableTarget('alice/../bob', 'acme/widgets')).toBe(false)
-    expect(isProbeableTarget('alice', 'acme/../widgets')).toBe(false)
   })
 })

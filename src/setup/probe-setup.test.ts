@@ -13,49 +13,16 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import {
+  calls,
+  execStubModule,
+  resetExecStub,
+  routeExecStub
+} from '../process/exec-stub.test-helper'
 import { probeSetup } from './probe-setup'
 import { evaluateSetup } from './setup'
 
-/** One stubbed subprocess: what it printed, and whether it exited non-zero. */
-interface Invocation {
-  stdout?: string
-  stderr?: string
-  /** An exit code makes it a ran-and-failed; `'spawn'` makes it a could-not-run. */
-  fails?: number | 'spawn'
-}
-
-let calls: string[][]
-let responses: Array<{ match: RegExp; response: Invocation }>
-
-vi.mock('node:child_process', () => {
-  const run = (file: string, args: string[]) => {
-    calls.push([file, ...args])
-    const command = [file, ...args].join(' ')
-    const found = responses.find((entry) => entry.match.test(command))
-    const response = found?.response ?? { fails: 1 as const }
-    if (response.fails !== undefined) {
-      const error = Object.assign(new Error(`stub failed: ${command}`), {
-        code: response.fails === 'spawn' ? 'ENOENT' : response.fails,
-        stdout: response.stdout ?? '',
-        stderr: response.stderr ?? ''
-      })
-      return Promise.reject(error)
-    }
-    return Promise.resolve({
-      stdout: response.stdout ?? '',
-      stderr: response.stderr ?? ''
-    })
-  }
-  const execFile = () => {
-    throw new Error('the doctor only uses the promisified execFile')
-  }
-  // Without this, `promisify` would resolve to stdout alone rather than to the
-  // `{ stdout, stderr }` the real `execFile` promisifies to.
-  Object.defineProperty(execFile, Symbol.for('nodejs.util.promisify.custom'), {
-    value: run
-  })
-  return { execFile }
-})
+vi.mock('node:child_process', () => execStubModule())
 
 let cwd: string
 
@@ -84,14 +51,14 @@ jobs:
 `
 
 beforeEach(() => {
-  calls = []
+  resetExecStub({ fails: 1 })
   cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'shopfloor-doctor-'))
   writeCheckout({
     '.github/workflows/agent-implement.yml': AGENT_WORKFLOW,
     '.github/workflows/test.yml': 'name: Test\non:\n  push:\n',
     'prompt.md': '# Implement {{ISSUE_NUMBER}}\n'
   })
-  responses = [
+  routeExecStub([
     {
       match: /^gh auth status/,
       response: { stdout: "  - Token scopes: 'repo', 'workflow'" }
@@ -126,7 +93,7 @@ beforeEach(() => {
       match: /^claude --version/,
       response: { stdout: '2.1.220 (Claude Code)\n' }
     }
-  ]
+  ])
 })
 
 afterEach(() => {
@@ -203,7 +170,7 @@ describe('probeSetup', () => {
   })
 
   it('reports an unauthenticated gh apart from a gh it could not run', async () => {
-    responses = [
+    routeExecStub([
       {
         match: /^gh auth status/,
         response: {
@@ -211,16 +178,16 @@ describe('probeSetup', () => {
           stderr: 'You are not logged into any GitHub hosts.'
         }
       }
-    ]
+    ])
     expect((await probeSetup({ cwd, env: {} })).ghAuth).toBe('unauthenticated')
 
-    responses = [{ match: /^gh auth status/, response: { fails: 'spawn' } }]
+    routeExecStub([{ match: /^gh auth status/, response: { fails: 'spawn' } }])
     expect((await probeSetup({ cwd, env: {} })).ghAuth).toBe('unknown')
   })
 
   it('degrades every unreadable probe to unknown rather than throwing', async () => {
     // Nothing installed and nothing on disk: every probe fails to spawn.
-    responses = [{ match: /./, response: { fails: 'spawn' } }]
+    routeExecStub([{ match: /./, response: { fails: 'spawn' } }])
     const facts = await probeSetup({ cwd: path.join(cwd, 'nowhere'), env: {} })
     expect(facts.ghAuth).toBe('unknown')
     expect(facts.ghTokenScopes).toBe('unknown')

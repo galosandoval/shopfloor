@@ -8,40 +8,18 @@
  * `gh` is stubbed at the process boundary, the only place mocking is allowed.
  */
 
+import {
+  calls,
+  execStubModule,
+  resetExecStub,
+  respondWith
+} from '../process/exec-stub.test-helper'
 import { runAuthorization } from './run-authorization'
 
-let calls: string[][]
-let response: { stdout?: string; stderr?: string; fails?: number | 'spawn' }
-
-vi.mock('node:child_process', () => {
-  const run = (file: string, args: string[]) => {
-    calls.push([file, ...args])
-    if (response.fails !== undefined) {
-      return Promise.reject(
-        Object.assign(new Error('stub failed'), {
-          code: response.fails === 'spawn' ? 'ENOENT' : response.fails,
-          stdout: response.stdout ?? '',
-          stderr: response.stderr ?? ''
-        })
-      )
-    }
-    return Promise.resolve({
-      stdout: response.stdout ?? '',
-      stderr: response.stderr ?? ''
-    })
-  }
-  const execFile = () => {
-    throw new Error('this shell only uses the promisified execFile')
-  }
-  Object.defineProperty(execFile, Symbol.for('nodejs.util.promisify.custom'), {
-    value: run
-  })
-  return { execFile }
-})
+vi.mock('node:child_process', () => execStubModule())
 
 beforeEach(() => {
-  calls = []
-  response = { stdout: 'admin\n' }
+  resetExecStub({ stdout: 'admin\n' })
 })
 
 describe('runAuthorization', () => {
@@ -54,9 +32,39 @@ describe('runAuthorization', () => {
         'api',
         'repos/acme/widgets/collaborators/alice/permission',
         '--jq',
-        '.permission'
+        // `role_name`, not the legacy `permission` field: that one collapses
+        // `maintain` into `write` and `triage` into `read`, so two of the
+        // levels the pure guard judges could never reach it.
+        '.role_name // .permission'
       ]
     ])
+  })
+
+  it('reaches an authorized verdict on a role only role_name reports', async () => {
+    respondWith({ stdout: 'maintain\n' })
+
+    const { verdict } = await runAuthorization({
+      actor: 'alice',
+      repo: 'acme/widgets',
+      env: {}
+    })
+
+    expect(verdict).toEqual({ authorized: true, permission: 'maintain' })
+  })
+
+  it('refuses a triage collaborator — labeling is not spending', async () => {
+    respondWith({ stdout: 'triage\n' })
+
+    const { verdict } = await runAuthorization({
+      actor: 'drive-by',
+      repo: 'acme/widgets',
+      env: {}
+    })
+
+    expect(verdict).toMatchObject({
+      authorized: false,
+      refusal: 'not-permitted'
+    })
   })
 
   it('falls back to the runner’s GITHUB_ACTOR and GITHUB_REPOSITORY', async () => {
@@ -70,7 +78,7 @@ describe('runAuthorization', () => {
   })
 
   it('reaches an authorized verdict on what gh printed', async () => {
-    response = { stdout: 'write\n' }
+    respondWith({ stdout: 'write\n' })
 
     const { verdict, actor, repo } = await runAuthorization({
       actor: 'alice',
@@ -83,7 +91,7 @@ describe('runAuthorization', () => {
   })
 
   it('refuses a permission gh reported as not permitted', async () => {
-    response = { stdout: 'read\n' }
+    respondWith({ stdout: 'read\n' })
 
     const { verdict } = await runAuthorization({
       actor: 'drive-by',
@@ -98,7 +106,7 @@ describe('runAuthorization', () => {
   })
 
   it('turns a failed probe into an undetermined refusal carrying gh’s reason', async () => {
-    response = { fails: 1, stderr: 'gh: Not Found (HTTP 404)\nextra noise' }
+    respondWith({ fails: 1, stderr: 'gh: Not Found (HTTP 404)\nextra noise' })
 
     const { verdict } = await runAuthorization({
       actor: 'alice',
@@ -113,7 +121,7 @@ describe('runAuthorization', () => {
   })
 
   it('refuses rather than throwing when gh is not installed', async () => {
-    response = { fails: 'spawn' }
+    respondWith({ fails: 'spawn' })
 
     const { verdict } = await runAuthorization({
       actor: 'alice',
@@ -148,9 +156,10 @@ describe('runAuthorization', () => {
     })
 
     expect(calls).toEqual([])
-    expect(verdict).toMatchObject({
-      authorized: false,
-      refusal: 'undetermined'
-    })
+    if (verdict.authorized) throw new Error('expected a refusal')
+    expect(verdict.refusal).toBe('undetermined')
+    // The reason is about the malformed target, not about a probe result the
+    // shell invented to stand in for the one it never took.
+    expect(verdict.reason).toContain('is not a GitHub login')
   })
 })

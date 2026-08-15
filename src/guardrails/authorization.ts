@@ -19,23 +19,34 @@
 
 /**
  * What the probe of `repos/{repo}/collaborators/{actor}/permission` came back
- * with. Read-but-unrecognized is deliberately not a third case: it arrives as
- * a `permission` this module does not know, and is judged here rather than by
- * the shell.
+ * with. Answered-but-unrecognized is deliberately not a third case: it arrives
+ * as a `permission` this module does not know, and is judged here rather than
+ * by the shell.
+ *
+ * The discriminant is `answered`, not `read`, because `read` is also one of
+ * the permission levels being judged — `{ read: true, permission: 'read' }`
+ * reads as a contradiction and is not one.
  */
 export type PermissionProbe =
-  { read: true; permission: string } | { read: false; detail: string }
+  | { answered: true; permission: string }
+  | { answered: false; detail: string }
 
 export interface AuthorizationInput {
   /** The GitHub login that triggered the run (`github.actor`). */
   actor: string
   /** `owner/repo`, e.g. `galosandoval/recipe-chat`. */
   repo: string
-  probe: PermissionProbe
+  /**
+   * Omitted when the caller never ran the probe — for an unstated or malformed
+   * target, the shell decides not to spend a subprocess on it. An absent probe
+   * is uncertainty like any other and refuses on its own terms, so the two
+   * halves are not coupled by the order this function checks things in.
+   */
+  probe?: PermissionProbe
 }
 
 export type AuthorizationVerdict =
-  | { authorized: true; permission: string }
+  | { authorized: true; permission: SpendingPermission }
   | {
       authorized: false
       /**
@@ -61,10 +72,15 @@ export type AuthorizationVerdict =
  */
 export const SPENDING_PERMISSIONS = ['admin', 'maintain', 'write'] as const
 
+/** A level that may spend. The authorized verdict carries which one it was. */
+export type SpendingPermission = (typeof SPENDING_PERMISSIONS)[number]
+
 /**
- * Every value GitHub's permission API is known to return. A permission outside
- * this set is not a refusal — it is uncertainty, and uncertainty refuses with
- * the reason that says so.
+ * Every value GitHub's permission API is known to return — the five role names
+ * it reports in `role_name`. A permission outside this set is not a refusal —
+ * it is uncertainty, and uncertainty refuses with the reason that says so. An
+ * organization's **custom repository role** lands there by design: a name this
+ * guard has never seen is not evidence that its holder may spend.
  */
 const KNOWN_PERMISSIONS = [
   ...SPENDING_PERMISSIONS,
@@ -72,6 +88,16 @@ const KNOWN_PERMISSIONS = [
   'read',
   'none'
 ] as const
+
+type KnownPermission = (typeof KNOWN_PERMISSIONS)[number]
+
+function isSpendingPermission(value: string): value is SpendingPermission {
+  return (SPENDING_PERMISSIONS as readonly string[]).includes(value)
+}
+
+function isKnownPermission(value: string): value is KnownPermission {
+  return (KNOWN_PERMISSIONS as readonly string[]).includes(value)
+}
 
 /** A GitHub login: alphanumerics and inner hyphens, nothing else. */
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/
@@ -119,7 +145,11 @@ export function evaluateAuthorization(
     )
   }
 
-  if (!input.probe.read) {
+  if (!input.probe) {
+    return undetermined(actor, repo, 'the permission was never probed')
+  }
+
+  if (!input.probe.answered) {
     return undetermined(actor, repo, input.probe.detail)
   }
 
@@ -129,11 +159,11 @@ export function evaluateAuthorization(
     return undetermined(actor, repo, 'the permission probe returned nothing')
   }
 
-  if (SPENDING_PERMISSIONS.includes(permission as never)) {
+  if (isSpendingPermission(permission)) {
     return { authorized: true, permission }
   }
 
-  if (!KNOWN_PERMISSIONS.includes(permission as never)) {
+  if (!isKnownPermission(permission)) {
     return undetermined(
       actor,
       repo,
