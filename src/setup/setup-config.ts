@@ -94,6 +94,28 @@ export function resolveDoctorConfig(
   return resolved
 }
 
+/**
+ * Where `init` scaffolds a prompt when the caller states none. Doctor has no
+ * such default and reports `unknown` instead — the difference is that a path
+ * doctor was not pointed at is a file it must not judge, while for `init` it
+ * is a file to create.
+ */
+export const DEFAULT_PROMPT_FILE = 'agent/implement/prompt.md'
+
+/** A doctor config with the one field `init` cannot leave unstated resolved. */
+export interface ResolvedInitConfig extends ResolvedDoctorConfig {
+  promptFile: string
+}
+
+/** Resolve a caller's partial init config against `env`. Total — nothing here can fail. */
+export function resolveInitConfig(
+  input: DoctorConfig,
+  env: Record<string, string | undefined>
+): ResolvedInitConfig {
+  const doctor = resolveDoctorConfig(input, env)
+  return { ...doctor, promptFile: doctor.promptFile ?? DEFAULT_PROMPT_FILE }
+}
+
 /** A comma-separated env-var list, or undefined when the variable is unset. */
 function parseNameList(raw: string | undefined): string[] | undefined {
   if (raw === undefined) return undefined

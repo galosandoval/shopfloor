@@ -47,6 +47,17 @@ none of its own, and no longer takes a path to yours: `standardsDir` was
 removed, and a run still configured for it refuses (see
 [Pre-spawn preconditions](#pre-spawn-preconditions)).
 
+From an empty repository, one command scaffolds the rest — labels, workflow,
+and a prompt whose environment block it fills from your lockfile and scripts:
+
+```sh
+npx shopfloor-init
+```
+
+It is interactive, re-runnable, and never overwrites a file without asking. See
+[Setup init](#setup-init), and [Setup doctor](#setup-doctor) for the read-only
+half that says what is still wrong.
+
 ## Usage
 
 A run needs an issue number, a prompt template, and an OAuth token.
@@ -164,13 +175,13 @@ idle guard reads it as a heartbeat — and `usage` is that stream parsed as it
 arrives rather than dropped. It exists because the inner loop bounds a run by
 _attempts_, and attempts are not the budget the loop multiplies.
 
-| Field                      | Type                       | Meaning                                          |
-| -------------------------- | -------------------------- | ------------------------------------------------ |
-| `inputTokens`              | `number`                   | Uncached input tokens                            |
-| `outputTokens`             | `number`                   | Output tokens                                    |
-| `cacheCreationInputTokens` | `number`                   | Tokens written to the prompt cache               |
-| `cacheReadInputTokens`     | `number`                   | Tokens served from it                            |
-| `costUsd`                  | `number \| undefined`      | USD, when the stream reported it                 |
+| Field                      | Type                       | Meaning                                                     |
+| -------------------------- | -------------------------- | ----------------------------------------------------------- |
+| `inputTokens`              | `number`                   | Uncached input tokens                                       |
+| `outputTokens`             | `number`                   | Output tokens                                               |
+| `cacheCreationInputTokens` | `number`                   | Tokens written to the prompt cache                          |
+| `cacheReadInputTokens`     | `number`                   | Tokens served from it                                       |
+| `costUsd`                  | `number \| undefined`      | USD, when the stream reported it                            |
 | `source`                   | `'reported' \| 'observed'` | Whether these are the CLI's own tally or this package's sum |
 
 **`source` is the field to read first.** `'reported'` means every spawn reached
@@ -775,7 +786,8 @@ a consumer correctly set up for the `implement` phase alone sees this check fail
 until that lands. It is checked now because the doctor's job is to report the
 bindings the loop needs, and a check added after the loop is the check that
 never gets added. Same for `label-vocabulary`: the six labels are fixed and
-package-owned, and nothing creates them yet.
+package-owned, and [`shopfloor-init`](#setup-init) is what creates them — at a
+moment you asked for it, rather than as a side effect of a run.
 
 | Variable            | Default                                 | What it points at                            |
 | ------------------- | --------------------------------------- | -------------------------------------------- |
@@ -805,8 +817,93 @@ prompt carrying its environment as plain prose is not wrong, only unverifiable.
 underneath — both exported, along with `formatSetupReport`, `REQUIRED_LABELS`,
 `PROMPT_TOKENS`, and the environment-block constants, for callers assembling
 their own reporting. The check ids, the admitted events, and the configuration
-defaults are deliberately not API: every export is a commitment, and the
-scaffolder that would want them does not exist yet.
+defaults are deliberately not API: every export is a commitment, and nothing
+outside this package needs them.
+
+### Setup init
+
+`doctor` says what is wrong. `init` fixes the half a command can:
+
+```sh
+npx shopfloor-init
+```
+
+```
+shopfloor init
+
+Will write:
+- create 6 label(s): ready-for-agent, ready-for-human, agent:implement, …
+- create agent/implement/prompt.md
+- create .github/workflows/agent-implement.yml
+
+Still yours to fix — this command cannot:
+- repo-secrets: missing: CLAUDE_CODE_OAUTH_TOKEN, AGENT_PAT — set with `gh secret set <NAME>` …
+```
+
+It runs `doctor`'s evaluation first and writes only what that verdict says is
+missing: the label vocabulary, the workflow wired to both trigger events, and
+the prompt — with its environment block **filled** from this project's own
+lockfile and `package.json` scripts, not left as a placeholder.
+
+**The fill is the point.** A skeleton whose environment block still says
+`{{GATE_COMMAND}}` fails the way `{{STANDARDS_DIR}}` did: present, plausible,
+wrong, and silent. So `init` reads `pnpm-lock.yaml` and a `typecheck` script and
+writes the commands, and where it **cannot** determine a value it writes the
+sentinel `TODO(shopfloor)` — which `doctor`'s `prompt-environment-block` check
+already fails on. Never an empty string, and never prose a reader has to judge:
+
+```markdown
+<!-- shopfloor:environment -->
+
+TODO(shopfloor): no lockfile at the project root, so the package manager and its
+install command are undetermined — state them here.
+
+This work is not done until `pnpm run typecheck && pnpm run test` passes.
+
+<!-- /shopfloor:environment -->
+```
+
+The same sentinel names the one thing the workflow scaffold cannot know: which
+CI workflow's completion should retrigger the loop. The edge is written inert
+rather than wired to a guessed name.
+
+**Four properties worth relying on:**
+
+- **Re-runnable.** A second run on a configured repository writes nothing —
+  every check its writers address already passes, so the plan is empty.
+- **Never a silent overwrite.** An existing file is either left alone or
+  rewritten after you confirm, by name. With no terminal attached to answer —
+  in CI — every overwrite is declined.
+- **It leaves a prompt it cannot account for alone.** Three cases, all of them
+  a refusal to write: a prompt with no environment fences (its environment is
+  prose this command cannot locate); a rewrite for a missing _token_ over a
+  prompt whose environment you filled (yours is kept verbatim, and the report
+  says so); and a block still carrying the sentinel on a project that states
+  nothing to fill it with — re-deriving the same sentinel would put an
+  overwrite in front of you on every run, over a file `init` itself wrote.
+- **No config file.** Resolution stays `explicit input → env var → probe →
+default`, the same as everywhere else here. It reads the same variables the
+  doctor does, with one difference: an unstated `PROMPT_FILE` is a path to
+  _create_ (`agent/implement/prompt.md`) rather than a check that reports
+  unknown.
+
+What it does not do: set secrets, authenticate `gh`, install the CLI, or merge
+the workflow to your default branch. Those are named in the report and left to
+you. The merge gets its own line — `Then, by hand:` — because with no workflow
+on disk `doctor` reports that check as unknown rather than failing, so nothing
+else would tell you that the machine edge stays dead until the file is on the
+default branch.
+
+**The scaffolded workflow is a starting point you then own.** It is wired to
+both trigger events, checks out with the PAT, runs the spend gate before the
+runner installs anything, and carries a job condition that filters the label on
+`issues` without filtering `workflow_run` out of existence. Two things in it are
+deliberately inert and marked with the sentinel: which CI workflow's completion
+retriggers the loop, and how a `workflow_run` event resolves to an issue number
+— that second one is the outer loop, which is designed and not shipped.
+
+`runInit()` is the shell and `planInit(input)` the pure decision underneath —
+both exported, so a caller can see what would be written without writing it.
 
 ## Module layout
 
@@ -832,10 +929,11 @@ or `review` module has an obvious home:
   and the trajectory checker that grades a finished run over that transcript:
   the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck`
   shell. It reports; it never fails a run.
-- `src/setup/` — the setup doctor: the pure `evaluateSetup` /
-  `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup`
-  shell. It judges a consumer's configuration rather than a run, and writes
-  nothing at all.
+- `src/setup/` — the doctor and the scaffolder: the pure `evaluateSetup` /
+  `formatSetupReport` and the read-only `probeSetup` shell, and over them the
+  pure `planInit` / `buildEnvironmentBlock` and the `runInit` shell that is the
+  one thing here that writes to a consumer's repository. It judges and
+  configures a consumer's setup rather than a run.
 - `src/process/` — what every shell that shells out needs and none of them own:
   the one narrowing of a rejected `execFile` (`asExecFailure`) and the
   `node:child_process` stub their wiring tests share. Internal; nothing here is

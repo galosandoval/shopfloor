@@ -486,8 +486,13 @@ function checkWorkflowRun(
     : check.fail(detail)
 }
 
-/** Whether the agent workflow's own file is present on the default branch. */
-function onDefaultBranch(facts: SetupFacts): boolean {
+/**
+ * Whether the agent workflow's own file is present on the default branch.
+ * Exported for `init`, which needs the same answer to know whether rewriting
+ * the workflow could clear `workflow-run-prerequisites` — a merge is the one
+ * half of that check no file it writes can fix.
+ */
+export function onDefaultBranch(facts: SetupFacts): boolean {
   if (facts.defaultBranchWorkflowFiles === 'unknown') return false
   const basename = facts.workflowFile.split('/').pop() ?? facts.workflowFile
   return facts.defaultBranchWorkflowFiles.includes(basename)
