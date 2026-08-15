@@ -114,13 +114,13 @@ The template is yours — this package ships none. Before the spawn, its
 `{{PLACEHOLDER}}` tokens are rendered against the run's own resolved values.
 Six are substituted, and only these six:
 
-| Token                     | Rendered to                                                    |
-| ------------------------- | -------------------------------------------------------------- |
-| `{{ISSUE_NUMBER}}`        | `issueNumber`, as resolved                                     |
+| Token                     | Rendered to                                                     |
+| ------------------------- | --------------------------------------------------------------- |
+| `{{ISSUE_NUMBER}}`        | `issueNumber`, as resolved                                      |
 | `{{ISSUE_TITLE}}`         | `issueTitle` — stated, from `ISSUE_TITLE`, or probed via `gh`   |
 | `{{BRANCH}}`              | `branch` — stated, from the environment, or probed via `git`    |
-| `{{PR_DESCRIPTION_FILE}}` | absolute path the agent writes its PR description to           |
-| `{{VERIFY_REPORT_FILE}}`  | absolute path the agent writes its verify report to            |
+| `{{PR_DESCRIPTION_FILE}}` | absolute path the agent writes its PR description to            |
+| `{{VERIFY_REPORT_FILE}}`  | absolute path the agent writes its verify report to             |
 | `{{SCREENSHOTS_DIR}}`     | repo-relative directory the agent commits verify screenshots to |
 
 The last three are how a prompt tells the agent where to put the artifacts this
@@ -452,6 +452,48 @@ Best-effort by contract — it never throws, including when a value can't be
 inferred; check the returned `posted` flag. `buildVerifyComment` is the pure
 formatter underneath.
 
+### Trajectory scorecard
+
+Grade a finished run over its own captured transcript — _how_ it worked, not
+just what it produced:
+
+```ts
+import { runTrajectoryCheck } from '@galosandoval/shopfloor'
+
+const { graded, findings, scorecard } = runTrajectoryCheck({
+  transcriptFile: '/tmp/out/transcript.jsonl',
+  maxTurns: 150,
+  // Optional: where to stage the markdown for `gh pr comment --body-file`.
+  scorecardFile: '/tmp/out/trajectory_scorecard.md'
+})
+```
+
+Four process invariants, each graded `pass`, `fail`, or `not-evaluable`:
+
+| Invariant              | Fails when                                                       |
+| ---------------------- | ---------------------------------------------------------------- |
+| `gate-before-commit`   | A `git commit` was not preceded by a whole-suite test run        |
+| `red-before-green`     | No failing test run preceded the first commit                    |
+| `no-forbidden-git-ops` | The run force-pushed or amended                                  |
+| `turn-budget-headroom` | Turn usage reached the headroom threshold (default: ≥80% of cap) |
+
+**Advisory, and only advisory.** A violating run still succeeds — this reports,
+it never fails a run, never throws, and never changes an exit code. A missing
+or unreadable transcript returns `graded: false` rather than an error, and an
+empty or truncated one grades every invariant `not-evaluable`: a run this can't
+read is not a run it condemns.
+
+What counts as the gate is per-repository. The default recognizes a whole-suite
+run under npm, pnpm, yarn, or bun (and jest/vitest invoked directly), excluding
+partial scripts like `test:e2e`; a repo whose gate is something else states
+`gateCommandPatterns`, which replaces the defaults outright.
+`no-forbidden-git-ops` defers to the same `classifyCommand` rule set the
+`PreToolUse` guard enforces, so the two can't drift.
+
+`checkTrajectory` is the pure grader underneath (already-parsed events in,
+findings out) and `formatScorecard` renders findings as markdown — both
+exported for callers assembling their own reporting.
+
 ## Module layout
 
 Organized by harness concern rather than a flat file list, so a future `plan`
@@ -468,11 +510,15 @@ or `review` module has an obvious home:
   policy and its `PreToolUse` hook script, plugin-directory validation, and
   verify-comment posting (a
   feedback-loop guardrail: posting proof back to the PR).
-- `src/observability/` — session transcript capture, for CI-artifact upload.
+- `src/observability/` — session transcript capture (for CI-artifact upload),
+  and the trajectory checker that grades a finished run over that transcript:
+  the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck`
+  shell. It reports; it never fails a run.
 
 The package exports the four verbs (`runImplementAgent`, `runPreflight`,
-`postVerifyComment`, plus `ImplementAgentError`), the four documented pure
-escape hatches (`evaluatePreflight`, `buildVerifyComment`, `classifyCommand`,
+`postVerifyComment`, `runTrajectoryCheck`) and `ImplementAgentError`, the
+documented pure escape hatches (`evaluatePreflight`, `buildVerifyComment`,
+`classifyCommand`, `checkTrajectory` with `formatScorecard`, and
 `evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
 CI glue can pre-validate a plugin directory without starting a run),
 `resolveBundledPluginDir` (where the bundled plugin landed),
