@@ -429,6 +429,80 @@ branch, repository, and commit come from the runner's own `GITHUB_*`
 variables, so a workflow step restates none of them. A failed run writes its
 reason to `failure_reason.txt` under `OUTPUT_DIR` and exits non-zero.
 
+### Authorization — the spend gate
+
+On a public repository, anyone who can add a label can start a run that spends
+your Claude subscription. This is the only guardrail here whose failure mode is
+financial and adversarial rather than operational, so it ships as its own bin
+and runs in a job that has installed nothing:
+
+```yaml
+jobs:
+  authorize:
+    if: github.event.label.name == 'agent:implement'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.AGENT_PAT }}
+    steps:
+      # No checkout, no toolchain, no install — the guard runs before the spend
+      # it guards. A refusal exits non-zero, which fails this job, which skips
+      # every job that `needs:` it.
+      - run: npx -y @galosandoval/shopfloor@<version> shopfloor-authorize
+```
+
+`GITHUB_ACTOR` and `GITHUB_REPOSITORY` come from the runner. The probe is
+`gh api repos/{repo}/collaborators/{actor}/permission`, and the run proceeds
+only for `admin`, `maintain`, or `write` — a `triage` collaborator can label an
+issue and therefore trigger the loop, and labeling is not spending.
+
+That set (`SPENDING_PERMISSIONS`, exported) is **fixed rather than
+configurable**, for the reason the label vocabulary is: a stated set could only
+be validated against a role model this package does not own, and the failure
+mode here is not a broken diagnostic but a silently reopened spend gate.
+
+**It refuses on uncertainty, and it is the only guard here that does.**
+Everywhere else in this package an unreadable signal proceeds, because a
+missing diagnostic should not cause an outage. Here an unreadable signal means
+"I do not know whether this person may spend your money." So a `gh` that is
+missing, unauthenticated, rate-limited, or answering with a permission level
+the guard does not recognize all refuse, and the verdict says which of two
+things happened:
+
+| `refusal`       | Means                                                    |
+| --------------- | -------------------------------------------------------- |
+| `not-permitted` | The probe answered, and the answer was no                |
+| `undetermined`  | The probe answered nothing usable — refused, not assumed |
+
+They are kept apart for the reason the doctor keeps `unknown` apart from
+`wrong`: one is a trespasser and the other is a broken token, and a message
+that conflates them files an outage under a security incident. The refusal
+names the actor and what would unblock them.
+
+**It writes nothing.** Unlike preflight refusal, this one neither labels nor
+comments — a refusal that commented would hand any drive-by triager a way to
+make the harness write to your repository. The exit code is the whole output.
+
+For a caller that wants the verdict rather than a process:
+
+```ts
+import { runAuthorization } from '@galosandoval/shopfloor'
+
+const { verdict } = await runAuthorization({
+  actor: 'octocat',
+  repo: 'galosandoval/recipe-chat'
+})
+if (!verdict.authorized) {
+  console.error(`${verdict.refusal}: ${verdict.reason}`)
+}
+```
+
+`evaluateAuthorization` is the pure decision underneath, if you probed the
+permission another way, and `SPENDING_PERMISSIONS` is the set it judges
+against. An actor or repository that is not a well-formed GitHub login /
+`owner/repo` is `undetermined` and never probed: the probe path is built by
+interpolation, and a target that could address a different endpoint is not one
+whose answer is worth trusting.
+
 ### Preflight refusal
 
 Refuse a label-triggered run before it spends any tokens — a PRD (has native
@@ -690,7 +764,9 @@ or `review` module has an obvious home:
   `resolveBundledPluginDir` (where the bundled plugin landed — filesystem work,
   so it sits in the shell rather than in the configuration resolver).
 - `src/guardrails/` — the run-policy contract (idle/wall-clock/max-turns
-  resolvers), the pure CLI-version comparison, preflight refusal, the command
+  resolvers), the pure CLI-version comparison, preflight refusal, authorization
+  (`evaluateAuthorization` / `runAuthorization` — the spend gate, and the one
+  guard that refuses on uncertainty), the command
   policy and its `PreToolUse` hook script, plugin-directory validation, and
   verify-comment posting (a
   feedback-loop guardrail: posting proof back to the PR).
@@ -703,16 +779,19 @@ or `review` module has an obvious home:
   shell. It judges a consumer's configuration rather than a run, and writes
   nothing at all.
 
-The package exports the five verbs (`runImplementAgent`, `runPreflight`,
-`postVerifyComment`, `runTrajectoryCheck`, `probeSetup`) and `ImplementAgentError`, the
-documented pure escape hatches (`evaluatePreflight`, `buildVerifyComment`,
+The package exports the six verbs (`runImplementAgent`, `runPreflight`,
+`runAuthorization`, `postVerifyComment`, `runTrajectoryCheck`, `probeSetup`) and
+`ImplementAgentError`, the
+documented pure escape hatches (`evaluatePreflight`, `evaluateAuthorization`,
+`buildVerifyComment`,
 `classifyCommand`, `checkTrajectory` with `formatScorecard`, `evaluateIteration`
 (the inner loop's iterate/done/exhausted rule), `evaluateSetup` with
 `formatSetupReport`, and
 `evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
 CI glue can pre-validate a plugin directory without starting a run),
 `resolveBundledPluginDir` (where the bundled plugin landed),
-`DEFAULT_RUN_POLICY`, and the input/result types — including
+`DEFAULT_RUN_POLICY`, `SPENDING_PERMISSIONS` (the fixed set the spend gate
+judges against), and the input/result types — including
 `CliVersionStrictness`, the union behind the strictness table above. The
 resolvers, the invocation assembler, and the transcript helpers are internals —
 import from source if you're vendoring, but they aren't API.

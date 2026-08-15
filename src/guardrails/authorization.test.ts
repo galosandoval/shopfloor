@@ -1,0 +1,160 @@
+import {
+  evaluateAuthorization,
+  isProbeableTarget,
+  SPENDING_PERMISSIONS,
+  type AuthorizationInput
+} from './authorization'
+
+const input = (overrides: Partial<AuthorizationInput> = {}) =>
+  ({
+    actor: 'galosandoval',
+    repo: 'galosandoval/recipe-chat',
+    probe: { read: true, permission: 'admin' },
+    ...overrides
+  }) satisfies AuthorizationInput
+
+describe('evaluateAuthorization', () => {
+  describe('permitted', () => {
+    it.each(SPENDING_PERMISSIONS)('authorizes %s', (permission) => {
+      const verdict = evaluateAuthorization(
+        input({ probe: { read: true, permission } })
+      )
+
+      expect(verdict).toEqual({ authorized: true, permission })
+    })
+
+    it('reads the permission case- and whitespace-insensitively', () => {
+      const verdict = evaluateAuthorization(
+        input({ probe: { read: true, permission: ' Admin\n' } })
+      )
+
+      expect(verdict).toEqual({ authorized: true, permission: 'admin' })
+    })
+  })
+
+  describe('not permitted', () => {
+    it.each(['read', 'triage', 'none'])(
+      'refuses %s as not-permitted',
+      (permission) => {
+        const verdict = evaluateAuthorization(
+          input({ actor: 'drive-by', probe: { read: true, permission } })
+        )
+
+        expect(verdict).toMatchObject({
+          authorized: false,
+          refusal: 'not-permitted'
+        })
+      }
+    )
+
+    it('names the actor, the permission they have, and what would unblock them', () => {
+      const verdict = evaluateAuthorization(
+        input({ actor: 'drive-by', probe: { read: true, permission: 'read' } })
+      )
+
+      if (verdict.authorized) throw new Error('expected a refusal')
+      expect(verdict.reason).toContain('drive-by')
+      expect(verdict.reason).toContain('read')
+      expect(verdict.reason).toContain('galosandoval/recipe-chat')
+      expect(verdict.reason).toContain('write')
+    })
+  })
+
+  describe('undetermined', () => {
+    it('refuses an unreadable probe', () => {
+      const verdict = evaluateAuthorization(
+        input({ probe: { read: false, detail: 'gh: command not found' } })
+      )
+
+      expect(verdict).toMatchObject({
+        authorized: false,
+        refusal: 'undetermined'
+      })
+    })
+
+    it('carries the probe failure into the reason', () => {
+      const verdict = evaluateAuthorization(
+        input({ probe: { read: false, detail: 'HTTP 404: Not Found' } })
+      )
+
+      if (verdict.authorized) throw new Error('expected a refusal')
+      expect(verdict.reason).toContain('HTTP 404: Not Found')
+      expect(verdict.reason).toContain('galosandoval')
+    })
+
+    it('refuses a permission string it does not recognize rather than guessing', () => {
+      const verdict = evaluateAuthorization(
+        input({ probe: { read: true, permission: 'custom-role-7' } })
+      )
+
+      expect(verdict).toMatchObject({
+        authorized: false,
+        refusal: 'undetermined'
+      })
+    })
+
+    it('refuses an empty permission', () => {
+      const verdict = evaluateAuthorization(
+        input({ probe: { read: true, permission: '   ' } })
+      )
+
+      expect(verdict).toMatchObject({
+        authorized: false,
+        refusal: 'undetermined'
+      })
+    })
+
+    it('refuses when the actor is unstated — an unnamed actor is uncertainty too', () => {
+      const verdict = evaluateAuthorization(input({ actor: '  ' }))
+
+      expect(verdict).toMatchObject({
+        authorized: false,
+        refusal: 'undetermined'
+      })
+    })
+
+    it('refuses when the repo is unstated', () => {
+      const verdict = evaluateAuthorization(input({ repo: '' }))
+
+      expect(verdict).toMatchObject({
+        authorized: false,
+        refusal: 'undetermined'
+      })
+    })
+
+    it.each(['alice/../bob', 'alice/bob', '../admin', 'ali ce'])(
+      'refuses %s — a malformed login is uncertainty, not a permission',
+      (actor) => {
+        const verdict = evaluateAuthorization(input({ actor }))
+
+        expect(verdict).toMatchObject({
+          authorized: false,
+          refusal: 'undetermined'
+        })
+      }
+    )
+
+    it.each(['acme', 'acme/widgets/extra', 'acme/../widgets', 'acme/..'])(
+      'refuses %s — a malformed repository is uncertainty too',
+      (repo) => {
+        const verdict = evaluateAuthorization(input({ repo }))
+
+        expect(verdict).toMatchObject({
+          authorized: false,
+          refusal: 'undetermined'
+        })
+      }
+    )
+  })
+})
+
+describe('isProbeableTarget', () => {
+  it('accepts a well-formed login and owner/repo', () => {
+    expect(isProbeableTarget('galo-sandoval', 'acme/widgets.js')).toBe(true)
+  })
+
+  it('rejects anything that would redirect the probe path', () => {
+    expect(isProbeableTarget('alice/../bob', 'acme/widgets')).toBe(false)
+    expect(isProbeableTarget('alice', 'acme/../widgets')).toBe(false)
+  })
+})

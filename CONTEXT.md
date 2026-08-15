@@ -19,15 +19,16 @@ harness concern rather than as a flat file list.
 
 ## Module map
 
-| Directory            | Owns                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/orchestration/` | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError` |
-| `src/guardrails/`    | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting                                                                                                                            |
-| `src/observability/` | Session transcript capture (for CI-artifact upload), and the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell. Advisory: it reports, it never fails a run                                                                                                                                                                   |
-| `src/setup/`         | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI                                                                                                                                                             |
-| `src/index.ts`       | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                          |
-| `src/cli.ts`         | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                    |
-| `src/doctor-cli.ts`  | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                  |
+| Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/orchestration/`   | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError` |
+| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting                                             |
+| `src/observability/`   | Session transcript capture (for CI-artifact upload), and the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell. Advisory: it reports, it never fails a run                                                                                                                                                                   |
+| `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI                                                                                                                                                             |
+| `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                          |
+| `src/cli.ts`           | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                    |
+| `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                  |
+| `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                        |
 
 ## Pure core, IO shell
 
@@ -50,6 +51,7 @@ produce. Anything that judges is either pure or does not belong here.
 
 The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `command-guard-hook`, `buildVerifyComment` / `postVerifyComment`,
+`evaluateAuthorization` / `runAuthorization`,
 `evaluatePluginDirs` / `runPluginDirsCheck`, `checkTrajectory` /
 `runTrajectoryCheck`, `evaluateIteration` / `runGate`, `evaluateSetup` /
 `probeSetup`, `checkCliVersion` and `resolveImplementConfig` /
@@ -198,6 +200,23 @@ PR, sandboxing, and any CI glue.
   exits 0, so it never takes a run down over a command it has no opinion about.
   Same logic behind the CLI-version check warning by default: pin churn that
   fails green runs trains people to delete the check.
+- **Except authorization, which refuses on uncertainty — the one inversion.**
+  `evaluateAuthorization` (shopfloor#41) is the only guardrail whose failure
+  mode is **financial and adversarial** rather than operational, and it is the
+  only one that refuses when its signal is unreadable. Everywhere else an
+  unreadable signal proceeds, because a missing diagnostic must not cause an
+  outage; here an unreadable signal means "I do not know whether this person
+  may spend your money," and proceeding is the expensive direction. So an
+  errored probe, an empty answer, and a permission level the guard does not
+  recognize all refuse. The refusal keeps **not-permitted apart from
+  could-not-determine** for the reason the doctor keeps `unknown` apart from
+  `wrong`: they are a trespasser and a broken token, and collapsing them files
+  an outage under a security message. The shell is also the one refusal that
+  **writes nothing** — labeling or commenting on refusal would hand any
+  drive-by triager a way to make the harness write to the repository. It ships
+  as its own bin (`shopfloor-authorize`) because a spend gate that runs after
+  the runner's setup has already let the spend happen (design review finding
+  2).
 - **A plugin may add prose, never execution.** A stated plugin directory is
   refused if it ships hooks or MCP servers, from its manifest or from the
   convention directories alike. These runs pass

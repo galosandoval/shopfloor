@@ -2,7 +2,8 @@
  * The package's public surface: the verbs a consumer calls, the error they
  * throw, the pure escape hatches the README documents (`evaluatePreflight`,
  * `buildVerifyComment`, `classifyCommand`, `evaluatePluginDirs`,
- * `checkTrajectory`, `evaluateIteration`, `evaluateSetup`), the bundled
+ * `checkTrajectory`, `evaluateIteration`, `evaluateSetup`,
+ * `evaluateAuthorization`), the bundled
  * plugin's resolved location — API because
  * a stated `pluginDirs` replaces the default, so naming it alongside your own
  * has to be writable rather than guessable — and the types
@@ -46,6 +47,26 @@ export {
   type RunPreflightInput,
   type RunPreflightResult
 } from './guardrails/run-preflight'
+
+/**
+ * The spend gate (shopfloor#41), exported as its own callable — and shipped as
+ * the `shopfloor-authorize` bin — so a setup-free job can refuse an
+ * unauthorized actor before the runner pays for anything. Unlike every other
+ * guard here, it refuses on uncertainty; see `CONTEXT.md`.
+ */
+export {
+  evaluateAuthorization,
+  SPENDING_PERMISSIONS,
+  type AuthorizationInput,
+  type AuthorizationVerdict,
+  type PermissionProbe
+} from './guardrails/authorization'
+
+export {
+  runAuthorization,
+  type RunAuthorizationInput,
+  type RunAuthorizationResult
+} from './guardrails/run-authorization'
 
 export {
   evaluatePluginDirs,
