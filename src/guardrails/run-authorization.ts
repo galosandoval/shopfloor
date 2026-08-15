@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { asExecFailure } from '../process/exec-failure'
 import {
   evaluateAuthorization,
   isProbeableTarget,
@@ -54,12 +55,11 @@ export async function runAuthorization(
     actor,
     repo,
     // An unstated or malformed target is already a refusal, and its probe path
-    // is built by interpolation — so it is not spent on a subprocess, and the
-    // detail below never reaches a reason because the pure guard refuses on
-    // the target before it reads the probe.
+    // is built by interpolation — so no subprocess is spent on it, and no
+    // probe result is invented to stand in for the one never taken.
     probe: isProbeableTarget(actor, repo)
       ? await probePermission(actor, repo)
-      : { read: false, detail: 'not probed' }
+      : undefined
   })
 
   return { verdict, actor, repo }
@@ -68,9 +68,17 @@ export async function runAuthorization(
 /**
  * `gh api repos/{repo}/collaborators/{actor}/permission`. Every failure —
  * `gh` missing, unauthenticated, rate-limited, a 404 on a login that does not
- * exist — becomes an unread probe carrying what `gh` said, rather than a
+ * exist — becomes an unanswered probe carrying what `gh` said, rather than a
  * throw: the guard's whole point is that it decides on uncertainty instead of
  * crashing on it.
+ *
+ * **`role_name`, not `permission`.** The endpoint's legacy `permission` field
+ * only ever reports `admin` | `write` | `read` | `none`, so a `maintain`
+ * collaborator arrives as `write` and a `triage` one as `read` — the verdicts
+ * happen to land right, but two of the levels the guard judges could never
+ * reach it, and the set it documents would be fiction. `role_name` reports all
+ * five. The `//` falls back for an API old enough not to send it (GHES),
+ * rather than turning a missing field into `null` and refusing a maintainer.
  */
 async function probePermission(
   actor: string,
@@ -81,20 +89,16 @@ async function probePermission(
       'api',
       `repos/${repo}/collaborators/${actor}/permission`,
       '--jq',
-      '.permission'
+      '.role_name // .permission'
     ])
-    return { read: true, permission: stdout }
+    return { answered: true, permission: stdout }
   } catch (error) {
-    return { read: false, detail: describeProbeFailure(error) }
+    return { answered: false, detail: describeProbeFailure(error) }
   }
 }
 
 /** `gh`'s own first line of complaint, which is the line worth reporting. */
 function describeProbeFailure(error: unknown): string {
-  const stderr =
-    typeof error === 'object' && error !== null && 'stderr' in error
-      ? String((error as { stderr: unknown }).stderr)
-      : ''
-  const message = stderr.trim() || String(error)
+  const message = asExecFailure(error).stderr.trim() || String(error)
   return message.split('\n')[0]?.trim() || 'the permission probe failed'
 }

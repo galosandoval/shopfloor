@@ -15,6 +15,7 @@ import { execFile } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
+import { asExecFailure } from '../process/exec-failure'
 import { parseGhTokenScopes } from './parse-facts'
 import { type SetupFacts } from './setup'
 import { resolveDoctorConfig, type DoctorConfig } from './setup-config'
@@ -180,18 +181,11 @@ async function probe(
     const { stdout, stderr } = await execFileAsync('gh', args)
     return { ok: true, output: `${stdout}\n${stderr}` }
   } catch (error) {
-    const failure = error as {
-      code?: unknown
-      stdout?: string
-      stderr?: string
-    }
+    const { code, stdout, stderr } = asExecFailure(error)
     // A spawn failure carries no exit code — that is "gh is not installed",
     // which is unknown rather than unauthenticated.
-    if (typeof failure.code !== 'number') return null
-    return {
-      ok: false,
-      output: `${failure.stdout ?? ''}\n${failure.stderr ?? ''}`
-    }
+    if (code === undefined) return null
+    return { ok: false, output: `${stdout}\n${stderr}` }
   }
 }
 

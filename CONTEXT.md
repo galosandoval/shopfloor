@@ -25,6 +25,7 @@ harness concern rather than as a flat file list.
 | `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting                                             |
 | `src/observability/`   | Session transcript capture (for CI-artifact upload), and the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell. Advisory: it reports, it never fails a run                                                                                                                                                                   |
 | `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI                                                                                                                                                             |
+| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                          |
 | `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                          |
 | `src/cli.ts`           | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                    |
 | `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                  |
@@ -207,8 +208,10 @@ PR, sandboxing, and any CI glue.
   unreadable signal proceeds, because a missing diagnostic must not cause an
   outage; here an unreadable signal means "I do not know whether this person
   may spend your money," and proceeding is the expensive direction. So an
-  errored probe, an empty answer, and a permission level the guard does not
-  recognize all refuse. The refusal keeps **not-permitted apart from
+  errored probe, an empty answer, a probe never taken, and a permission level
+  the guard does not recognize all refuse — including an organization's custom
+  repository role, which is a name it has never seen rather than evidence of
+  push access. The refusal keeps **not-permitted apart from
   could-not-determine** for the reason the doctor keeps `unknown` apart from
   `wrong`: they are a trespasser and a broken token, and collapsing them files
   an outage under a security message. The shell is also the one refusal that

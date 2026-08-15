@@ -59,7 +59,8 @@ export {
   SPENDING_PERMISSIONS,
   type AuthorizationInput,
   type AuthorizationVerdict,
-  type PermissionProbe
+  type PermissionProbe,
+  type SpendingPermission
 } from './guardrails/authorization'
 
 export {

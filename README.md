@@ -451,9 +451,15 @@ jobs:
 ```
 
 `GITHUB_ACTOR` and `GITHUB_REPOSITORY` come from the runner. The probe is
-`gh api repos/{repo}/collaborators/{actor}/permission`, and the run proceeds
-only for `admin`, `maintain`, or `write` — a `triage` collaborator can label an
-issue and therefore trigger the loop, and labeling is not spending.
+`gh api repos/{repo}/collaborators/{actor}/permission --jq '.role_name // .permission'`,
+and the run proceeds only for `admin`, `maintain`, or `write` — a `triage`
+collaborator can label an issue and therefore trigger the loop, and labeling is
+not spending. It reads `role_name` rather than the endpoint's legacy
+`permission` field, which reports only `admin` / `write` / `read` / `none` and
+would collapse `maintain` into `write` and `triage` into `read`; an API old
+enough not to send `role_name` falls back to it rather than refusing. An
+organization's **custom repository role** is a name this guard has never seen,
+so it is `undetermined` rather than allowed.
 
 That set (`SPENDING_PERMISSIONS`, exported) is **fixed rather than
 configurable**, for the reason the label vocabulary is: a stated set could only
@@ -778,6 +784,10 @@ or `review` module has an obvious home:
   `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup`
   shell. It judges a consumer's configuration rather than a run, and writes
   nothing at all.
+- `src/process/` — what every shell that shells out needs and none of them own:
+  the one narrowing of a rejected `execFile` (`asExecFailure`) and the
+  `node:child_process` stub their wiring tests share. Internal; nothing here is
+  exported from `src/index.ts`.
 
 The package exports the six verbs (`runImplementAgent`, `runPreflight`,
 `runAuthorization`, `postVerifyComment`, `runTrajectoryCheck`, `probeSetup`) and
