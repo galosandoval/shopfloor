@@ -143,11 +143,17 @@ The last three are how a prompt tells the agent where to put the artifacts this
 package then reads back — a template that never names them yields a run with no
 PR description (`prDescription: 'fallback'`) and nothing to post.
 
-**An unrecognized token renders as literal text**, unchanged and unreported —
-there is no error for a misspelled placeholder, and none for a token that used
-to exist. `{{STANDARDS_DIR}}` is exactly that case now; see
-[Pre-spawn preconditions](#pre-spawn-preconditions). Check your template against
-this table when you upgrade.
+**An unrecognized token refuses the run**, before the spawn and before any
+probe — a misspelled placeholder, or one that used to exist, like
+`{{STANDARDS_DIR}}`. It used to render as literal text, unchanged and
+unreported, which made an unfilled placeholder indistinguishable from prose; a
+prompt that carried one now fails immediately, naming it and this table. So does
+one still carrying `shopfloor init`'s `TODO(shopfloor)` sentinel. See [Pre-spawn
+preconditions](#pre-spawn-preconditions).
+
+A **missing** token is not refused — leaving one out is a choice this package
+does not second-guess, and `shopfloor-doctor`'s `prompt-tokens` check is where
+it is reported. Check your template against this table when you upgrade.
 
 ### What a run returns
 
@@ -353,11 +359,11 @@ exhausted — is exported, so the rule can be tested or reused without a run.
 
 #### Pre-spawn preconditions
 
-Three things are settled just before the CLI spawns, so a misconfigured run
-costs zero tokens: the `runPolicy.requiredEnvVars` check, the plugin
-directories, and the CLI version. A fourth refuses earlier still, while the
-configuration resolves, because it needs nothing from disk to detect: a
-standards directory.
+Four things are settled just before the CLI spawns, so a misconfigured run
+costs zero tokens: the `runPolicy.requiredEnvVars` check, the prompt being
+filled in, the plugin directories, and the CLI version. A fifth refuses earlier
+still, while the configuration resolves, because it needs nothing from disk to
+detect: a standards directory.
 
 **A standards directory — fails the run.** `standardsDir` is gone, and the
 prompt no longer carries a `{{STANDARDS_DIR}}` placeholder to substitute into;
@@ -369,10 +375,35 @@ variable meaning nothing at all — no type error, no runtime error, just a run
 with less context than its operator believes it has. An empty value from either
 source still means "deliberately skip" and does not refuse, exactly as before.
 
-A prompt template that still contains `{{STANDARDS_DIR}}` now renders that
-token as literal text. Fixing the configuration is what a run demands first, so
-this is reachable only by a caller who does that and leaves the template stale
-— check yours when you upgrade.
+A prompt template that still contains `{{STANDARDS_DIR}}` is refused by the next
+check rather than rendered — see below.
+
+**An unfilled prompt — fails the run.** Before any probe runs, the prompt is
+checked for the two things that mean it was never finished: `shopfloor init`'s
+`TODO(shopfloor)` sentinel, and a `{{TOKEN}}` outside [the six this package
+substitutes](#the-prompt-template). Either **refuses before spawning**, naming
+every offender — the sentinel by line number, an unknown token beside the table
+of real ones.
+
+Both used to be invisible. A sentinel was a `TODO` in prose, and an unrecognized
+token rendered as literal text, so a consumer who skipped filling the
+environment block paid for a full run that then failed on a command their
+repository does not have. **This is a new failure mode for an existing prompt:**
+a template carrying either now refuses where it previously ran.
+
+`npx shopfloor-doctor` reports most of this without spending anything, and
+`evaluatePromptReadiness` is exported for tooling that wants the verdict on its
+own. The doctor and the run are **not the same check**, and the run is the
+stricter of the two: the doctor looks for the sentinel only inside the
+environment fences and reads tokens as upper-case with surrounding spaces
+tolerated, while the run refuses on the sentinel anywhere in the prompt and on
+any identifier-shaped `{{ token }}` the renderer would not substitute —
+`{{ ISSUE_NUMBER }}` and `{{issue_number}}` included, because those reach the
+agent as literal text exactly like a misspelling does. Braced prose that is not
+identifier-shaped is left alone.
+
+A _missing_ token is deliberately not refused here — see [the prompt
+template](#the-prompt-template).
 
 **Plugin directories — fail the run.** Each entry in `pluginDirs`
 (`PLUGIN_DIRS`, comma-separated) is passed to the CLI as `--plugin-dir`, one
@@ -941,7 +972,8 @@ or `review` module has an obvious home:
   resolvers), the pure CLI-version comparison, preflight refusal, authorization
   (`evaluateAuthorization` / `runAuthorization` — the spend gate, and the one
   guard that refuses on uncertainty), the command
-  policy and its `PreToolUse` hook script, plugin-directory validation, and
+  policy and its `PreToolUse` hook script, plugin-directory validation, the
+  unfilled-prompt refusal (`evaluatePromptReadiness`), and
   verify-comment posting (a
   feedback-loop guardrail: posting proof back to the PR).
 - `src/observability/` — session transcript capture (for CI-artifact upload),
@@ -967,7 +999,8 @@ documented pure escape hatches (`evaluatePreflight`, `evaluateAuthorization`,
 (the inner loop's iterate/done/exhausted rule), `evaluateSetup` with
 `formatSetupReport`, and
 `evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
-CI glue can pre-validate a plugin directory without starting a run),
+CI glue can pre-validate a plugin directory without starting a run —
+and `evaluatePromptReadiness`, the unfilled-prompt refusal),
 `formatInitResult` (what a finished `init` did),
 `resolveBundledPluginDir` (where the bundled plugin landed),
 `DEFAULT_RUN_POLICY`, `SPENDING_PERMISSIONS` (the fixed set the spend gate

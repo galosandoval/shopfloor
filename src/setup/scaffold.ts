@@ -131,8 +131,8 @@ function undeterminedGate(project: ProjectFacts): string {
 /**
  * The prompt skeleton — a shim to the installed skills plugin, not a procedure
  * of its own. It carries the six substituted tokens and nothing else in
- * `{{…}}` shape, because a token this package does not substitute renders as
- * literal text, unchanged and unreported.
+ * `{{…}}` shape, because a token this package does not substitute is one a run
+ * refuses to spawn over.
  *
  * What it deliberately does not carry: how to write code. That is procedure,
  * it ships as skills, and duplicating it into every consumer's prompt is the

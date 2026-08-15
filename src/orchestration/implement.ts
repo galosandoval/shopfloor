@@ -39,6 +39,8 @@ import {
   type ResolvedRunPolicy
 } from '../guardrails/run-policy'
 import { checkCliVersion, parseCliVersion } from '../guardrails/cli-version'
+import { evaluatePromptReadiness } from '../guardrails/prompt-readiness'
+import { PROMPT_TOKENS } from '../setup/setup'
 import { runPluginDirsCheck } from '../guardrails/run-plugin-dirs'
 import { resolveBundledPluginDir } from './bundled-plugin'
 import { ImplementAgentError } from './implement-error'
@@ -347,7 +349,8 @@ function requireFinishedSpawn(
 /**
  * Everything that must hold before the CLI spawns, so a misconfigured run
  * fails immediately instead of spending tokens on a doomed one: the caller's
- * required env vars, the plugin directories, and the CLI version. Returns the
+ * required env vars, the prompt being filled in, the plugin directories, and
+ * the CLI version. Returns the
  * running CLI version for the run result — the one thing these checks produce
  * rather than merely permit. The removed `standardsDir` refuses earlier still,
  * in `resolveImplementConfig`, since it needs no IO to detect.
@@ -376,8 +379,24 @@ function verifyPreconditions(
     )
   }
 
+  requireFilledPrompt(config.promptTemplate)
   requirePluginDirs(pluginDirs, cwd)
   return checkRunningCliVersion(config.runPolicy, cwd)
+}
+
+/**
+ * Refuse before the spawn when the prompt was scaffolded and never filled, or
+ * names a token nothing renders (shopfloor#44). Runs ahead of the plugin and
+ * version probes because it needs nothing from disk, and the run it saves is
+ * the one that would have spent a full budget before failing on a command this
+ * repository does not have.
+ */
+function requireFilledPrompt(promptTemplate: string): void {
+  const verdict = evaluatePromptReadiness({
+    prompt: promptTemplate,
+    knownTokens: PROMPT_TOKENS
+  })
+  if (verdict.refused) throw new ImplementAgentError(verdict.reason)
 }
 
 /**

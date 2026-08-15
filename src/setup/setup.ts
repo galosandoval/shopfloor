@@ -102,9 +102,10 @@ const REQUIRED_PAT_SCOPES = ['workflow'] as const
 /**
  * The tokens `prepareClaudeInvocation` substitutes, and the only ones it
  * substitutes. A prompt missing one silently loses the value; a prompt
- * carrying anything else renders it as literal text, unchanged and unreported
+ * carrying anything else is one `evaluatePromptReadiness` refuses the run over
  * — which is exactly what `{{STANDARDS_DIR}}` became. Both directions are
- * checked here because neither produces an error anywhere else.
+ * checked here because the doctor reports them before a run exists, where a
+ * missing token still produces no error anywhere else at all.
  */
 export const PROMPT_TOKENS = [
   'ISSUE_NUMBER',
@@ -388,7 +389,7 @@ function checkPromptTokens(facts: SetupFacts): SetupCheck {
   }
   if (unrecognized.length > 0) {
     problems.push(
-      `renders as literal text, unchanged and unreported: ${unrecognized
+      `nothing substitutes, so a run refuses before spawning: ${unrecognized
         .map((token) => `{{${token}}}`)
         .join(', ')}`
     )
