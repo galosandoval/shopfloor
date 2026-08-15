@@ -141,6 +141,8 @@ export {
   ENVIRONMENT_UNFILLED_SENTINEL,
   PROMPT_TOKENS,
   REQUIRED_LABELS,
+  LABEL_VOCABULARY,
+  type LabelDefinition,
   type SetupCheck,
   type SetupCheckId,
   type SetupCheckStatus,
@@ -153,12 +155,12 @@ export { probeSetup } from './setup/probe-setup'
 export { type DoctorConfig } from './setup/setup-config'
 
 /**
- * `init` (shopfloor#43): doctor plus writers. The pure `planInit` is exported
- * alongside the shell for the same reason `evaluateSetup` is — a consumer
- * wanting to see what would be written, without writing it, should not have to
- * run the writers to find out. The scaffold builders stay internal: what they
- * emit is checked by the doctor a caller already has, and every export is a
- * compatibility commitment.
+ * `init` (shopfloor#43): the command, and the shape of what it reports having
+ * done. Nothing else. The planner, the scaffold builders, and the project
+ * probe stay internal — what they emit is checked by the doctor a caller
+ * already has, and every export is a compatibility commitment on a package
+ * still before `1.0.0`. The types below are here because `RunInitResult` is
+ * made of them, not as a second entry point.
  */
 export {
   runInit,
@@ -168,14 +170,9 @@ export {
 } from './setup/run-init'
 
 export {
-  planInit,
-  formatInitPlan,
   type CreateLabelsAction,
   type InitAction,
-  type InitInput,
   type InitPlan,
   type InitSkip,
   type WriteFileAction
 } from './setup/init'
-
-export { type ProjectFacts } from './setup/scaffold'

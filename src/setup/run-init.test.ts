@@ -206,6 +206,36 @@ describe('runInit', () => {
     expect(read('.github/workflows/loop.yml')).toContain('prompts/agent.md')
   })
 
+  it('creates each label in the repository it was pointed at', async () => {
+    await runInit({
+      cwd,
+      env: { GITHUB_REPOSITORY: 'them/theirs' },
+      confirm: refuse
+    })
+
+    const create = calls.find(
+      (call) => call[1] === 'label' && call[2] === 'create'
+    )
+    expect(create).toContain('--repo')
+    expect(create?.[create.indexOf('--repo') + 1]).toBe('them/theirs')
+    // And with what GitHub needs to make the vocabulary readable.
+    expect(create).toContain('--color')
+    expect(create).toContain('--description')
+  })
+
+  it('pins the scaffolded workflow to versions it read, not to a sentinel', async () => {
+    // This package's own version comes from the manifest that shipped it, and
+    // the CLI pin from the same CLI_VERSION the doctor compares against. Both
+    // unpinned would leave the workflow fetching whatever npm published today.
+    await runInit({ cwd, env: { CLI_VERSION: '2.1.220' }, confirm: refuse })
+    const workflow = read(WORKFLOW_FILE)
+
+    expect(workflow).toContain('@anthropic-ai/claude-code@2.1.220')
+    expect(workflow).toMatch(
+      /@galosandoval\/shopfloor@\d+\.\d+\.\d+ shopfloor-implement/
+    )
+  })
+
   it('follows a renamed PAT secret into what it scaffolds', async () => {
     await runInit({
       cwd,
@@ -227,7 +257,7 @@ describe('runInit', () => {
 
     const result = await runInit({ cwd, env: {}, confirm: refuse })
     expect(result.errors).toHaveLength(1)
-    expect(result.errors[0]).toContain('create labels')
+    expect(result.errors[0]).toContain('label(s)')
     // The failure does not stop the writes that follow it.
     expect(fs.existsSync(path.join(cwd, PROMPT_FILE))).toBe(true)
   })

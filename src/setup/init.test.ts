@@ -85,13 +85,17 @@ function writes(result: InitPlan): Record<string, string> {
 describe('planInit on a fresh repository', () => {
   const result = plan(freshFacts())
 
-  it('creates every label the vocabulary requires', () => {
+  it('creates every label the vocabulary requires, with what GitHub needs', () => {
     const labels = result.actions.find(
       (action) => action.kind === 'create-labels'
     )
-    expect(labels?.kind === 'create-labels' && labels.labels).toEqual([
-      ...REQUIRED_LABELS
-    ])
+    const created = labels?.kind === 'create-labels' ? labels.labels : []
+    expect(created.map((label) => label.name)).toEqual([...REQUIRED_LABELS])
+    // A name alone would let GitHub pick the colour and leave the meaning blank.
+    for (const label of created) {
+      expect(label.color).toMatch(/^[0-9A-Fa-f]{6}$/)
+      expect(label.description).not.toBe('')
+    }
   })
 
   it('scaffolds the prompt and the workflow, both as creations', () => {
@@ -119,7 +123,8 @@ describe('planInit on a partially configured repository', () => {
     const labels = result.actions.find(
       (action) => action.kind === 'create-labels'
     )
-    expect(labels?.kind === 'create-labels' && labels.labels).toEqual(
+    const created = labels?.kind === 'create-labels' ? labels.labels : []
+    expect(created.map((label) => label.name)).toEqual(
       REQUIRED_LABELS.filter((label) => label !== 'ready-for-agent')
     )
   })
@@ -248,14 +253,50 @@ jobs:
     // reports unknown rather than failing, so nothing else would say it.
     const fresh = plan(freshFacts())
     expect(writes(fresh)[WORKFLOW_FILE]).toBeDefined()
-    expect(fresh.next.join(' ')).toContain(WORKFLOW_FILE)
     expect(formatInitPlan(fresh)).toMatch(/default branch/)
 
     // A merged workflow being rewritten needs no such step.
     const merged = plan(
       configuredFacts({ workflow: 'name: Ours\non:\n  push:\n' })
     )
-    expect(merged.next).toEqual([])
+    const write = merged.actions.find(
+      (action) => action.kind === 'write-file' && action.file === WORKFLOW_FILE
+    )
+    expect(write?.why).not.toMatch(/default branch/)
+  })
+
+  it('does not claim to have filled the workflow sentinels it wrote', () => {
+    // The workflow_run source, the CLI pin, and the issue-number step are
+    // values init declined to guess. A scaffold that reported them fixed would
+    // leave the operator with a green doctor and a dead machine edge.
+    const fresh = plan(freshFacts())
+    expect(writes(fresh)[WORKFLOW_FILE]).toContain('TODO(shopfloor)')
+
+    const scaffolded = freshFacts({
+      workflow: writes(fresh)[WORKFLOW_FILE] ?? '',
+      defaultBranchWorkflowFiles: ['agent-implement.yml']
+    })
+    expect(
+      evaluateSetup(scaffolded).failures.map((failure) => failure.id)
+    ).toContain('workflow-unfilled')
+  })
+
+  it('pins the workflow to the CLI version and package version it knows', () => {
+    const pinned = plan(freshFacts({ pinnedCliVersion: '2.1.220' }))
+    expect(writes(pinned)[WORKFLOW_FILE]).toContain(
+      '@anthropic-ai/claude-code@2.1.220'
+    )
+
+    const versioned = planInit({
+      facts: freshFacts(),
+      verdict: evaluateSetup(freshFacts()),
+      project: PROJECT,
+      promptFile: PROMPT_FILE,
+      packageVersion: '0.11.0'
+    })
+    expect(writes(versioned)[WORKFLOW_FILE]).toContain(
+      '@galosandoval/shopfloor@0.11.0'
+    )
   })
 })
 

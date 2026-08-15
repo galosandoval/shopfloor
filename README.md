@@ -741,6 +741,7 @@ Nine checks, each a binding named where it fails:
 | `prompt-tokens`              | The prompt is missing a substituted token, or carries an unrecognized one               |
 | `prompt-environment-block`   | The prompt's environment block is empty or still carries the `TODO(shopfloor)` sentinel |
 | `workflow-triggers`          | The workflow is not wired to `issues.labeled` and `workflow_run.completed`              |
+| `workflow-unfilled`          | The workflow still carries a scaffolded `TODO(shopfloor)` nobody replaced               |
 | `workflow-run-prerequisites` | The workflow is off the default branch, or never references the PAT at all              |
 
 **Read-only, and the exit code is the point.** It creates no labels, sets no
@@ -787,7 +788,17 @@ until that lands. It is checked now because the doctor's job is to report the
 bindings the loop needs, and a check added after the loop is the check that
 never gets added. Same for `label-vocabulary`: the six labels are fixed and
 package-owned, and [`shopfloor-init`](#setup-init) is what creates them — at a
-moment you asked for it, rather than as a side effect of a run.
+moment you asked for it. Nothing in a run has ever created a label, and nothing
+in one ever will: a run's side of the vocabulary stays verify-and-refuse.
+
+**`workflow-unfilled` fails on a workflow `init` just scaffolded, by design.**
+The values it declines to guess — the CI workflow whose completion retriggers
+the loop, the `claude` version to install — are written as `TODO(shopfloor)`
+rather than as a plausible name, and this check is what refuses on them.
+Without it a scaffolded repository reads fully green while its machine edge is
+dead: a `workflow_run` block whose `workflows:` names a sentinel is still
+wired to the event, so `workflow-triggers` passes and the edge fires from
+nothing.
 
 | Variable            | Default                                 | What it points at                            |
 | ------------------- | --------------------------------------- | -------------------------------------------- |
@@ -832,9 +843,9 @@ npx shopfloor-init
 shopfloor init
 
 Will write:
-- create 6 label(s): ready-for-agent, ready-for-human, agent:implement, …
-- create agent/implement/prompt.md
-- create .github/workflows/agent-implement.yml
+- create 6 label(s): ready-for-agent, ready-for-human, agent:implement, … — a transition onto a label that does not exist fails silently.
+- create agent/implement/prompt.md — the run has no prompt to render.
+- create .github/workflows/agent-implement.yml — nothing triggers the loop without it. Merge it to the default branch — a workflow_run trigger fires from nowhere else, so the machine edge stays dead until it is there.
 
 Still yours to fix — this command cannot:
 - repo-secrets: missing: CLAUDE_CODE_OAUTH_TOKEN, AGENT_PAT — set with `gh secret set <NAME>` …
@@ -863,9 +874,11 @@ This work is not done until `pnpm run typecheck && pnpm run test` passes.
 <!-- /shopfloor:environment -->
 ```
 
-The same sentinel names the one thing the workflow scaffold cannot know: which
-CI workflow's completion should retrigger the loop. The edge is written inert
-rather than wired to a guessed name.
+The same sentinel names what the workflow scaffold cannot know: which CI
+workflow's completion should retrigger the loop, and — when no `CLI_VERSION` is
+stated — which `claude` version to install. Each is written inert rather than
+guessed, and `doctor`'s `workflow-unfilled` check refuses on every one of them,
+so a scaffolded workflow cannot read green while an edge of it is dead.
 
 **Four properties worth relying on:**
 
@@ -887,23 +900,29 @@ default`, the same as everywhere else here. It reads the same variables the
   _create_ (`agent/implement/prompt.md`) rather than a check that reports
   unknown.
 
-What it does not do: set secrets, authenticate `gh`, install the CLI, or merge
-the workflow to your default branch. Those are named in the report and left to
-you. The merge gets its own line — `Then, by hand:` — because with no workflow
-on disk `doctor` reports that check as unknown rather than failing, so nothing
-else would tell you that the machine edge stays dead until the file is on the
-default branch.
+What it does not do: set secrets, authenticate `gh`, or merge the workflow to
+your default branch. Those are named in the report and left to you. Every write
+in the plan carries the reason it is there, and the merge rides on the action
+that creates the need for it — with no workflow on disk `doctor` reports that
+check as unknown rather than failing, so nothing else would tell you that the
+machine edge stays dead until the file is on the default branch.
 
 **The scaffolded workflow is a starting point you then own.** It is wired to
 both trigger events, checks out with the PAT, runs the spend gate before the
-runner installs anything, and carries a job condition that filters the label on
-`issues` without filtering `workflow_run` out of existence. Two things in it are
-deliberately inert and marked with the sentinel: which CI workflow's completion
-retriggers the loop, and how a `workflow_run` event resolves to an issue number
-— that second one is the outer loop, which is designed and not shipped.
+runner installs anything, installs the `claude` CLI the harness spawns, and
+carries a job condition that filters the label on `issues` without filtering
+`workflow_run` out of existence. Both `npx` invocations and the CLI install are
+pinned — to the version of this package doing the scaffolding, and to your
+`CLI_VERSION` — so the workflow keeps running what it was written for rather
+than whatever npm published this morning. Three things in it are deliberately
+inert and marked with the sentinel: which CI workflow's completion retriggers
+the loop, the CLI version when you stated none, and how a `workflow_run` event
+resolves to an issue number — that last one is the outer loop, which is
+designed and not shipped.
 
-`runInit()` is the shell and `planInit(input)` the pure decision underneath —
-both exported, so a caller can see what would be written without writing it.
+`runInit()` is the command; `formatInitResult(result)` renders what it did. The
+planner, the scaffold builders, and the project probe are internal — every
+export is a commitment, and nothing outside this package needs them.
 
 ## Module layout
 
@@ -931,17 +950,17 @@ or `review` module has an obvious home:
   shell. It reports; it never fails a run.
 - `src/setup/` — the doctor and the scaffolder: the pure `evaluateSetup` /
   `formatSetupReport` and the read-only `probeSetup` shell, and over them the
-  pure `planInit` / `buildEnvironmentBlock` and the `runInit` shell that is the
-  one thing here that writes to a consumer's repository. It judges and
-  configures a consumer's setup rather than a run.
+  pure `planInit` / `buildEnvironmentBlock` (both internal) and the `runInit`
+  shell that is the one thing here that writes to a consumer's repository. It
+  judges and configures a consumer's setup rather than a run.
 - `src/process/` — what every shell that shells out needs and none of them own:
   the one narrowing of a rejected `execFile` (`asExecFailure`) and the
   `node:child_process` stub their wiring tests share. Internal; nothing here is
   exported from `src/index.ts`.
 
-The package exports the six verbs (`runImplementAgent`, `runPreflight`,
-`runAuthorization`, `postVerifyComment`, `runTrajectoryCheck`, `probeSetup`) and
-`ImplementAgentError`, the
+The package exports the seven verbs (`runImplementAgent`, `runPreflight`,
+`runAuthorization`, `postVerifyComment`, `runTrajectoryCheck`, `probeSetup`,
+`runInit`) and `ImplementAgentError`, the
 documented pure escape hatches (`evaluatePreflight`, `evaluateAuthorization`,
 `buildVerifyComment`,
 `classifyCommand`, `checkTrajectory` with `formatScorecard`, `evaluateIteration`
@@ -949,12 +968,15 @@ documented pure escape hatches (`evaluatePreflight`, `evaluateAuthorization`,
 `formatSetupReport`, and
 `evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
 CI glue can pre-validate a plugin directory without starting a run),
+`formatInitResult` (what a finished `init` did),
 `resolveBundledPluginDir` (where the bundled plugin landed),
 `DEFAULT_RUN_POLICY`, `SPENDING_PERMISSIONS` (the fixed set the spend gate
-judges against), and the input/result types — including
+judges against), `REQUIRED_LABELS` with `LABEL_VOCABULARY`, `PROMPT_TOKENS`,
+the environment-block constants, and the input/result types — including
 `CliVersionStrictness`, the union behind the strictness table above. The
-resolvers, the invocation assembler, and the transcript helpers are internals —
-import from source if you're vendoring, but they aren't API.
+resolvers, the invocation assembler, the transcript helpers, and everything
+`init` decides with (`planInit`, the scaffold builders, the project probe) are
+internals — import from source if you're vendoring, but they aren't API.
 
 ## Tests vs. evals
 

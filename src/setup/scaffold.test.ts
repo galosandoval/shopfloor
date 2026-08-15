@@ -197,4 +197,58 @@ describe('buildWorkflowScaffold', () => {
   it('marks the workflow_run source it cannot determine', () => {
     expect(workflow).toContain(ENVIRONMENT_UNFILLED_SENTINEL)
   })
+
+  it('installs the CLI the harness spawns, rather than assuming it is there', () => {
+    // `spawnClaude` runs `claude` from PATH and nothing else on a fresh runner
+    // puts it there — a workflow without this step fails after checkout.
+    expect(workflow).toContain('npm install -g @anthropic-ai/claude-code@')
+  })
+
+  it('pins the CLI and this package when it is told what they are', () => {
+    const pinned = buildWorkflowScaffold({
+      patSecret: 'AGENT_PAT',
+      promptFile: 'agent/implement/prompt.md',
+      cliVersion: '2.1.220',
+      packageVersion: '0.11.0'
+    })
+    expect(pinned).toContain('@anthropic-ai/claude-code@2.1.220')
+    expect(pinned).toContain('@galosandoval/shopfloor@0.11.0')
+    // The run compares itself against the same pin the job installed.
+    expect(pinned).toContain("CLI_VERSION: '2.1.220'")
+    // The version sentinels are gone; the workflow_run source is not — that
+    // one is a fact about the consumer's pipeline, not about a version.
+    expect(pinned).not.toContain(`claude-code@${ENVIRONMENT_UNFILLED_SENTINEL}`)
+  })
+
+  it('writes the sentinel rather than floating either version', () => {
+    // An unpinned `npx` changes what the loop runs on a schedule nobody set,
+    // and a floating CLI turns `cli-version-pin` into noise.
+    expect(workflow).toContain(
+      `@anthropic-ai/claude-code@${ENVIRONMENT_UNFILLED_SENTINEL}`
+    )
+    expect(workflow).toContain(
+      `@galosandoval/shopfloor@${ENVIRONMENT_UNFILLED_SENTINEL}`
+    )
+  })
+
+  it('is refused by the doctor while anything in it is unfilled', () => {
+    // The whole point of the sentinel: a scaffolded workflow must not read
+    // green. Without this the edge passes `workflow-triggers` and fires from
+    // a workflow name nobody wrote.
+    const failing = evaluateSetup(
+      factsWith({
+        workflow,
+        defaultBranchWorkflowFiles: ['agent-implement.yml']
+      })
+    ).failures.map((failure) => failure.id)
+    expect(failing).toContain('workflow-unfilled')
+
+    const filled = evaluateSetup(
+      factsWith({
+        workflow: workflow.replaceAll(ENVIRONMENT_UNFILLED_SENTINEL, 'x'),
+        defaultBranchWorkflowFiles: ['agent-implement.yml']
+      })
+    ).failures.map((failure) => failure.id)
+    expect(filled).not.toContain('workflow-unfilled')
+  })
 })

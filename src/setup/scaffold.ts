@@ -171,23 +171,46 @@ ${environment}
 `
 }
 
+/** The CLI the harness spawns. Installed by the scaffold, because nothing else does. */
+const CLAUDE_CLI_PACKAGE = '@anthropic-ai/claude-code'
+
+/** This package, as the scaffolded workflow invokes it. */
+const SHOPFLOOR_PACKAGE = '@galosandoval/shopfloor'
+
 /** What the workflow scaffold has to be told, rather than can read for itself. */
 export interface WorkflowScaffoldInput {
   /** The secret holding the PAT — the machine edge is load-bearing on it. */
   patSecret: string
   /** Repository-relative path to the prompt scaffolded alongside this. */
   promptFile: string
+  /**
+   * The `claude` version to install and pin to, if the caller stated one.
+   * Unstated writes the sentinel: a floating install is a version this
+   * package's own `cli-version-pin` check then compares against nothing.
+   */
+  cliVersion?: string
+  /**
+   * The version of this package to invoke, if it could be read — normally the
+   * one doing the scaffolding, so the workflow keeps running against the
+   * harness it was written for rather than against whatever `npx` fetches next.
+   */
+  packageVersion?: string
 }
 
 /**
  * The agent workflow, wired to both admitted trigger events.
  *
- * **The `workflow_run` source is a sentinel, not a guess.** Which CI workflow's
- * completion should retrigger the loop is a fact about the consumer's
- * pipeline, and a plausible-looking wrong name produces an edge that silently
- * never fires — the exact failure this package keeps machine-checkable. So the
- * scaffold names {@link ENVIRONMENT_UNFILLED_SENTINEL} there: inert, and
- * impossible to mistake for a working wire.
+ * **Everything it cannot know is a sentinel, not a guess** — and
+ * `workflow-unfilled` refuses on every one of them, so a scaffolded workflow
+ * cannot read green while an edge of it is dead. There are three: which CI
+ * workflow's completion retriggers the loop (a plausible wrong name is an edge
+ * that silently never fires), which `claude` version to install, and how a
+ * `workflow_run` event resolves to an issue number.
+ *
+ * **Both `npx` invocations and the CLI install are pinned.** A workflow that
+ * fetched the latest of either would change what it runs on a schedule nobody
+ * set, and the `cli-version-pin` check exists precisely because a drifting CLI
+ * is a run that fails in a way the transcript does not explain.
  *
  * The `authorize` step runs before anything is installed, deliberately: a
  * spend gate that runs after the runner's setup has already let the spend
@@ -195,10 +218,17 @@ export interface WorkflowScaffoldInput {
  */
 export function buildWorkflowScaffold(input: WorkflowScaffoldInput): string {
   const pat = `\${{ secrets.${input.patSecret} }}`
+  const cliVersion = input.cliVersion ?? ENVIRONMENT_UNFILLED_SENTINEL
+  const shopfloor = input.packageVersion
+    ? `${SHOPFLOOR_PACKAGE}@${input.packageVersion}`
+    : `${SHOPFLOOR_PACKAGE}@${ENVIRONMENT_UNFILLED_SENTINEL}`
   return `name: Agent implement
 
 # Scaffolded by \`shopfloor init\`. The loop's two edges: a human labelling an
 # issue, and CI completing on a branch the agent pushed.
+#
+# This file has to be merged to the default branch: \`workflow_run\` fires from
+# nowhere else, so the machine edge stays dead until it is there.
 on:
   issues:
     types: [labeled]
@@ -230,7 +260,7 @@ jobs:
       - name: Authorize
         env:
           GH_TOKEN: ${pat}
-        run: npx --yes @galosandoval/shopfloor shopfloor-authorize
+        run: npx --yes ${shopfloor} shopfloor-authorize
 
       - uses: actions/checkout@v4
         with:
@@ -243,6 +273,13 @@ jobs:
         with:
           node-version: 20
 
+      # The harness spawns \`claude\` from PATH; nothing else on this runner
+      # installs it. Pinned to the same version CLI_VERSION states below, so
+      # \`cli-version-pin\` compares the run against what this job installed
+      # rather than against whatever npm published this morning.
+      - name: Install the Claude Code CLI
+        run: npm install -g ${CLAUDE_CLI_PACKAGE}@${cliVersion}
+
       # ${ENVIRONMENT_UNFILLED_SENTINEL}: on a workflow_run event there is no
       # \`github.event.issue.number\` — which issue a finished CI run belongs to
       # is the outer loop's question, and the outer loop is designed and not
@@ -253,6 +290,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           GH_TOKEN: ${pat}
           PROMPT_FILE: ${input.promptFile}
-        run: npx --yes @galosandoval/shopfloor shopfloor-implement \${{ github.event.issue.number }}
+          CLI_VERSION: '${cliVersion}'
+        run: npx --yes ${shopfloor} shopfloor-implement \${{ github.event.issue.number }}
 `
 }
