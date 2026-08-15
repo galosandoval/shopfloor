@@ -13,7 +13,9 @@
  */
 
 import { spawn } from 'node:child_process'
+import { StringDecoder } from 'node:string_decoder'
 import { ImplementAgentError } from './implement-error'
+import { createStreamUsageReader, type RunUsage } from '../observability/usage'
 
 /** Which runaway budget ended a run. */
 export type KillReason = 'idle' | 'wall-clock'
@@ -36,6 +38,13 @@ export interface SpawnClaudeResult {
   killedBy: RunawayKill | null
   /** Bounded tail of the CLI's combined stdout/stderr, kept for failure diagnostics. */
   outputTail: string
+  /**
+   * What this spawn spent, read off the `stream-json` on stdout as it arrived
+   * (shopfloor#42). Always present: a run whose stream said nothing reports
+   * zeroes rather than absence, so a caller never has to distinguish "free" from
+   * "unmeasured" — {@link RunUsage.source} is what says which.
+   */
+  usage: RunUsage
 }
 
 export interface SpawnClaudeOptions {
@@ -77,9 +86,14 @@ const GUARDS: Record<KillReason, { label: string; overran: string }> = {
 
 /**
  * Spawns the Claude CLI, piping its output to this process's own
- * stdout/stderr for the caller's job log while both runaway guards watch it.
- * Resolves with the run's exit code and which budget, if any, ended it; throws
+ * stdout/stderr for the caller's job log while both runaway guards watch it and
+ * the usage meter reads the `stream-json` going past. Resolves with the run's
+ * exit code, which budget (if any) ended it, and what it spent; throws
  * {@link ImplementAgentError} only when the CLI never started.
+ *
+ * A killed run still reports its usage, and that is the point of metering the
+ * stream rather than waiting for the CLI's own summary: the runs worth costing
+ * are exactly the ones that did not finish.
  */
 export async function spawnClaude(
   opts: SpawnClaudeOptions
@@ -90,6 +104,35 @@ export async function spawnClaude(
   }
 
   let killedBy: RunawayKill | null = null
+  const usageReader = createStreamUsageReader()
+  // A decoder rather than `chunk.toString()`: a chunk boundary can fall inside
+  // a multi-byte character, and a `usage` line mangled into replacement
+  // characters is a line that silently fails to parse.
+  const decoder = new StringDecoder('utf8')
+
+  /**
+   * Meters one stdout chunk. stdout only — that is where `stream-json` goes,
+   * while stderr is the CLI's own prose. Anything thrown in here is swallowed:
+   * metering is a diagnostic, and a diagnostic must never be what takes down a
+   * run that is otherwise working.
+   */
+  const meterUsage = (chunk: Buffer) => {
+    try {
+      usageReader.push(decoder.write(chunk))
+    } catch {
+      // Nothing to do and nothing to say: the totals just under-report.
+    }
+  }
+
+  /** The spawn's totals, with any bytes the decoder was still holding flushed. */
+  const finalUsage = (): RunUsage => {
+    try {
+      usageReader.push(decoder.end())
+    } catch {
+      // Same trade as above.
+    }
+    return usageReader.usage()
+  }
 
   try {
     const exitCode = await new Promise<number>((resolve, reject) => {
@@ -104,12 +147,18 @@ export async function spawnClaude(
 
       const startedAt = Date.now()
       let lastActivity = startedAt
-      const onOutput = (stream: NodeJS.WriteStream) => (chunk: Buffer) => {
-        stream.write(chunk)
-        captureTail(chunk)
-        lastActivity = Date.now()
-      }
-      child.stdout.on('data', onOutput(process.stdout))
+      const onOutput =
+        (stream: NodeJS.WriteStream, meter?: (chunk: Buffer) => void) =>
+        (chunk: Buffer) => {
+          stream.write(chunk)
+          captureTail(chunk)
+          // Before the metering, and unconditionally: the idle guard reads the
+          // child's output as its heartbeat, so nothing downstream of this line
+          // may decide whether the run looks alive.
+          lastActivity = Date.now()
+          meter?.(chunk)
+        }
+      child.stdout.on('data', onOutput(process.stdout, meterUsage))
       child.stderr.on('data', onOutput(process.stderr))
 
       let graceTimer: NodeJS.Timeout | undefined
@@ -142,7 +191,7 @@ export async function spawnClaude(
         resolve(code ?? 1)
       })
     })
-    return { exitCode, killedBy, outputTail }
+    return { exitCode, killedBy, outputTail, usage: finalUsage() }
   } catch (error) {
     opts.onSpawnError()
     throw new ImplementAgentError(

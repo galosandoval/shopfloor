@@ -49,7 +49,10 @@ describe('evaluateAuthorization', () => {
 
     it('names the actor, the permission they have, and what would unblock them', () => {
       const verdict = evaluateAuthorization(
-        input({ actor: 'drive-by', probe: { answered: true, permission: 'read' } })
+        input({
+          actor: 'drive-by',
+          probe: { answered: true, permission: 'read' }
+        })
       )
 
       if (verdict.authorized) throw new Error('expected a refusal')

@@ -169,6 +169,70 @@ describe('spawnClaude runaway guards', () => {
   })
 })
 
+/**
+ * The metering's own edge cases are `usage.test.ts`'s, over recorded fixtures.
+ * These prove the wiring the unit tests cannot: that a real spawn feeds stdout
+ * to the meter, that stderr is not fed to it, that a killed run still reports,
+ * and that the meter did not take the idle guard's heartbeat away.
+ */
+describe('spawnClaude usage metering', () => {
+  /** Recorded: the terminal `result` event of a `stream-json` session. */
+  const RESULT_LINE =
+    '{"type":"result","subtype":"success","total_cost_usd":0.0776655,"usage":{"input_tokens":2,"cache_creation_input_tokens":6930,"cache_read_input_tokens":16011,"output_tokens":14}}'
+
+  /** A child that writes `text` to the named stream and exits cleanly. */
+  const writes = (stream: 'stdout' | 'stderr', text: string) =>
+    `process.${stream}.write(${JSON.stringify(text)}); process.exit(0)`
+
+  it('totals the stream-json the CLI wrote to stdout', async () => {
+    const result = await run(writes('stdout', `${RESULT_LINE}\n`))
+
+    expect(result.usage).toEqual({
+      inputTokens: 2,
+      outputTokens: 14,
+      cacheCreationInputTokens: 6930,
+      cacheReadInputTokens: 16011,
+      costUsd: 0.0776655,
+      source: 'reported'
+    })
+  })
+
+  it('does not meter stderr, which carries the CLI prose rather than the stream', async () => {
+    const result = await run(writes('stderr', `${RESULT_LINE}\n`))
+
+    expect(result.usage.source).toBe('observed')
+    expect(result.usage.outputTokens).toBe(0)
+  })
+
+  it('reports zeroes rather than nothing for a run that streamed no usage', async () => {
+    const result = await run(writes('stdout', 'not stream-json at all\n'))
+
+    expect(result.usage).toEqual(
+      expect.objectContaining({ outputTokens: 0, source: 'observed' })
+    )
+  })
+
+  it('still reports what a killed run spent before the guard ended it', async () => {
+    const result = await run(
+      `process.stdout.write(${JSON.stringify(`${RESULT_LINE}\n`)}); ${SILENT}`,
+      { idleMs: AFTER_STARTUP_MS }
+    )
+
+    expect(result.killedBy?.reason).toBe('idle')
+    expect(result.usage.outputTokens).toBe(14)
+  })
+
+  it('leaves the idle guard its heartbeat: a streaming run is not killed', async () => {
+    const streaming = `setInterval(() => process.stdout.write(${JSON.stringify(`${RESULT_LINE}\n`)}), 5)`
+    const result = await run(
+      `${streaming}; setTimeout(() => process.exit(0), ${AFTER_STARTUP_MS * 2})`,
+      { idleMs: AFTER_STARTUP_MS }
+    )
+
+    expect(result.killedBy).toBeNull()
+  })
+})
+
 describe('describeRunawayKill', () => {
   it('names the guard and the budget it enforced', () => {
     expect(

@@ -28,8 +28,7 @@
  * reads as a contradiction and is not one.
  */
 export type PermissionProbe =
-  | { answered: true; permission: string }
-  | { answered: false; detail: string }
+  { answered: true; permission: string } | { answered: false; detail: string }
 
 export interface AuthorizationInput {
   /** The GitHub login that triggered the run (`github.actor`). */
