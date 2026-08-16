@@ -90,6 +90,51 @@ export {
   type PromptReadinessVerdict
 } from './guardrails/prompt-readiness'
 
+/**
+ * The issue state machine (shopfloor#45). The vocabulary is API because it is
+ * package-owned and a consumer has to be able to name the labels their own
+ * glue reads; the table and its pure evaluator are API because the outcomes
+ * this package does not yet apply itself — a finished run, an exhausted one —
+ * are applied by that glue, and it should apply the same transition the
+ * harness does rather than a second guess at it. `applyLabelTransition` is the
+ * `gh` shell behind them.
+ */
+export {
+  ENTRY_LABEL,
+  LABEL_VOCABULARY,
+  REQUIRED_LABELS,
+  type LabelDefinition
+} from './issue-state/vocabulary'
+
+export {
+  evaluateLabelTransition,
+  RUN_OUTCOMES,
+  TRANSITION_TABLE,
+  type LabelTransition,
+  type LabelTransitionInput,
+  type RunOutcome,
+  type TransitionRow
+} from './issue-state/transition'
+
+export {
+  applyLabelTransition,
+  type ApplyLabelTransitionInput,
+  type ApplyLabelTransitionResult
+} from './issue-state/apply-transition'
+
+/**
+ * The run's verify-and-refuse side of that vocabulary — pure, and exported
+ * like its sibling guards so a consumer's own tooling can ask the same
+ * question before a run exists. Creating what it finds missing is `init`'s.
+ */
+export {
+  evaluateLabelVocabulary,
+  type LabelVocabularyInput,
+  type LabelVocabularyVerdict
+} from './guardrails/label-vocabulary'
+
+export { runLabelVocabularyCheck } from './guardrails/run-label-vocabulary'
+
 export { resolveBundledPluginDir } from './orchestration/bundled-plugin'
 
 export {
@@ -152,9 +197,6 @@ export {
   ENVIRONMENT_BLOCK_START,
   ENVIRONMENT_UNFILLED_SENTINEL,
   PROMPT_TOKENS,
-  REQUIRED_LABELS,
-  LABEL_VOCABULARY,
-  type LabelDefinition,
   type SetupCheck,
   type SetupCheckId,
   type SetupCheckStatus,

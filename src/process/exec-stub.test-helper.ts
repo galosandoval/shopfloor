@@ -98,6 +98,11 @@ export function execStubModule(): { execFile: unknown } {
   // is what they actually call — without it `promisify` would resolve to
   // stdout alone rather than to `{ stdout, stderr }`. The bare export exists
   // only to fail loudly if a shell ever calls it directly.
+  //
+  // Not extracted for `implement.test.ts` to share, though it hand-rolls the
+  // same symbol: a `vi.mock` factory is hoisted above this file's imports, so
+  // anything imported to build the mocked module is still in its temporal dead
+  // zone when the factory runs. The duplication is what the hoisting costs.
   const execFile = () => {
     throw new Error('this shell only uses the promisified execFile')
   }

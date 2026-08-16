@@ -55,15 +55,15 @@ The single most important structural decision, and the one that arrived last.
 **There are two feedback loops, distinguished by whether the harness can
 generate the signal before it exits.**
 
-|                | Inner loop                                                                        | Outer loop                                                     |
-| -------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Mechanism      | `while` in TypeScript, one process, repeated CLI spawns                           | GitHub event triggers an entirely new run                      |
-| Signal         | anything the harness produces itself — quality gate, typecheck, tests, e2e        | anything that exists only after the PR does — required checks, deploy previews, human review |
-| Cost per turn  | one CLI spawn                                                                     | full runner setup (recipe-chat-v1: install + generate + migrate + seed + playwright ≈ 3–5 min billed) |
-| Counter        | a loop variable                                                                   | derived (§4)                                                   |
-| Bound          | its own budget in `runPolicy`                                                     | the attempt ceiling in `runPolicy` (§4)                        |
-| Concurrency    | impossible by construction                                                        | a real hazard (§7)                                             |
-| Attribution    | not needed                                                                        | required (§6)                                                  |
+|               | Inner loop                                                                 | Outer loop                                                                                            |
+| ------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Mechanism     | `while` in TypeScript, one process, repeated CLI spawns                    | GitHub event triggers an entirely new run                                                             |
+| Signal        | anything the harness produces itself — quality gate, typecheck, tests, e2e | anything that exists only after the PR does — required checks, deploy previews, human review          |
+| Cost per turn | one CLI spawn                                                              | full runner setup (recipe-chat-v1: install + generate + migrate + seed + playwright ≈ 3–5 min billed) |
+| Counter       | a loop variable                                                            | derived (§4)                                                                                          |
+| Bound         | its own budget in `runPolicy`                                              | the attempt ceiling in `runPolicy` (§4)                                                               |
+| Concurrency   | impossible by construction                                                 | a real hazard (§7)                                                                                    |
+| Attribution   | not needed                                                                 | required (§6)                                                                                         |
 
 **The rule: catch it in-process if the harness can generate the signal itself;
 use the event loop only when the signal arrives after exit.**
@@ -139,9 +139,9 @@ that starts an agent run and ends in a GitHub state change.
 
 v1 edges:
 
-| Edge                                          | Kind    | Role                       |
-| --------------------------------------------- | ------- | -------------------------- |
-| `issues.labeled`                              | human   | entry — starts the loop    |
+| Edge                                             | Kind    | Role                     |
+| ------------------------------------------------ | ------- | ------------------------ |
+| `issues.labeled`                                 | human   | entry — starts the loop  |
 | `workflow_run.completed` (`conclusion: failure`) | machine | closure — the outer loop |
 
 The machine edge is what makes it a loop rather than a fan of triggers: it is
@@ -152,7 +152,7 @@ and yields a run id for logs.
 **Deferred, deliberately:** `issue_comment.created` (human steering) and
 `pull_request_review_comment` / `pull_request_review` (review feedback). Both
 are valuable and both need their own instruction-extraction design — what does a
-comment *mean*, which comment, threaded replies — that the machine edge does not.
+comment _mean_, which comment, threaded replies — that the machine edge does not.
 
 **Rejected by the criterion**, and recorded so the omission reads as a decision:
 the paper's §4 phases **Design & Architecture** (no discrete trigger; the paper
@@ -191,8 +191,8 @@ third runaway guard, and it belongs in `runPolicy` beside `idleMinutes` and
 `wallClockMinutes`:
 
 - **idle** catches a stalled agent
-- **wall-clock** catches an agent looping *within* a run
-- **attempt ceiling** catches an agent looping *across* runs
+- **wall-clock** catches an agent looping _within_ a run
+- **attempt ceiling** catches an agent looping _across_ runs
 
 Today the third is uncapped, which makes the most expensive failure mode in the
 system the only one with no guard.
@@ -203,7 +203,7 @@ label or a comment is state the harness writes and must then keep consistent
 across `always()` clears, concurrent runs, and human edits — three ways to
 desync.
 
-**Why not count handoff files.** Counting `.agent/attempts/*` counts *completed*
+**Why not count handoff files.** Counting `.agent/attempts/*` counts _completed_
 attempts. A run killed by the wall-clock guard, or one that crashes before
 writing its handoff, leaves no file — so a file count undercounts on exactly the
 runs the ceiling exists to stop. The guard would be blindest against the
@@ -215,8 +215,8 @@ The ceiling trips into a **distinct** state: `agent:exhausted`, not
 `agent:blocked`, **plus the accumulated handoff trail posted as the comment**.
 
 Preflight-blocked and exhausted are the two failures with the most different
-human responses in the system — *fix the issue's shape* versus *the work is
-harder than specified, or the spec is wrong*. Collapsing them discards the most
+human responses in the system — _fix the issue's shape_ versus _the work is
+harder than specified, or the spec is wrong_. Collapsing them discards the most
 expensive signal the harness produces. The handoff trail is posted because it is
 already written and is already the best account of what went wrong; the
 alternative is a human opening N commits to reconstruct it.
@@ -229,8 +229,8 @@ says attempt N usually got most of the way.
 ## 5. Memory — the handoff artifact
 
 The gap analysis named this twice as unclosed: §3.5 and §5's "What this does not
-close" — *"**Memory**, **examples**, and **tools** remain at zero: every run
-still starts cold and a failed run still teaches the next one nothing."* This is
+close" — _"**Memory**, **examples**, and **tools** remain at zero: every run
+still starts cold and a failed run still teaches the next one nothing."_ This is
 the paper's §3 memory context type.
 
 **It is load-bearing for the outer loop, not a nicety.** Without a handoff,
@@ -248,9 +248,9 @@ is a token incinerator with a stop button.
 Never blended. The next iteration must be able to tell "CI said X" from "the
 last agent believed X."
 
-Pure agent-authorship fails in a way the paper names in §4: *"a fluent output
+Pure agent-authorship fails in a way the paper names in §4: _"a fluent output
 that skipped verification steps is more dangerous than one with a visible
-error."* An agent that just failed is the least reliable narrator of why — a
+error."_ An agent that just failed is the least reliable narrator of why — a
 self-authored postmortem is exactly that fluent-but-wrong artifact. Pure
 harness-authorship throws away the one thing only the agent knows, and that is
 unrecoverable from the transcript at any reasonable cost.
@@ -260,8 +260,8 @@ unrecoverable from the transcript at any reasonable cost.
 `.agent/attempts/<run-id>.md`.
 
 This **deliberately breaks the derive-don't-store rule** §4 just set, and the
-distinction is the justification: the run count is a *fact* and gets derived;
-the handoff is a *synthesis* and cannot be re-derived deterministically —
+distinction is the justification: the run count is a _fact_ and gets derived;
+the handoff is a _synthesis_ and cannot be re-derived deterministically —
 re-deriving would mean re-summarizing the same failure into different prose
 every iteration.
 
@@ -277,7 +277,7 @@ the PR comment stays pinned to the original SHA.
 
 - **Read:** a `{{ATTEMPTS_DIR}}` path placeholder; the agent reads what it needs
   for itself. Not inlined — inlining costs context linearly in attempt count and
-  puts the whole trail in *static* context. The paper §3 calls the static/dynamic
+  puts the whole trail in _static_ context. The paper §3 calls the static/dynamic
   boundary "a first-class architectural decision," and N failed attempts is the
   textbook case for dynamic.
 - **Strip:** all of them on success, at the same point verify screenshots are
@@ -307,7 +307,7 @@ fully-permissioned run against someone else's branch.
 **Commit authorship** (`claude-code[bot]` on the head commit), with the
 `agent/issue-*` **branch prefix as a cheap pre-filter**.
 
-Authorship over branch naming as the *decisive* test because branch naming is a
+Authorship over branch naming as the _decisive_ test because branch naming is a
 convention generated by a `sed` pipeline in consumer YAML — under §2 the harness
 now generates it, but keying the loop on a name is keying it on something a
 consumer can change, while the git identity is set by the harness itself and is
@@ -338,11 +338,11 @@ refuse on uncertainty.
 refusing the run if it cannot**.
 
 The argument for fixing is not consistency — it is that fixed names can be
-*guaranteed*. `gh label create` at startup makes Fact 2 structurally impossible.
+_guaranteed_. `gh label create` at startup makes Fact 2 structurally impossible.
 Configurable names cannot do that: the harness would be validating bindings it
 does not own.
 
-Five labels, both kinds — the harness's own run state (`agent:implement`,
+Six labels, both kinds — the harness's own run state (`agent:implement`,
 `agent:in-progress`, `agent:blocked`, `agent:exhausted`) **and** process
 lifecycle (`ready-for-agent`, `ready-for-human`).
 
@@ -363,10 +363,10 @@ stated grounds that it "deliberately reverses a stated scope decision."
 
 Measured against the live consumer's `agent/implement/prompt.md`, 147 lines:
 
-| Half                      | Share | Content                                                                                                                              |
-| ------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Procedure** (portable)  | ~40%  | RED/GREEN/REFACTOR, quality gate before commit, verify phase, write a PR description                                                  |
-| **Environment** (local)   | ~60%  | `bun run typecheck/lint/format/test`, `bunx prisma migrate dev`, `DATABASE_PRISMA_URL`, Playwright's `webServer`, "the database is already seeded with the user `alice@prisma.io` (one recipe)" |
+| Half                     | Share | Content                                                                                                                                                                                         |
+| ------------------------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Procedure** (portable) | ~40%  | RED/GREEN/REFACTOR, quality gate before commit, verify phase, write a PR description                                                                                                            |
+| **Environment** (local)  | ~60%  | `bun run typecheck/lint/format/test`, `bunx prisma migrate dev`, `DATABASE_PRISMA_URL`, Playwright's `webServer`, "the database is already seeded with the user `alice@prisma.io` (one recipe)" |
 
 A shipped default can carry only the first half.
 
@@ -415,7 +415,7 @@ The paper's §2 is unambiguous: tests and evals **together**, or "it's still
 vibe coding no matter how sophisticated the prompts are." §4 puts trajectory
 evaluation above output evaluation. §5 above quotes that section's own line —
 "a fluent output that skipped verification steps is more dangerous than one
-with a visible error" — but spends it on handoff *authorship* and never builds
+with a visible error" — but spends it on handoff _authorship_ and never builds
 a gate from it.
 
 The machine edge fires on `workflow_run.conclusion: failure`. So the loop's
@@ -424,7 +424,7 @@ to get there exits as a success. Twenty-four decisions and nothing stops it.
 The trajectory checker is relocated in sequencing step 1 and stays advisory,
 exactly as it is in the consumer today.
 
-**Close:** the scorecard becomes a closure condition on the *success* path, not
+**Close:** the scorecard becomes a closure condition on the _success_ path, not
 only a handoff input. A run whose trajectory violates `gate-before-commit` or
 `red-before-green` does not reach `ready-for-human`; it re-enters the loop or
 lands `agent:blocked`. Without that, the automated edge implements
@@ -435,7 +435,7 @@ think → act → observe-what-CI-said, which is not what §5.3 describes.
 §2 prices the one-verb collapse at "roughly a minute of CI." §1's own table
 prices the live consumer's setup at 3–5 minutes billed. But the size is the
 smaller problem: §3 identifies authorization as **the only guardrail whose
-failure mode is financial and adversarial**, and one verb runs it *after*
+failure mode is financial and adversarial**, and one verb runs it _after_
 `bun install`, Prisma generate, and Playwright. On a public repo, an
 unauthorized actor forces full runner setup on every label event. The two-job
 split §2 deletes is the thing currently preventing that.
@@ -553,12 +553,12 @@ it is cheap or ruinous, and none is answered:
 ## 11. Setup — `init` and `doctor`
 
 Not part of the original session; added by the review. The paper makes
-"Configuring the Harness" a phase of the SDLC (§5, *Harness in SDLC* 1), and
+"Configuring the Harness" a phase of the SDLC (§5, _Harness in SDLC_ 1), and
 its blunt conclusion is that **most agent failures are configuration failures**.
 This package has no configuration phase at all.
 
 Count what a consumer must independently get right today, and what this design
-adds: two secrets, one of them a PAT with `workflow` scope; five labels; a
+adds: two secrets, one of them a PAT with `workflow` scope; six labels; a
 323-line workflow; a prompt carrying six exact placeholder tokens plus an
 unfilled environment block; a CLI pin; and after this document, `workflow_run`
 wiring, a concurrency group, and the branch and PR conventions the verb now
@@ -571,7 +571,7 @@ failure shape, replicated.
   after day one. `probeSetup()` gathers facts; `evaluateSetup(facts)` is pure
   and returns a verdict, testable with no mocking. Non-interactive, idempotent,
   safe to run in CI. It checks `gh` auth and PAT scopes, secrets via
-  `gh secret list`, the five labels, `claude --version` against the pin, the
+  `gh secret list`, the six labels, `claude --version` against the pin, the
   prompt's tokens against the six-token table, whether the environment block is
   filled, and whether the workflow is wired to the events §3 admits.
 - **`shopfloor init`** — doctor plus writers, interactive, re-runnable, never a
@@ -599,7 +599,7 @@ verification is what makes it impossible, not the creation.
   source is a second model of state, which is the argument §4 and the
   `--plugin-dir` decision have both already made.
 - **"Unfilled" must be machine-checkable.** The scaffold emits an explicit
-  sentinel, and `runPhase` refuses on it. Refusing on a *missing* value is not
+  sentinel, and `runPhase` refuses on it. Refusing on a _missing_ value is not
   enough — an unrendered `{{TOKEN}}` is currently indistinguishable from prose.
 
 ---
@@ -610,13 +610,13 @@ Three scope lines under "What this package deliberately does not own" change,
 and one new capability class appears. Listed together so they read as decisions
 rather than as drift discovered one at a time.
 
-| Line today                                                                          | Change                                                                                                          |
-| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| "**Prompt content** beyond the harness's invocation defaults — per-consumer"        | Amended: a per-phase skeleton ships as a shim to the skills plugin. Environment content is still never shipped.  |
-| "**Consumer env-var names** — `requiredEnvVars` is caller-stated"                   | Broken as a class: five label names are now package-owned, including two describing the consumer's process.      |
-| "**CI glue and workflow templates** — callers own `$GITHUB_OUTPUT`, exit codes, branch checkout, the PR" | Amended twice: the harness owns branch creation, PR creation, and issue state (§2), and §11 scaffolds a workflow template. Callers keep exit codes and checkout. |
-| _(new)_                                                                             | **The package writes to the consumer's repository** — creating labels, committing handoff files, opening PRs. That capability class did not exist before. |
-| _(new, from §11)_                                                                   | **The package configures the consumer's repository** — an `init`/`doctor` pair that probes and scaffolds setup. Distinct from the row above: that one writes during a run, this one writes when asked. |
+| Line today                                                                                               | Change                                                                                                                                                                                                 |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| "**Prompt content** beyond the harness's invocation defaults — per-consumer"                             | Amended: a per-phase skeleton ships as a shim to the skills plugin. Environment content is still never shipped.                                                                                        |
+| "**Consumer env-var names** — `requiredEnvVars` is caller-stated"                                        | Broken as a class: six label names are now package-owned, including two describing the consumer's process.                                                                                             |
+| "**CI glue and workflow templates** — callers own `$GITHUB_OUTPUT`, exit codes, branch checkout, the PR" | Amended twice: the harness owns branch creation, PR creation, and issue state (§2), and §11 scaffolds a workflow template. Callers keep exit codes and checkout.                                       |
+| _(new)_                                                                                                  | **The package writes to the consumer's repository** — creating labels, committing handoff files, opening PRs. That capability class did not exist before.                                              |
+| _(new, from §11)_                                                                                        | **The package configures the consumer's repository** — an `init`/`doctor` pair that probes and scaffolds setup. Distinct from the row above: that one writes during a run, this one writes when asked. |
 
 The scope boundary narrows in one direction and widens in four. That is worth
 stating in `CLAUDE.md` rather than leaving to be inferred. Note that the

@@ -5,10 +5,10 @@ import {
   evaluateSetup,
   formatSetupReport,
   PROMPT_TOKENS,
-  REQUIRED_LABELS,
   type SetupCheckId,
   type SetupFacts
 } from './setup'
+import { REQUIRED_LABELS } from '../issue-state/vocabulary'
 
 const GOOD_WORKFLOW = `name: Agent implement
 on:

@@ -21,6 +21,7 @@
  */
 
 import { checkCliVersion } from '../guardrails/cli-version'
+import { REQUIRED_LABELS } from '../issue-state/vocabulary'
 import {
   environmentBlockBody,
   firesOn,
@@ -28,68 +29,6 @@ import {
   promptTokensIn,
   type WorkflowTriggers
 } from './parse-facts'
-
-/** One label in the vocabulary, with what GitHub needs to create it. */
-export interface LabelDefinition {
-  name: string
-  /**
-   * What a transition onto it means. Carried rather than left to GitHub's
-   * default of nothing: six bare names in a shared label list is a vocabulary
-   * only the person who created it can read.
-   */
-  description: string
-  /** Six hex digits, no leading `#` — what `gh label create --color` takes. */
-  color: string
-}
-
-/**
- * The label vocabulary the loop transitions over: the harness's own run state,
- * and the process lifecycle either side of it. Fixed rather than configurable
- * — a name the harness does not own is a binding it cannot guarantee, and the
- * missing `ready-for-human` label is the concrete failure that argument came
- * from.
- *
- * The colours are the vocabulary's own shape, not decoration: the two process
- * labels are green and blue, and the four `agent:` run states run from neutral
- * through to red as a run goes wrong.
- */
-export const LABEL_VOCABULARY: readonly LabelDefinition[] = [
-  {
-    name: 'ready-for-agent',
-    description: 'Spec is ready for an agent to implement',
-    color: '0E8A16'
-  },
-  {
-    name: 'ready-for-human',
-    description: 'The agent is done — a human owns the next move',
-    color: '1D76DB'
-  },
-  {
-    name: 'agent:implement',
-    description: 'The implement phase owns this issue',
-    color: 'C5DEF5'
-  },
-  {
-    name: 'agent:in-progress',
-    description: 'A run is in flight — do not start a second one on this issue',
-    color: 'FBCA04'
-  },
-  {
-    name: 'agent:blocked',
-    description: 'A run refused or could not proceed — a human must unblock it',
-    color: 'D93F0B'
-  },
-  {
-    name: 'agent:exhausted',
-    description: 'A run hit its ceiling without passing the gate',
-    color: 'B60205'
-  }
-]
-
-/** The vocabulary by name — what a presence check compares against. */
-export const REQUIRED_LABELS: readonly string[] = LABEL_VOCABULARY.map(
-  (label) => label.name
-)
 
 /**
  * The scope the PAT is load-bearing for. `workflow` is what lets a token write

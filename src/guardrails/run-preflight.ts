@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { applyLabelTransition } from '../issue-state/apply-transition'
+import { ENTRY_LABEL } from '../issue-state/vocabulary'
 import {
   evaluatePreflight,
   parseClosingReferences,
@@ -23,9 +25,10 @@ export interface RunPreflightResult {
  * IO wrapper for the pre-flight refusal gate (ported from recipe-chat-v1's
  * `agent/implement/run-preflight.ts`, #511): gathers the labeled issue's
  * native parent/sub-issue links and the open PRs targeting it via `gh`, asks
- * {@link evaluatePreflight} for a verdict, and on refusal drops the
- * `agent:implement` label for `agent:blocked` and posts an explanatory
- * comment. Callers own any CI-specific glue (e.g. writing a
+ * {@link evaluatePreflight} for a verdict, and on refusal applies the
+ * `refused` row of the issue-state transition table
+ * ({@link applyLabelTransition}) and posts an explanatory comment. Callers own
+ * any CI-specific glue (e.g. writing a
  * `$GITHUB_OUTPUT` line, exiting the job) based on the returned verdict.
  */
 export async function runPreflight(
@@ -34,6 +37,7 @@ export async function runPreflight(
   const issue = await ghJson<{
     parent: { number: number } | null
     subIssues: { totalCount: number }
+    labels: Array<{ name: string }>
   }>([
     'issue',
     'view',
@@ -41,11 +45,15 @@ export async function runPreflight(
     '--repo',
     input.repo,
     '--json',
-    'parent,subIssues'
+    // `labels` rides along on the read the refusal already needed, so the
+    // transition below computes its delta from real labels without a second
+    // round trip.
+    'parent,subIssues,labels'
   ])
 
   const subIssueCount = issue.subIssues?.totalCount ?? 0
   const parentNumber = issue.parent?.number ?? null
+  const currentLabels = (issue.labels ?? []).map((label) => label.name)
 
   // Every open PR in the repo, scanned below for closing keywords that target
   // this issue. GitHub recognises closing keywords in a PR's body.
@@ -81,18 +89,17 @@ export async function runPreflight(
   })
 
   if (verdict.refused) {
-    // Refuse before any work: drop the go/spend label, flag blocked, explain why.
-    await gh([
-      'issue',
-      'edit',
-      input.issueNumber,
-      '--repo',
-      input.repo,
-      '--remove-label',
-      'agent:implement',
-      '--add-label',
-      'agent:blocked'
-    ])
+    // Refuse before any work: move the issue to the state the table gives a
+    // refusal, then explain why. The labels are no longer literals here —
+    // this shell owned the package's first issue-state transition, written as
+    // two strings, and shopfloor#45 moved that decision into the table where
+    // it can be read beside every other transition and changed in one place.
+    const { transition } = await applyLabelTransition({
+      issueNumber: input.issueNumber,
+      repo: input.repo,
+      outcome: 'refused',
+      currentLabels
+    })
     await gh([
       'issue',
       'comment',
@@ -100,11 +107,33 @@ export async function runPreflight(
       '--repo',
       input.repo,
       '--body',
-      `\`agent:implement\` refused before starting.\n\n**Reason:** ${verdict.reason}\n\nFix the above and re-add \`agent:implement\` to retry.`
+      refusalComment(verdict.reason, transition.add)
     ])
   }
 
   return { verdict }
+}
+
+/**
+ * What the refusal tells the human. Every label it names comes from the
+ * vocabulary or from the transition just applied, never from a literal — the
+ * prose used to say "re-add `agent:implement` to retry", which was wrong twice
+ * over: the loop's trigger watches {@link ENTRY_LABEL}, and adding a label the
+ * issue still carries fires no `issues.labeled` event at all. A refusal whose
+ * instructions do not retrigger the run is the same silently-rotted binding
+ * this table exists to eliminate.
+ *
+ * @param added - The labels the transition put on, so the comment states the
+ * state it left behind rather than restating the table from memory.
+ */
+function refusalComment(reason: string, added: string[]): string {
+  const now = added.map((label) => `\`${label}\``).join(' + ')
+  return (
+    `The implement phase refused this issue before starting.\n\n` +
+    `**Reason:** ${reason}\n\n` +
+    `The issue is now labelled ${now}. Fix the above and re-add ` +
+    `\`${ENTRY_LABEL}\` to retry.`
+  )
 }
 
 async function gh(args: string[]): Promise<string> {
