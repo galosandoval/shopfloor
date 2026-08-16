@@ -359,11 +359,11 @@ exhausted — is exported, so the rule can be tested or reused without a run.
 
 #### Pre-spawn preconditions
 
-Four things are settled just before the CLI spawns, so a misconfigured run
+Five things are settled just before the CLI spawns, so a misconfigured run
 costs zero tokens: the `runPolicy.requiredEnvVars` check, the prompt being
-filled in, the plugin directories, and the CLI version. A fifth refuses earlier
-still, while the configuration resolves, because it needs nothing from disk to
-detect: a standards directory.
+filled in, the plugin directories, the label vocabulary, and the CLI version. A
+sixth refuses earlier still, while the configuration resolves, because it needs
+nothing from disk to detect: a standards directory.
 
 **A standards directory — fails the run.** `standardsDir` is gone, and the
 prompt no longer carries a `{{STANDARDS_DIR}}` placeholder to substitute into;
@@ -480,6 +480,34 @@ makes this promise mean something: **a stated plugin adds no automatic code
 execution and no tools outside the command guard.** Plugin content that is only
 prose — skills, subagent definitions, slash commands — is deliberately
 permitted; a headless run never even invokes a slash command.
+
+**The label vocabulary — fails the run.** `gh label list` is read against the
+run's repository, and a repository missing any of [the six labels this package
+owns](#issue-state-and-the-label-vocabulary) **refuses before spawning**,
+naming every one that is absent. It is the only precondition that costs a
+network round trip, so it runs after every local check has had its chance to
+refuse for free.
+
+**It verifies; it never creates.** Creating labels is a durable write to a
+shared human workspace, so it belongs to `npx shopfloor-init`, at a moment you
+asked for it — not to a run that happened to be triggered. Verification is what
+makes the failure below impossible; creation never was.
+
+**This is a new failure mode for an existing setup:** a repository lacking a
+label used to have its transition silently skipped, and now fails the run
+instead. That is the point. In the live consumer, a workflow step swapping
+`ready-for-agent` for `ready-for-human` had failed on _every_ successful run
+since it was written — the label did not exist, and `|| true` swallowed it. A
+transition the pipeline claimed to make had never once happened. Run
+`npx shopfloor-doctor` to see the gap, `npx shopfloor-init` to close it.
+
+An **unreadable** label list refuses too, and says so rather than naming
+labels — `gh` unauthenticated and a repository unconfigured are different
+things to go fix. That is stricter than the doctor, which reports the same fact
+as `unknown` and passes: a diagnostic tolerates its own blind spots, a gate on
+spend does not. Refusing costs one re-run before a token is spent; proceeding
+buys a whole run whose closing transition then fails against a repository
+nobody checked.
 
 **CLI version — warns by default.** The running `claude --version` is read
 before the spawn and returned on the run result as `cliVersion`, so a run's
@@ -623,6 +651,88 @@ if (verdict.refused) {
 
 `evaluatePreflight` is the pure decision function underneath, if you already
 have the sub-issue count / parent number / linking PRs gathered another way.
+
+On a refusal it applies the `refused` row of the transition table below, and
+posts a comment explaining why — naming `ready-for-agent` (exported as
+`ENTRY_LABEL`) as the label to re-add to retry, since that is the one the
+loop's trigger watches and the one the refusal just dropped.
+
+Because it applies a transition, it verifies the label vocabulary first and
+**throws** an `ImplementAgentError` if the repository is missing any of it —
+before reading the issue, and whatever the verdict would have been. That is a
+different failure from a refused verdict: a verdict says this issue must not be
+implemented and is answered by labelling it, and labelling is exactly what an
+unconfigured repository cannot be trusted to do. Run `npx shopfloor-init` to
+create what is missing. `runImplementAgent` makes the same check among its
+preconditions; a job that runs both pays for the probe twice.
+
+### Issue state and the label vocabulary
+
+Six labels, **fixed and package-owned** — the harness's own run state and the
+process lifecycle either side of it:
+
+| Label               | Means                                                        |
+| ------------------- | ------------------------------------------------------------ |
+| `ready-for-agent`   | Spec is ready for an agent to implement                      |
+| `ready-for-human`   | The agent is done — a human owns the next move               |
+| `agent:implement`   | The implement phase owns this issue                          |
+| `agent:in-progress` | A run is in flight — do not start a second one on this issue |
+| `agent:blocked`     | A run refused or could not proceed — a human must unblock it |
+| `agent:exhausted`   | A run hit its ceiling without passing the gate               |
+
+They are not configurable, and that is the one place this package names things
+in your repository. A name the harness does not own is a binding it cannot
+guarantee — it could only ever be validated against a mapping you hold. The
+concrete cost of not owning them is in the precondition above. `npx
+shopfloor-init` creates them; `LABEL_VOCABULARY` carries each one's colour and
+description, and `REQUIRED_LABELS` is just the names.
+
+**The state machine is a table**, one row per run outcome, exported so your CI
+glue applies the same transition the harness does rather than a second guess at
+it:
+
+| Outcome     | Leaves the issue carrying              |
+| ----------- | -------------------------------------- |
+| `started`   | `agent:implement`, `agent:in-progress` |
+| `succeeded` | `ready-for-human`                      |
+| `exhausted` | `agent:exhausted`, `ready-for-human`   |
+| `failed`    | `agent:blocked`, `ready-for-human`     |
+| `refused`   | `agent:blocked`, `ready-for-human`     |
+
+```ts
+import { applyLabelTransition } from '@galosandoval/shopfloor'
+
+await applyLabelTransition({
+  issueNumber: '123',
+  repo: 'galosandoval/recipe-chat',
+  outcome: 'succeeded'
+})
+```
+
+Four properties are worth knowing before you wire it in:
+
+- **Each row is a target, not a list of edits.** The edits are derived against
+  the issue's real labels, so applying the same outcome twice writes nothing
+  the second time, and any starting state — including one a human left by
+  editing labels mid-run — lands correctly.
+- **Only these six labels are ever removed.** Your own labels are untouched.
+- **`ready-for-human` is set by every terminal outcome**, whatever the run
+  produced. It marks whose move it is, not whether the work is good; the
+  `agent:` labels say which kind of attention is wanted. `exhausted` and
+  `failed` stay distinct for the same reason — _the work is harder than
+  specified_ and _something is broken_ are different human responses.
+- **A failed `gh` throws.** It is not swallowed, because swallowing it is the
+  original bug.
+
+`evaluateLabelTransition` is the pure function underneath, and
+`TRANSITION_TABLE` / `RUN_OUTCOMES` are the table and its outcomes if you want
+to render or exhaustively switch on them. `applyLabelTransition` reads the
+issue's current labels itself unless you pass `currentLabels` — pass them if
+you already have them and save a round trip.
+
+Today this package applies exactly one row itself: `refused`, from
+`runPreflight`. The rest are yours to apply, because the caller owns the branch
+and the PR and therefore owns when a run is "done".
 
 ### Command guard
 
@@ -973,9 +1083,14 @@ or `review` module has an obvious home:
   (`evaluateAuthorization` / `runAuthorization` — the spend gate, and the one
   guard that refuses on uncertainty), the command
   policy and its `PreToolUse` hook script, plugin-directory validation, the
-  unfilled-prompt refusal (`evaluatePromptReadiness`), and
+  unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary
+  refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck` — verify and
+  refuse, never create), and
   verify-comment posting (a
   feedback-loop guardrail: posting proof back to the PR).
+- `src/issue-state/` — the label vocabulary and the state machine over it: the
+  pure `evaluateLabelTransition` with its `TRANSITION_TABLE`, and the
+  `applyLabelTransition` shell. The six names are package-owned.
 - `src/observability/` — session transcript capture (for CI-artifact upload),
   and the trajectory checker that grades a finished run over that transcript:
   the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck`
@@ -1004,7 +1119,11 @@ and `evaluatePromptReadiness`, the unfilled-prompt refusal),
 `formatInitResult` (what a finished `init` did),
 `resolveBundledPluginDir` (where the bundled plugin landed),
 `DEFAULT_RUN_POLICY`, `SPENDING_PERMISSIONS` (the fixed set the spend gate
-judges against), `REQUIRED_LABELS` with `LABEL_VOCABULARY`, `PROMPT_TOKENS`,
+judges against), `REQUIRED_LABELS` with `LABEL_VOCABULARY`, the issue-state
+machine (`applyLabelTransition` with the pure `evaluateLabelTransition`,
+`TRANSITION_TABLE`, and `RUN_OUTCOMES`) and the vocabulary check behind the
+precondition (`evaluateLabelVocabulary` with `runLabelVocabularyCheck`),
+`PROMPT_TOKENS`,
 the environment-block constants, and the input/result types — including
 `CliVersionStrictness`, the union behind the strictness table above. The
 resolvers, the invocation assembler, the transcript helpers, and everything

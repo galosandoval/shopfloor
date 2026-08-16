@@ -20,7 +20,8 @@ import {
   routeExecStub
 } from '../process/exec-stub.test-helper'
 import { runInit } from './run-init'
-import { ENVIRONMENT_UNFILLED_SENTINEL, REQUIRED_LABELS } from './setup'
+import { REQUIRED_LABELS } from '../issue-state/vocabulary'
+import { ENVIRONMENT_UNFILLED_SENTINEL } from './setup'
 
 vi.mock('node:child_process', () => execStubModule())
 

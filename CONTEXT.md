@@ -19,18 +19,19 @@ harness concern rather than as a flat file list.
 
 ## Module map
 
-| Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/orchestration/`   | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                   |
-| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the command policy and its `PreToolUse` hook script, verify-comment posting                      |
-| `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                               |
-| `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository |
-| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                         |
-| `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `src/cli.ts`           | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                                                      |
-| `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                                                    |
-| `src/init-cli.ts`      | Thin bin entrypoint (`shopfloor-init`); prints the report and exits non-zero on a **write that failed** — never on the setup it cannot fix, which it names and leaves to the operator                                                                                                                                                                                                                                                                               |
-| `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                                                          |
+| Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/orchestration/`   | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                                                                                    |
+| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting |
+| `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                                                                                                |
+| `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository                                                                  |
+| `src/issue-state/`     | The label vocabulary (`LABEL_VOCABULARY` / `REQUIRED_LABELS`) and the state machine over it: the pure `evaluateLabelTransition` and its `TRANSITION_TABLE`, and the `applyLabelTransition` shell. The names are **package-owned** — see the invariant below                                                                                                                                                                                                                                                                          |
+| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                                                                                          |
+| `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `src/cli.ts`           | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `src/init-cli.ts`      | Thin bin entrypoint (`shopfloor-init`); prints the report and exits non-zero on a **write that failed** — never on the setup it cannot fix, which it names and leaves to the operator                                                                                                                                                                                                                                                                                                                                                |
+| `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                                                                                                                           |
 
 ## Pure core, IO shell
 
@@ -43,7 +44,9 @@ decision splits in two:
   `evaluate*` / `check*` / `classify*` / `resolve*` / `prepare*` / `build*`.
 - **A thin shell** — runs the probes (`git`, `gh`, `claude --version`, `fs`),
   hands the raw results to the pure function, acts on the verdict. Named `run*`
-  / `post*`.
+  / `post*` / `apply*` — the last two where the verb says what the side effect
+  _is_ and `run*` would say only that something happened
+  (`postVerifyComment`, `applyLabelTransition`).
 
 The naming tracks what a function _decides_, not which half it sits in. A shell
 that decides nothing and only locates something — `resolveBundledPluginDir`,
@@ -56,21 +59,24 @@ The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `evaluateAuthorization` / `runAuthorization`,
 `evaluatePluginDirs` / `runPluginDirsCheck`, `checkTrajectory` /
 `runTrajectoryCheck`, `evaluateIteration` / `runGate`, `evaluateSetup` /
-`probeSetup`, `planInit` / `runInit`, `checkCliVersion`,
+`probeSetup`, `planInit` / `runInit`, `evaluateLabelTransition` /
+`applyLabelTransition`, `evaluateLabelVocabulary` /
+`runLabelVocabularyCheck`, `checkCliVersion`,
 `evaluatePromptReadiness` and
 `resolveImplementConfig` / `runImplementAgent`.
 
-`probeSetup` is the one shell not named `run*`, and deliberately: it runs
-nothing and decides nothing — it gathers, and every other `run*` in this
-package acts on a verdict.
+`probeSetup` is the one shell that neither runs nor applies anything, and
+deliberately: it gathers and decides nothing, while every `run*` here acts on a
+verdict.
 
 A new module lands in that shape: name the decision, export it as a pure
 function with its own input type, put it in `src/guardrails/` (a decision about
 whether or how a run may proceed), `src/orchestration/` (a decision about what
 to run), `src/observability/` (a judgement about a run that already
-finished — it reports, it does not decide anything the run then obeys), or
+finished — it reports, it does not decide anything the run then obeys),
 `src/setup/` (a judgement about the consumer's configuration, made before any
-run exists), and let
+run exists), or `src/issue-state/` (a decision about what an issue should be
+labeled with next), and let
 the shell own every side effect. The shell should read gather →
 decide → act, with the interesting logic in the middle function rather than
 tangled through the IO.
@@ -115,8 +121,13 @@ every default that can be _stated_ stays in the resolver.
    (`evaluatePromptReadiness`, shopfloor#44), that every plugin directory
    — the bundled one included,
    with no exemption — is a plugin carrying skills and neither hooks nor MCP
-   servers, and the running `claude --version` against the policy's pin.
-   Returns the running version for the run result.
+   servers, that the repository carries the label vocabulary the run's issue
+   transitions are written against (`runLabelVocabularyCheck`, shopfloor#45 —
+   it verifies, it never creates), and the running `claude --version` against
+   the policy's pin.
+   Returns the running version for the run result. The label check is the one
+   that costs a network round trip, so it sits last but one, after every local
+   check has had its chance to refuse for free.
 4. **Probe what's still unstated** — branch and issue title, via lazy `git` /
    `gh` calls in the shell. These run _after_ the preconditions, so a
    misconfigured run never pays for them.
@@ -343,7 +354,53 @@ PR, sandboxing, and any CI glue.
   exists that alternative is gone, so the write happens at a moment a human
   asked for it and the run's side is verify-and-refuse. Nothing in
   `runImplementAgent` has ever created one, so this is the decision being
-  settled rather than code being reverted.
+  settled rather than code being reverted. The refusal is what closes the hole,
+  not the creation: a run that cannot see the six labels never spawns, so a
+  transition onto a label that does not exist is unreachable. It refuses on an
+  **unreadable** label list too, which is stricter than the doctor's `unknown`
+  — the split is the usual one, a diagnostic tolerates its blind spots and a
+  gate on spend does not — and the reason still names unreadable and missing
+  apart, because an unauthenticated `gh` and an unconfigured repository are
+  different things to go fix.
+- **The six label names are package-owned, and that is the one break in the
+  "consumer names are caller-stated" rule.** A name the harness does not own is
+  a binding it cannot guarantee; the concrete cost of not owning them was a
+  `ready-for-human` swap in the live consumer that had never once fired,
+  swallowed by `|| true`, because the label did not exist. Configurable names
+  could only ever be validated against bindings this package does not own.
+- **The transition table is exhaustive over outcomes, and the table is the
+  whole state machine.** `TRANSITION_TABLE` has one row per `RunOutcome` and
+  the type makes a new outcome a compile error rather than a silent
+  fall-through — a state machine whose unhandled case is "leave the labels
+  alone" is how an issue gets stuck in `agent:in-progress` forever. Each row is
+  a **target set**, not a list of edits: the edits are derived against the
+  issue's real labels, which is what makes a transition idempotent and correct
+  from any starting state, including one a human left by editing labels
+  mid-run. Only vocabulary labels are ever removed — a consumer's own labels
+  are outside what this package owns, and clearing them would be enforcing a
+  model of state it does not have. **`ready-for-human` is set by every terminal
+  outcome**, whatever the run produced: it marks whose move it is, not whether
+  the work is good, and the `agent:` labels are what say which kind of
+  attention is wanted. Stated rather than inferred, because inference is how
+  the bash layer got here (design review finding 3).
+- **Every caller of `applyLabelTransition` in this package verifies the
+  vocabulary first.** `runImplementAgent` does it among its preconditions
+  (step 3 above); `runPreflight` does it as its first act, before it reads the
+  issue, because it is a public entry point of its own — `runImplementAgent`
+  never calls it, so it inherits nothing from that run's startup. A shell that
+  applies a row without the check in front of it is the rotted binding
+  shopfloor#45 exists to eliminate, so the two go together. A missing
+  vocabulary **throws** rather than becoming a refused verdict: a verdict says
+  this issue must not be implemented and is answered by labelling it, and
+  labelling is what an unconfigured repository cannot be trusted to do.
+- **The package owns the transition; today it applies exactly one of them.**
+  `runPreflight` applies the `refused` row — the transition this package
+  already owned, previously as two string literals. `started`, `succeeded`,
+  `exhausted`, and `failed` are stated, exported, and applied by the caller's
+  glue via `applyLabelTransition`, because the run does not own the issue's
+  lifecycle: the caller checks out the branch and opens the PR, and the verb
+  that absorbs both (design §2) is not built. What the table buys before then
+  is that the glue applies _the_ transition rather than a second guess at it.
 
 ## Standards in repo, procedures in skills
 

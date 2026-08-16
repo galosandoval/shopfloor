@@ -69,9 +69,15 @@ Each was decided against; don't add them.
   with an install, and a stated `pluginDirs` replaces it outright.
 - **Consumer env-var names** — `requiredEnvVars` is caller-stated, and so are
   the doctor's `requiredSecrets` (with a default naming the two the loop cannot
-  run without). The **label vocabulary is the exception**, and a deliberate one:
-  fixed names can be guaranteed, configurable ones can only be validated
-  against bindings the package does not own (shopfloor#39, design §8).
+  run without). **Broken as a class by #45** (design §11's amendment table):
+  the six label names are package-owned, `ready-for-agent` and
+  `ready-for-human` included — two names describing the _consumer's_ process,
+  not the harness's. Fixed names can be guaranteed; configurable ones can only
+  be validated against bindings the package does not own (shopfloor#39,
+  design §8). Read the break for exactly what it is: a vocabulary the package
+  now owns, verifies, and refuses on, and a state machine written over it —
+  not licence to start naming a consumer's env vars or scripts. Everything
+  else in this bullet still holds.
 - **CI glue** — callers own `$GITHUB_OUTPUT`, exit codes, branch checkout, the
   PR. **Amended by #43**: `init` scaffolds a workflow template wired to the two
   admitted trigger events. It is a starting point a consumer then owns, written

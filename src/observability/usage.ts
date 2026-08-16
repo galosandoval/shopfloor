@@ -188,7 +188,8 @@ export function mergeRunUsage(a: RunUsage, b: RunUsage): RunUsage {
     a.source === 'reported' && b.source === 'reported' ? 'reported' : 'observed'
 
   const costUsd =
-    source === 'observed' || (a.costUsd === undefined && b.costUsd === undefined)
+    source === 'observed' ||
+    (a.costUsd === undefined && b.costUsd === undefined)
       ? undefined
       : (a.costUsd ?? 0) + (b.costUsd ?? 0)
 

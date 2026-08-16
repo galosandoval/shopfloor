@@ -28,12 +28,14 @@ import {
   type ProjectFacts
 } from './scaffold'
 import {
+  LABEL_VOCABULARY,
+  type LabelDefinition
+} from '../issue-state/vocabulary'
+import {
   ENVIRONMENT_BLOCK_END,
   ENVIRONMENT_BLOCK_START,
   ENVIRONMENT_UNFILLED_SENTINEL,
-  LABEL_VOCABULARY,
   onDefaultBranch,
-  type LabelDefinition,
   type SetupCheck,
   type SetupCheckId,
   type SetupFacts,

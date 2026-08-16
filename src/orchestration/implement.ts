@@ -42,6 +42,7 @@ import { checkCliVersion, parseCliVersion } from '../guardrails/cli-version'
 import { evaluatePromptReadiness } from '../guardrails/prompt-readiness'
 import { PROMPT_TOKENS } from '../setup/setup'
 import { runPluginDirsCheck } from '../guardrails/run-plugin-dirs'
+import { runLabelVocabularyCheck } from '../guardrails/run-label-vocabulary'
 import { resolveBundledPluginDir } from './bundled-plugin'
 import { ImplementAgentError } from './implement-error'
 import {
@@ -106,7 +107,7 @@ export async function runImplementAgent(
   // including a stated empty one — "deliberately no plugins at all".
   const pluginDirs = config.pluginDirs ?? [resolveBundledPluginDir()]
 
-  const cliVersion = verifyPreconditions(config, pluginDirs, env, cwd)
+  const cliVersion = await verifyPreconditions(config, pluginDirs, env, cwd)
 
   const branch = config.branch ?? probeBranch(cwd)
   const issueTitle =
@@ -349,7 +350,8 @@ function requireFinishedSpawn(
 /**
  * Everything that must hold before the CLI spawns, so a misconfigured run
  * fails immediately instead of spending tokens on a doomed one: the caller's
- * required env vars, the prompt being filled in, the plugin directories, and
+ * required env vars, the prompt being filled in, the plugin directories, the
+ * label vocabulary the run's issue transitions are written against, and
  * the CLI version. Returns the
  * running CLI version for the run result — the one thing these checks produce
  * rather than merely permit. The removed `standardsDir` refuses earlier still,
@@ -364,12 +366,12 @@ function requireFinishedSpawn(
  * bundled default behind it is a filesystem lookup the pure resolver does not
  * do.
  */
-function verifyPreconditions(
+async function verifyPreconditions(
   config: ResolvedImplementConfig,
   pluginDirs: string[],
   env: Record<string, string | undefined>,
   cwd: string
-): string | undefined {
+): Promise<string | undefined> {
   // Validate the whole contract-required env up front, so a missing var fails
   // immediately naming every offender.
   const missingEnv = findMissingEnvVars(config.runPolicy.requiredEnvVars, env)
@@ -381,7 +383,27 @@ function verifyPreconditions(
 
   requireFilledPrompt(config.promptTemplate)
   requirePluginDirs(pluginDirs, cwd)
+  await requireLabelVocabulary(config.repo, cwd)
   return checkRunningCliVersion(config.runPolicy, cwd)
+}
+
+/**
+ * Refuse before the spawn when the repository does not carry the labels this
+ * run's issue transitions are written against (shopfloor#45). **Verify, never
+ * create:** the write belongs to `shopfloor init`, at a moment a human asked
+ * for it, because creating labels is a durable change to a shared human
+ * workspace that the harness cannot cleanly reverse. Verification is what makes
+ * a transition onto a label that does not exist impossible; creation never was.
+ *
+ * It sits after the local checks and before the CLI probe, so the network round
+ * trip is only spent on a run that is otherwise configured to work.
+ */
+async function requireLabelVocabulary(
+  repo: string | undefined,
+  cwd: string
+): Promise<void> {
+  const verdict = await runLabelVocabularyCheck({ repo, cwd })
+  if (verdict.refused) throw new ImplementAgentError(verdict.reason)
 }
 
 /**

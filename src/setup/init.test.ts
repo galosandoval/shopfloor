@@ -11,7 +11,8 @@
 
 import { planInit, formatInitPlan, type InitInput, type InitPlan } from './init'
 import { buildPromptScaffold, buildWorkflowScaffold } from './scaffold'
-import { evaluateSetup, REQUIRED_LABELS, type SetupFacts } from './setup'
+import { REQUIRED_LABELS } from '../issue-state/vocabulary'
+import { evaluateSetup, type SetupFacts } from './setup'
 
 const PROMPT_FILE = 'agent/implement/prompt.md'
 const WORKFLOW_FILE = '.github/workflows/agent-implement.yml'

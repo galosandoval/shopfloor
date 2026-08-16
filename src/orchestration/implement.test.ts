@@ -21,6 +21,7 @@ import { NO_RUN_USAGE } from '../observability/usage'
 import type { RunImplementAgentConfig } from './config'
 import { WALL_CLOCK_MINUTES_ENV_VAR } from '../guardrails/run-policy'
 import { ENVIRONMENT_UNFILLED_SENTINEL } from '../setup/setup'
+import { REQUIRED_LABELS } from '../issue-state/vocabulary'
 
 // Only the subprocess is stubbed; `describeRunawayKill` is pure, and a stubbed
 // one would let these assert a failure message no run would ever print.
@@ -38,19 +39,42 @@ vi.mock('../observability/transcript', async (importOriginal) => ({
 // Hoisted so the stubs a test reprograms are held as plain `vi.fn()`s: these
 // built-ins are heavily overloaded, and addressing them through `vi.mocked`
 // would mean casting past an overload set to stub one return.
-const { execFileSyncMock, statSyncMock, readFileSyncMock, spawnSyncMock } =
-  vi.hoisted(() => ({
-    execFileSyncMock: vi.fn(),
-    statSyncMock: vi.fn(),
-    readFileSyncMock: vi.fn(),
-    spawnSyncMock: vi.fn()
-  }))
+const {
+  execFileSyncMock,
+  statSyncMock,
+  readFileSyncMock,
+  spawnSyncMock,
+  execFileAsyncMock
+} = vi.hoisted(() => ({
+  execFileSyncMock: vi.fn(),
+  statSyncMock: vi.fn(),
+  readFileSyncMock: vi.fn(),
+  spawnSyncMock: vi.fn(),
+  // The label-vocabulary probe — the only `promisify(execFile)` caller a run
+  // reaches. Its answer is set in `beforeEach`, where `REQUIRED_LABELS` is out
+  // of its temporal dead zone.
+  execFileAsyncMock: vi.fn()
+}))
 
 vi.mock('node:child_process', () => ({
   // The post-run commit count; a fresh mock per test overrides it where the
   // number is what's under test.
   execSync: vi.fn(() => '2\n'),
   execFileSync: execFileSyncMock,
+  // `promisify` reads the custom symbol, so that is what a shell awaiting
+  // `execFile` actually calls; the bare function fails loudly if one ever
+  // calls it directly. This restates `exec-stub.test-helper`'s trick rather
+  // than importing it, and has to: a `vi.mock` factory is hoisted above this
+  // file's imports, so anything imported to build the mocked module is still
+  // in its temporal dead zone when the factory runs. The helper cannot be used
+  // here anyway — this file needs `execSync`/`execFileSync`/`spawnSync` in the
+  // same module object.
+  execFile: Object.assign(
+    () => {
+      throw new Error('runs only use the promisified execFile')
+    },
+    { [Symbol.for('nodejs.util.promisify.custom')]: execFileAsyncMock }
+  ),
   // The quality gate — the only subprocess `runGate` runs. Real `runGate`
   // either way: stubbing it would prove only that a stub was called.
   spawnSync: spawnSyncMock,
@@ -165,7 +189,13 @@ beforeEach(() => {
   // states a list — so a filesystem answering plugin probes is the baseline,
   // not a per-suite arrangement.
   pluginDirsAreValid()
+  repoLabels([...REQUIRED_LABELS])
 })
+
+/** What `gh label list` answers the run's vocabulary check with. */
+function repoLabels(names: string[]) {
+  execFileAsyncMock.mockResolvedValue({ stdout: names.join('\n'), stderr: '' })
+}
 
 describe('runImplementAgent guard wiring', () => {
   it('arms the spawn with the configured wall-clock budget', async () => {
@@ -476,6 +506,57 @@ describe('runImplementAgent plugin-directory precondition', () => {
     await runImplementAgent(baseInput({ pluginDirs: [] }))
 
     expect(armedWith().args).not.toContain('--plugin-dir')
+  })
+})
+
+describe('runImplementAgent label-vocabulary precondition', () => {
+  it('verifies the labels against the stated repository, in the run’s cwd', async () => {
+    await runImplementAgent(
+      baseInput({ repo: 'acme/widgets', cwd: '/repo', env: {} })
+    )
+
+    expect(execFileAsyncMock).toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining(['label', 'list', '--repo', 'acme/widgets']),
+      { cwd: '/repo' }
+    )
+  })
+
+  it('fails before spawning when a label is missing, naming it', async () => {
+    repoLabels(REQUIRED_LABELS.filter((label) => label !== 'ready-for-human'))
+
+    await expect(runImplementAgent(baseInput())).rejects.toThrow(
+      /ready-for-human/
+    )
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
+  })
+
+  it('fails before spawning when the label list cannot be read', async () => {
+    execFileAsyncMock.mockRejectedValue(new Error('gh: command not found'))
+
+    await expect(runImplementAgent(baseInput())).rejects.toThrow(
+      /could not be read/
+    )
+    expect(spawnClaudeMock).not.toHaveBeenCalled()
+  })
+
+  it('creates nothing — verification never writes', async () => {
+    repoLabels([])
+
+    await expect(runImplementAgent(baseInput())).rejects.toThrow(
+      /shopfloor init/
+    )
+    expect(execFileAsyncMock).not.toHaveBeenCalledWith(
+      'gh',
+      expect.arrayContaining(['label', 'create']),
+      expect.anything()
+    )
+  })
+
+  it('ignores the consumer’s own labels', async () => {
+    repoLabels([...REQUIRED_LABELS, 'bug', 'good first issue'])
+
+    await expect(runImplementAgent(baseInput())).resolves.toBeDefined()
   })
 })
 
