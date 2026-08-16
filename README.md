@@ -657,6 +657,15 @@ posts a comment explaining why — naming `ready-for-agent` (exported as
 `ENTRY_LABEL`) as the label to re-add to retry, since that is the one the
 loop's trigger watches and the one the refusal just dropped.
 
+Because it applies a transition, it verifies the label vocabulary first and
+**throws** an `ImplementAgentError` if the repository is missing any of it —
+before reading the issue, and whatever the verdict would have been. That is a
+different failure from a refused verdict: a verdict says this issue must not be
+implemented and is answered by labelling it, and labelling is exactly what an
+unconfigured repository cannot be trusted to do. Run `npx shopfloor-init` to
+create what is missing. `runImplementAgent` makes the same check among its
+preconditions; a job that runs both pays for the probe twice.
+
 ### Issue state and the label vocabulary
 
 Six labels, **fixed and package-owned** — the harness's own run state and the

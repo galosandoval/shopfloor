@@ -18,6 +18,18 @@ missing. This is deliberate. In the live consumer, a workflow step swapping
 since it was written — the label did not exist and `|| true` swallowed it — so
 a transition the pipeline claimed to make had never once happened.
 
+`runPreflight` fails the same way, and for the same reason: it applies the
+`refused` row, and it is a public entry point `runImplementAgent` never calls,
+so a job running it as its own CI step inherits none of the run's startup
+checks. It now verifies the vocabulary as its first act — before it reads the
+issue — and **throws** `ImplementAgentError` rather than returning a refused
+verdict. The two are different failures: a verdict says the issue must not be
+implemented and is answered by labelling it, which is exactly the write an
+unconfigured repository cannot be trusted with. If you call `runPreflight`
+against a repository lacking a label, expect a throw where you previously got a
+verdict — and previously got a label transition that silently did not happen.
+A job running preflight and the run pays for the `gh label list` probe twice.
+
 The check **verifies and never creates**: creating labels is a durable write to
 a shared human workspace, and it stays with `init`, at a moment a human asked
 for it. It is the last precondition before the CLI probe, so every local check

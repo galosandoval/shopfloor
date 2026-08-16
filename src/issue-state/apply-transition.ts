@@ -45,10 +45,11 @@ export interface ApplyLabelTransitionResult {
  *
  * It does not swallow a `gh` failure. The step this replaces ended in
  * `|| true`, and that is precisely how a transition onto a label that did not
- * exist went unnoticed for the life of the pipeline; the run's own startup
- * verification (`runLabelVocabularyCheck`) is what makes that failure
- * unreachable, and a thrown error is what keeps it that way if it ever becomes
- * reachable again.
+ * exist went unnoticed for the life of the pipeline. `runLabelVocabularyCheck`
+ * ahead of every in-package caller (`runImplementAgent`'s preconditions,
+ * `runPreflight`'s first act) is what makes that failure unreachable from this
+ * package; a thrown error is what keeps it visible from a consumer's own glue,
+ * which calls this with no such check in front of it.
  */
 export async function applyLabelTransition(
   input: ApplyLabelTransitionInput

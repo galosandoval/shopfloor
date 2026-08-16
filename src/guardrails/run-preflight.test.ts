@@ -6,6 +6,7 @@
  * `preflight.test.ts`.
  */
 
+import { REQUIRED_LABELS } from '../issue-state/vocabulary'
 import {
   calls,
   execStubModule,
@@ -16,16 +17,30 @@ import { runPreflight } from './run-preflight'
 
 vi.mock('node:child_process', () => execStubModule())
 
-/** A leaf issue with no open PR — the shape preflight admits. */
+/**
+ * A leaf issue with no open PR — the shape preflight admits — in a repository
+ * carrying the whole vocabulary, which is what the shell now checks first.
+ * `repoLabels` narrows that to test the refusal.
+ */
 function stubIssue(
   overrides: {
     subIssues?: number
     parent?: number | null
     labels?: string[]
+    repoLabels?: string[] | 'unreadable'
   } = {}
 ): void {
   resetExecStub({ stdout: '' })
   routeExecStub([
+    {
+      match: /label list/,
+      response:
+        overrides.repoLabels === 'unreadable'
+          ? { fails: 1 }
+          : {
+              stdout: (overrides.repoLabels ?? REQUIRED_LABELS).join('\n')
+            }
+    },
     {
       match: /issue view/,
       response: {
@@ -48,13 +63,50 @@ function stubIssue(
 const editCall = () =>
   calls.find((call) => call[1] === 'issue' && call[2] === 'edit')
 
+const viewCall = () =>
+  calls.find((call) => call[1] === 'issue' && call[2] === 'view')
+
 describe('runPreflight', () => {
   it('reads the issue’s labels on the call it already makes', async () => {
     stubIssue()
 
     await runPreflight({ issueNumber: '45', repo: 'acme/widgets' })
 
-    expect(calls[0]).toContain('parent,subIssues,labels')
+    expect(viewCall()).toContain('parent,subIssues,labels')
+  })
+
+  it('verifies the label vocabulary before it does anything else', async () => {
+    stubIssue()
+
+    await runPreflight({ issueNumber: '45', repo: 'acme/widgets' })
+
+    // First act, not merely somewhere: the point is that nothing this shell
+    // does — least of all the transition — runs against a repository whose
+    // vocabulary was never checked.
+    expect(calls[0]).toEqual(
+      expect.arrayContaining(['gh', 'label', 'list', '--repo', 'acme/widgets'])
+    )
+  })
+
+  it('refuses, naming the missing labels, and writes nothing', async () => {
+    stubIssue({ subIssues: 3, repoLabels: ['ready-for-agent'] })
+
+    await expect(
+      runPreflight({ issueNumber: '45', repo: 'acme/widgets' })
+    ).rejects.toThrow(/ready-for-human/)
+
+    // The refusal would otherwise have transitioned the issue onto labels the
+    // repository does not have — the failure shopfloor#45 exists to prevent.
+    expect(editCall()).toBeUndefined()
+    expect(viewCall()).toBeUndefined()
+  })
+
+  it('refuses when the repository’s labels cannot be read at all', async () => {
+    stubIssue({ repoLabels: 'unreadable' })
+
+    await expect(
+      runPreflight({ issueNumber: '45', repo: 'acme/widgets' })
+    ).rejects.toThrow(/could not be read/)
   })
 
   it('writes nothing when the issue is admitted', async () => {

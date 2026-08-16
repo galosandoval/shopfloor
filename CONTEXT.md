@@ -383,6 +383,16 @@ PR, sandboxing, and any CI glue.
   the work is good, and the `agent:` labels are what say which kind of
   attention is wanted. Stated rather than inferred, because inference is how
   the bash layer got here (design review finding 3).
+- **Every caller of `applyLabelTransition` in this package verifies the
+  vocabulary first.** `runImplementAgent` does it among its preconditions
+  (step 3 above); `runPreflight` does it as its first act, before it reads the
+  issue, because it is a public entry point of its own — `runImplementAgent`
+  never calls it, so it inherits nothing from that run's startup. A shell that
+  applies a row without the check in front of it is the rotted binding
+  shopfloor#45 exists to eliminate, so the two go together. A missing
+  vocabulary **throws** rather than becoming a refused verdict: a verdict says
+  this issue must not be implemented and is answered by labelling it, and
+  labelling is what an unconfigured repository cannot be trusted to do.
 - **The package owns the transition; today it applies exactly one of them.**
   `runPreflight` applies the `refused` row — the transition this package
   already owned, previously as two string literals. `started`, `succeeded`,

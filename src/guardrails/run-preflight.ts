@@ -2,12 +2,14 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { applyLabelTransition } from '../issue-state/apply-transition'
 import { ENTRY_LABEL } from '../issue-state/vocabulary'
+import { ImplementAgentError } from '../orchestration/implement-error'
 import {
   evaluatePreflight,
   parseClosingReferences,
   type LinkingPullRequest,
   type PreflightVerdict
 } from './preflight'
+import { runLabelVocabularyCheck } from './run-label-vocabulary'
 
 const execFileAsync = promisify(execFile)
 
@@ -30,10 +32,14 @@ export interface RunPreflightResult {
  * ({@link applyLabelTransition}) and posts an explanatory comment. Callers own
  * any CI-specific glue (e.g. writing a
  * `$GITHUB_OUTPUT` line, exiting the job) based on the returned verdict.
+ *
+ * It verifies the label vocabulary first — see {@link requireLabelVocabulary}.
  */
 export async function runPreflight(
   input: RunPreflightInput
 ): Promise<RunPreflightResult> {
+  await requireLabelVocabulary(input.repo)
+
   const issue = await ghJson<{
     parent: { number: number } | null
     subIssues: { totalCount: number }
@@ -112,6 +118,32 @@ export async function runPreflight(
   }
 
   return { verdict }
+}
+
+/**
+ * Refuse before any of this shell's own work when the repository does not carry
+ * the labels the transition below is written against (shopfloor#45).
+ *
+ * `runPreflight` is a public entry point in its own right — `runImplementAgent`
+ * never calls it, and a CI job runs it as its own step — so it does not inherit
+ * the run's startup verification. Without this, the one transition the package
+ * applies today would be applied from the one path that skipped the check that
+ * makes applying it safe: exactly the rotted binding this table exists to
+ * eliminate, on exactly the code that used to carry the label literals.
+ *
+ * It throws rather than returning a refused {@link PreflightVerdict}, because
+ * the two say different things. A verdict means *this issue* must not be
+ * implemented, and the caller answers it by labelling the issue — which is the
+ * write that cannot be trusted here. A missing vocabulary is the repository
+ * being unconfigured; there is nothing to label, and the job should fail
+ * naming what to run.
+ *
+ * `gh` infers nothing from the checkout here: `repo` is stated, so the probe's
+ * `cwd` only decides where `gh` runs.
+ */
+async function requireLabelVocabulary(repo: string): Promise<void> {
+  const verdict = await runLabelVocabularyCheck({ repo, cwd: process.cwd() })
+  if (verdict.refused) throw new ImplementAgentError(verdict.reason)
 }
 
 /**
