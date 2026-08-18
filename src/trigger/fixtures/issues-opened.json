@@ -1,0 +1,18 @@
+{
+  "action": "opened",
+  "issue": {
+    "number": 47,
+    "title": "Something a human just filed",
+    "state": "open",
+    "user": { "login": "someone-else", "type": "User" },
+    "labels": []
+  },
+  "repository": {
+    "id": 900000001,
+    "name": "shopfloor",
+    "full_name": "galosandoval/shopfloor",
+    "default_branch": "main",
+    "owner": { "login": "galosandoval", "type": "User" }
+  },
+  "sender": { "login": "someone-else", "type": "User" }
+}

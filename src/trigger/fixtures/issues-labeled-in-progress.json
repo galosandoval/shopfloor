@@ -1,0 +1,23 @@
+{
+  "action": "labeled",
+  "issue": {
+    "number": 46,
+    "title": "classifyTrigger + the setup-free admission callable",
+    "state": "open",
+    "user": { "login": "galosandoval", "type": "User" },
+    "labels": [
+      { "id": 1, "name": "ready-for-agent", "color": "0E8A16" },
+      { "id": 2, "name": "agent:implement", "color": "C5DEF5" },
+      { "id": 3, "name": "agent:in-progress", "color": "FBCA04" }
+    ]
+  },
+  "label": { "id": 3, "name": "agent:in-progress", "color": "FBCA04" },
+  "repository": {
+    "id": 900000001,
+    "name": "shopfloor",
+    "full_name": "galosandoval/shopfloor",
+    "default_branch": "main",
+    "owner": { "login": "galosandoval", "type": "User" }
+  },
+  "sender": { "login": "github-actions[bot]", "type": "Bot" }
+}

@@ -551,6 +551,155 @@ branch, repository, and commit come from the runner's own `GITHUB_*`
 variables, so a workflow step restates none of them. A failed run writes its
 reason to `failure_reason.txt` under `OUTPUT_DIR` and exits non-zero.
 
+### Trigger classification and admission
+
+Which webhook event starts which phase, on whose behalf, and whether it may
+start at all. Pass the **raw webhook payload** — the contents of
+`$GITHUB_EVENT_PATH`, undestructured — and the answer is a typed verdict rather
+than a stack of `if:` expressions:
+
+```ts
+import { classifyTrigger } from '@galosandoval/shopfloor'
+
+const classification = classifyTrigger(JSON.parse(eventJson))
+// { triggered: true, phase: 'implement', edge: 'human',
+//   issueNumber: 46, actor: 'octocat', repo: 'you/your-repo' }
+```
+
+Two edges are admitted:
+
+| Event                                               | Edge      | Keyed on                                       |
+| --------------------------------------------------- | --------- | ---------------------------------------------- |
+| `issues.labeled` with `ready-for-agent`             | `human`   | the **added** label, not the issue's label set |
+| `workflow_run.completed` with `conclusion: failure` | `machine` | a `head_branch` of `agent/issue-<n>`           |
+
+Everything else — a different label, a green CI run, a branch the harness does
+not own, a payload that will not parse — is `{ triggered: false, reason }`. That
+is the common case, not an error: every label anyone adds to any issue reaches
+this function, and it never throws on one.
+
+The human edge is keyed on the _added_ label deliberately. The harness adds
+labels of its own (`agent:in-progress` when a run starts), and each of those
+fires `issues.labeled` again — a trigger reading the issue's label set instead
+of the addition would restart itself. The phase comes from an `agent:<phase>`
+label on the issue, falling back to `implement`, the only phase that ships.
+
+The machine edge reads the issue number out of the branch, which is the only
+place a finished CI run says which issue it belongs to. `agentBranchForIssue`
+and `issueNumberFromBranch` are exported, because your glue and this package
+have to name the same branch and two conventions that agree by eye are the
+binding this design exists to eliminate. Design §6's decisive attribution test —
+was the head commit the agent's — belongs to the outer loop and is deliberately
+not here; what ships is the cheap branch pre-filter it pairs with.
+
+#### The admission callable
+
+Classification, authorization, the concurrency check, and the attempt ceiling,
+composed into one verdict — and shipped as its own bin so a job with **nothing
+installed** runs it first:
+
+```yaml
+jobs:
+  admit:
+    runs-on: ubuntu-latest
+    outputs:
+      verdict: ${{ steps.admit.outputs.verdict }}
+    steps:
+      # No checkout, no toolchain, no install. GITHUB_EVENT_PATH comes from
+      # the runner.
+      - id: admit
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT }}
+        # The assignment runs first and on its own, so a non-zero refusal fails
+        # this step under the default `bash -e`. Writing the output inside the
+        # `echo` instead would make the step's status `echo`'s, swallowing every
+        # refusal the exit code is there to carry.
+        run: |
+          verdict="$(npx -y @galosandoval/shopfloor@<version> shopfloor-admit)"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+
+  implement:
+    needs: admit
+    if: fromJSON(needs.admit.outputs.verdict).admitted
+    # … the expensive job: checkout, install, browsers, the run itself
+```
+
+The verdict is one line of JSON on **stdout**; the human sentence goes to
+stderr, so stdout stays machine-readable with no flag deciding which mode the
+command is in. `--max-attempts <n>` raises the ceiling.
+
+An admitted verdict carries what the run needs — `phase`, `edge`,
+`issueNumber`, `actor`, `repo`, `branch`, `attempt`, `maxAttempts`, and the
+`permission` that admitted it. A refusal carries a `reason` and one of five
+kinds:
+
+| `refusal`       | Means                                                             |
+| --------------- | ----------------------------------------------------------------- |
+| `not-a-trigger` | Nothing happened — not an event the loop runs on                  |
+| `not-permitted` | The actor may not spend on this repository                        |
+| `undetermined`  | A probe answered nothing usable — refused, not assumed            |
+| `in-flight`     | The issue is labeled `agent:in-progress` — a run is already going |
+| `exhausted`     | The issue has already had its attempts                            |
+
+**The exit code splits, and the split is deliberate.** `not-a-trigger` exits
+zero: it is by far the most common outcome, and painting the repository red for
+events where nothing happened is how a check gets deleted. Every other refusal
+exits non-zero, so a caller who ignores stdout is still stopped by a stranger,
+a broken token, a run in flight, or a spent ceiling.
+
+**It runs the probes in the order that costs least, and skips what it does not
+need.** An event that classifies as nothing spends no subprocess at all; an
+actor who may not spend never costs a run-list call.
+
+**It writes nothing**, on any verdict — the same rule the spend gate follows,
+and for the same reason: a refusal that labelled or commented would hand any
+drive-by triager a way to make the harness write to your repository.
+
+**It refuses on uncertainty**, like the spend gate it wraps and unlike every
+other guard here. An unreadable issue is not "probably no attempts" — it is not
+knowing whether a run is already spending on this issue, or whether the ceiling
+is already spent.
+
+**Both counts are read off the issue, and nothing extra is written to get
+them.** The `started` transition already adds `agent:in-progress`, and GitHub's
+issue timeline keeps every `labeled` event permanently — after the label is
+removed, and after any `always()` clear. So:
+
+- **attempts** = how many times `agent:in-progress` was ever _added_
+  (`gh api repos/…/issues/<n>/timeline`), which counts runs that started,
+  including ones killed before they could clean up;
+- **in flight** = whether `agent:in-progress` is on the issue _now_
+  (`gh issue view <n> --json labels`).
+
+This reverses design §4 and §7, which derived both from `gh run list --branch`.
+That mechanism cannot work: a run triggered by `issues.labeled` — or by
+`workflow_run` — executes on the **default branch**, so its `head_branch` is
+`main` and a list filtered by `agent/issue-<n>` is empty on every real run.
+Derive-don't-store was argued against an alternative that never fires.
+
+**The concurrency check is a narrowing, not a lock.** §7 rejected the label as
+a _lock_, and that stands: a maintainer clearing a stuck `agent:in-progress`
+silently unlocks concurrent spending, and two events landing together can both
+read it absent. The real mutual exclusion is a `concurrency:` group in your
+workflow — the one `shopfloor init` scaffolds already has it. What this adds is
+a cheap check in front of it, on a signal that exists.
+
+For a caller that wants the verdict rather than a process, `runAdmission` is the
+callable and `evaluateAdmission` is the pure decision underneath, over facts you
+gathered yourself:
+
+```ts
+import { runAdmission } from '@galosandoval/shopfloor'
+
+const verdict = await runAdmission({ maxAttempts: 5 })
+if (verdict.admitted) {
+  await runImplementAgent({ issueNumber: verdict.issueNumber, promptTemplate })
+}
+```
+
+`shopfloor-authorize` is unchanged and still ships: it is the spend gate alone,
+for a caller that wants the permission question answered without the rest.
+
 ### Authorization — the spend gate
 
 On a public repository, anyone who can add a label can start a run that spends
@@ -1088,6 +1237,12 @@ or `review` module has an obvious home:
   refuse, never create), and
   verify-comment posting (a
   feedback-loop guardrail: posting proof back to the PR).
+- `src/trigger/` — the trigger boundary: the pure `classifyTrigger` over a raw
+  webhook payload, the `agent/issue-<n>` branch convention both edges read and
+  write, and admission — the pure `evaluateAdmission` and the `runAdmission`
+  shell behind the `shopfloor-admit` bin, which composes classification, the
+  spend gate, the concurrency check, and the attempt ceiling into one verdict a
+  setup-free job can gate on.
 - `src/issue-state/` — the label vocabulary and the state machine over it: the
   pure `evaluateLabelTransition` with its `TRANSITION_TABLE`, and the
   `applyLabelTransition` shell. The six names are package-owned.
@@ -1105,9 +1260,9 @@ or `review` module has an obvious home:
   `node:child_process` stub their wiring tests share. Internal; nothing here is
   exported from `src/index.ts`.
 
-The package exports the seven verbs (`runImplementAgent`, `runPreflight`,
-`runAuthorization`, `postVerifyComment`, `runTrajectoryCheck`, `probeSetup`,
-`runInit`) and `ImplementAgentError`, the
+The package exports the eight verbs (`runImplementAgent`, `runPreflight`,
+`runAuthorization`, `runAdmission`, `postVerifyComment`, `runTrajectoryCheck`,
+`probeSetup`, `runInit`) and `ImplementAgentError`, the
 documented pure escape hatches (`evaluatePreflight`, `evaluateAuthorization`,
 `buildVerifyComment`,
 `classifyCommand`, `checkTrajectory` with `formatScorecard`, `evaluateIteration`
@@ -1115,7 +1270,8 @@ documented pure escape hatches (`evaluatePreflight`, `evaluateAuthorization`,
 `formatSetupReport`, and
 `evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
 CI glue can pre-validate a plugin directory without starting a run —
-and `evaluatePromptReadiness`, the unfilled-prompt refusal),
+and `evaluatePromptReadiness`, the unfilled-prompt refusal, and the trigger
+boundary's `classifyTrigger` and `evaluateAdmission`),
 `formatInitResult` (what a finished `init` did),
 `resolveBundledPluginDir` (where the bundled plugin landed),
 `DEFAULT_RUN_POLICY`, `SPENDING_PERMISSIONS` (the fixed set the spend gate
@@ -1124,7 +1280,9 @@ machine (`applyLabelTransition` with the pure `evaluateLabelTransition`,
 `TRANSITION_TABLE`, and `RUN_OUTCOMES`) and the vocabulary check behind the
 precondition (`evaluateLabelVocabulary` with `runLabelVocabularyCheck`),
 `PROMPT_TOKENS`,
-the environment-block constants, and the input/result types — including
+the environment-block constants, the branch convention
+(`agentBranchForIssue`, `issueNumberFromBranch`, `AGENT_BRANCH_PREFIX`) and
+`PHASES` with `DEFAULT_MAX_ATTEMPTS`, and the input/result types — including
 `CliVersionStrictness`, the union behind the strictness table above. The
 resolvers, the invocation assembler, the transcript helpers, and everything
 `init` decides with (`planInit`, the scaffold builders, the project probe) are

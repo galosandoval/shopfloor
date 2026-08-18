@@ -37,3 +37,18 @@ export function asExecFailure(error: unknown): ExecFailure {
     stderr: typeof failure.stderr === 'string' ? failure.stderr : ''
   }
 }
+
+/**
+ * The one line of a subprocess failure worth reporting: `gh`'s own first line
+ * of complaint, falling back to `fallback` when it said nothing — a binary that
+ * was never found writes no stderr at all.
+ *
+ * Extracted once two shells needed it (`docs/typescript-style.md`: only extract
+ * to a separate file when it is reused). Both are `gh` probes whose refusal
+ * quotes what `gh` said, and a second copy is a second idea of what counts as
+ * "what it said".
+ */
+export function describeExecFailure(error: unknown, fallback: string): string {
+  const { stderr } = asExecFailure(error)
+  return stderr.trim().split('\n')[0]?.trim() || fallback
+}

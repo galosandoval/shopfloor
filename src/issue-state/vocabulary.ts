@@ -86,3 +86,14 @@ export const REQUIRED_LABELS: readonly string[] = LABEL_VOCABULARY.map(
  * on an *add*, so "re-add this to retry" is only true of this one.
  */
 export const ENTRY_LABEL = 'ready-for-agent'
+
+/**
+ * The label a run wears while it is in flight, and therefore the one the outer
+ * loop's two guards are read off (shopfloor#46): its **presence** says a run is
+ * going, and the count of times it was ever *added* — which GitHub's issue
+ * timeline keeps even after the label is removed — is how many attempts the
+ * issue has had. Named on its own for the reason {@link ENTRY_LABEL} is: a
+ * guard that reads a label by string literal is the rotted binding this
+ * vocabulary exists to eliminate.
+ */
+export const IN_PROGRESS_LABEL = 'agent:in-progress'
