@@ -1,4 +1,5 @@
 import { classifyCommand } from '../guardrails/command-policy'
+import { asRecord } from '../json/record'
 
 /**
  * The deterministic trajectory checker: parsed transcript events in, findings
@@ -146,12 +147,6 @@ interface NormalizedTrajectory {
   evaluable: boolean
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null
-}
-
 function contentBlocks(
   event: Record<string, unknown>
 ): Record<string, unknown>[] {
@@ -160,7 +155,7 @@ function contentBlocks(
   if (!Array.isArray(content)) return []
   return content
     .map(asRecord)
-    .filter((block): block is Record<string, unknown> => block !== null)
+    .filter((block): block is Record<string, unknown> => block !== undefined)
 }
 
 /**

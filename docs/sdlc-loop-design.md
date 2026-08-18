@@ -186,6 +186,17 @@ first guard in the package that refuses on uncertainty, and it is deliberate.**
 A stateless event loop has no natural termination: agent pushes → CI red →
 retrigger → pushes → CI red, forever. Something must count.
 
+> **Amended by shopfloor#46.** The mechanism below — `gh run list --branch` —
+> was implemented and does not work: a run triggered by `issues.labeled` or
+> `workflow_run` executes on the **default branch**, so its `head_branch` is
+> `main` and a list filtered by `agent/issue-<n>` is empty on every real run.
+> The count now comes from the issue timeline's permanent `labeled` events for
+> `agent:in-progress`, which no later edit or `always()` clear can rewrite. The
+> derived-don't-store principle below still holds and is what the replacement
+> satisfies — the timeline is read, not written. `DEFAULT_MAX_ATTEMPTS` also
+> lives with the admission callable rather than in `runPolicy`, since admission
+> runs before any consumer config is installed. See `src/trigger/admission.ts`.
+
 **The count is derived, never stored** — `gh run list --branch`. This is the
 third runaway guard, and it belongs in `runPolicy` beside `idleMinutes` and
 `wallClockMinutes`:
@@ -319,6 +330,16 @@ readable straight off the payload.
 
 The machine edge makes this a live hazard rather than a theoretical one: a CI
 failure can land while a run is still in flight.
+
+> **Amended by shopfloor#46, and this settles review finding 5.** The
+> `gh run list` mechanism cannot fire (see §4's amendment), so the in-flight
+> check reads the `agent:in-progress` label instead. The rejection below stands
+> **unchanged for the label as a _lock_**: what shipped is a cheap narrowing in
+> front of the real mutual exclusion, not a replacement for it. GitHub's actual
+> lock is the `concurrency:` group in the consumer's workflow, which the
+> scaffolded template carries and which stays there. Two events landing
+> together can still both read the label absent; the narrowing closes the
+> common window, not the race.
 
 **Derived, from the same `gh run list` call the ceiling already makes.** One
 call on the critical path answers both "how many attempts" and "is one in

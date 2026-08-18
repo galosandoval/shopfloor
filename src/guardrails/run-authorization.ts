@@ -95,7 +95,10 @@ async function probePermission(
   } catch (error) {
     return {
       answered: false,
-      detail: describeExecFailure(error, 'the permission probe failed')
+      detail: describeExecFailure(
+        error,
+        'the permission probe failed — is gh installed?'
+      )
     }
   }
 }

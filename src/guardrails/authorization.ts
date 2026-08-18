@@ -98,8 +98,20 @@ function isKnownPermission(value: string): value is KnownPermission {
   return (KNOWN_PERMISSIONS as readonly string[]).includes(value)
 }
 
-/** A GitHub login: alphanumerics and inner hyphens, nothing else. */
-const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/
+/**
+ * A GitHub login: alphanumerics and inner hyphens, optionally carrying the
+ * `[bot]` suffix an App's login ends in.
+ *
+ * **The suffix is admitted so the machine edge gets a probed answer rather than
+ * an unread one.** `workflow_run.triggering_actor` on the loop's own edge is
+ * frequently `github-actions[bot]`, and rejecting the shape here refused it
+ * with `"…[bot]" is not a GitHub login` — a claim that is simply false. The
+ * collaborators endpoint answers for these logins (`permission: "none"`, no
+ * `role_name`), so the refusal is now a read permission rather than an unread
+ * probe. It is still a refusal: whether a bot may spend is a question about
+ * commit authorship (design §6), not about its collaborator permission.
+ */
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/
 
 /**
  * `owner/repo`, each half a name GitHub would accept. The repository half

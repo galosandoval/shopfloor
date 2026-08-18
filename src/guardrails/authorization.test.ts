@@ -166,4 +166,19 @@ describe('isProbeableTarget', () => {
   it('accepts a well-formed login and owner/repo', () => {
     expect(isProbeableTarget('galo-sandoval', 'acme/widgets.js')).toBe(true)
   })
+
+  it('accepts an App login so the machine edge gets a probed answer', () => {
+    // The loop's own edge triggers as a bot. Refusing the shape here made the
+    // reason `"github-actions[bot]" is not a GitHub login`, which is false —
+    // the collaborators endpoint answers for it.
+    expect(isProbeableTarget('github-actions[bot]', 'acme/widgets')).toBe(true)
+    expect(isProbeableTarget('claude-code[bot]', 'acme/widgets')).toBe(true)
+  })
+
+  it('still rejects a bracket shape that is not the [bot] suffix', () => {
+    expect(isProbeableTarget('alice[bot]x', 'acme/widgets')).toBe(false)
+    expect(isProbeableTarget('alice/../octocat[bot]', 'acme/widgets')).toBe(
+      false
+    )
+  })
 })

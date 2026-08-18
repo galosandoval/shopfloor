@@ -133,6 +133,34 @@ describe('runAuthorization', () => {
       authorized: false,
       refusal: 'undetermined'
     })
+    // A binary that was never found writes no stderr, so the reason is the
+    // fallback — and the fallback has to name the cause, or the one refusal a
+    // consumer can fix themselves reads as an unexplained probe failure.
+    if (verdict.authorized) throw new Error('expected a refusal')
+    expect(verdict.reason).toContain('is gh installed?')
+  })
+
+  it('probes a bot login rather than refusing it as malformed', async () => {
+    // `workflow_run.triggering_actor` on the loop's own edge is frequently an
+    // App login. The collaborators endpoint answers for it, so the refusal must
+    // be a read permission, not `"…[bot]" is not a GitHub login`.
+    respondWith({ stdout: 'none' })
+
+    const { verdict } = await runAuthorization({
+      actor: 'github-actions[bot]',
+      repo: 'acme/widgets',
+      env: {}
+    })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toContain(
+      'repos/acme/widgets/collaborators/github-actions[bot]/permission'
+    )
+    expect(calls[0]?.[0]).toBe('gh')
+    expect(verdict).toMatchObject({
+      authorized: false,
+      refusal: 'not-permitted'
+    })
   })
 
   it('refuses without probing when the actor is unresolvable', async () => {

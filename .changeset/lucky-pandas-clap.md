@@ -9,7 +9,7 @@ which destructures the webhook payload before anything typed can see it: which
 event means which phase, and who may start one, could be neither typed nor
 tested. The consumer now passes the **raw payload** and gets a verdict.
 
-**New, all additive — nothing existing changes behaviour:**
+**New:**
 
 - `classifyTrigger(payload)` — pure over the raw webhook payload. Returns the
   phase, issue number, actor, and repo for the two admitted edges
@@ -54,7 +54,17 @@ and two events landing together can both read it absent. Keep the
 `concurrency:` group in your workflow — it is the real mutual exclusion, and
 this does not replace it.
 
-`shopfloor-authorize` is unchanged and still ships. Nothing here is wired into
+**`shopfloor-authorize` changes behaviour in two small ways.** A login ending
+in `[bot]` is now probed rather than refused as malformed: the machine edge
+triggers as an App, and `"github-actions[bot]" is not a GitHub login` was a
+false reason. The endpoint answers for these logins with `permission: "none"`,
+so **a bot actor still refuses** — as `not-permitted` now instead of
+`undetermined`. If you authorize the loop's own retrigger today by some other
+route, nothing changes; if you were relying on the `undetermined` spelling, it
+moved. Separately, a refusal caused by `gh` being missing now says so rather
+than reporting a bare `the permission probe failed`.
+
+`shopfloor-authorize` otherwise still ships unchanged. Nothing here is wired into
 `runImplementAgent`, and `runPhase` — the one verb that would call admission and
 then run — is not built: this is the admission half, shipped first so the spend
 gate never ends up behind the spend.

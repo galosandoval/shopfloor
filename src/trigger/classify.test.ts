@@ -1,10 +1,12 @@
 /**
  * Classification is pure over the payload, so these run over **recorded
  * payloads** rather than over objects shaped the way the code happens to read
- * them. The fixtures in `./fixtures` are real webhook deliveries with the
- * uninteresting halves trimmed; trimming is the only edit, so a field this
- * function reads is a field GitHub actually sends. Nothing is mocked here, and
- * nothing can be — there is no IO to mock.
+ * them. The fixtures in `./fixtures` follow GitHub's documented payload shapes
+ * for `issues` and `workflow_run`, trimmed to the halves this function reads;
+ * the identifiers and shas in them are synthetic, so treat them as a model of
+ * what GitHub sends rather than as proof of it — a field added or renamed
+ * upstream will not show up here. Nothing is mocked, and nothing can be —
+ * there is no IO to mock.
  */
 
 import { REQUIRED_LABELS } from '../issue-state/vocabulary'

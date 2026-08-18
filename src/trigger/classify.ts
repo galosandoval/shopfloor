@@ -22,6 +22,7 @@
  */
 
 import { ENTRY_LABEL } from '../issue-state/vocabulary'
+import { asRecord } from '../json/record'
 import { issueNumberFromBranch } from './branch'
 
 /**
@@ -246,12 +247,6 @@ function repoFrom(event: PayloadRecord): string | undefined {
 }
 
 type PayloadRecord = Record<string, unknown>
-
-function asRecord(value: unknown): PayloadRecord | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as PayloadRecord)
-    : undefined
-}
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
