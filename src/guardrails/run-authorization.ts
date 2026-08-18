@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { asExecFailure } from '../process/exec-failure'
+import { describeExecFailure } from '../process/exec-failure'
 import {
   evaluateAuthorization,
   isProbeableTarget,
@@ -93,12 +93,12 @@ async function probePermission(
     ])
     return { answered: true, permission: stdout }
   } catch (error) {
-    return { answered: false, detail: describeProbeFailure(error) }
+    return {
+      answered: false,
+      detail: describeExecFailure(
+        error,
+        'the permission probe failed — is gh installed?'
+      )
+    }
   }
-}
-
-/** `gh`'s own first line of complaint, which is the line worth reporting. */
-function describeProbeFailure(error: unknown): string {
-  const message = asExecFailure(error).stderr.trim() || String(error)
-  return message.split('\n')[0]?.trim() || 'the permission probe failed'
 }

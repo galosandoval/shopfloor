@@ -1,0 +1,29 @@
+{
+  "action": "completed",
+  "workflow": {
+    "id": 77000001,
+    "name": "Test",
+    "path": ".github/workflows/test.yml"
+  },
+  "workflow_run": {
+    "id": 18234567891,
+    "name": "Test",
+    "run_number": 413,
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "head_branch": "agent/issue-46",
+    "head_sha": "9c2b1d0e7a6f5c4b3a2d1e0f9c8b7a6d5e4f3a21",
+    "html_url": "https://github.com/galosandoval/shopfloor/actions/runs/18234567891",
+    "actor": { "login": "galosandoval", "type": "User" },
+    "triggering_actor": { "login": "galosandoval", "type": "User" }
+  },
+  "repository": {
+    "id": 900000001,
+    "name": "shopfloor",
+    "full_name": "galosandoval/shopfloor",
+    "default_branch": "main",
+    "owner": { "login": "galosandoval", "type": "User" }
+  },
+  "sender": { "login": "galosandoval", "type": "User" }
+}

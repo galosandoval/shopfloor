@@ -21,6 +21,8 @@
  * neither.
  */
 
+import { asRecord } from '../json/record'
+
 /** Token counts in the four buckets the CLI's stream reports them in. */
 export interface TokenUsage {
   inputTokens: number
@@ -325,12 +327,6 @@ function readTokenUsage(value: unknown): TokenUsage | undefined {
 /** A finite number, or undefined for anything else the stream put there. */
 function readNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
 }
 
 /** One JSONL line as an object, or undefined — malformed lines are skipped. */

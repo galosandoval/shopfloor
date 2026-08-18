@@ -25,6 +25,7 @@ harness concern rather than as a flat file list.
 | `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting |
 | `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                                                                                                |
 | `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository                                                                  |
+| `src/trigger/`         | The trigger boundary (shopfloor#46): the pure `classifyTrigger` over a raw webhook payload, the `agent/issue-<n>` branch convention (`agentBranchForIssue` / `issueNumberFromBranch`) both edges read and write, and admission — the pure `evaluateAdmission` and its `runAdmission` shell, which composes classification, the spend gate, the concurrency check, and the attempt ceiling (both read off the issue's own label history) into one verdict a job with nothing installed can gate on                                    |
 | `src/issue-state/`     | The label vocabulary (`LABEL_VOCABULARY` / `REQUIRED_LABELS`) and the state machine over it: the pure `evaluateLabelTransition` and its `TRANSITION_TABLE`, and the `applyLabelTransition` shell. The names are **package-owned** — see the invariant below                                                                                                                                                                                                                                                                          |
 | `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                                                                                          |
 | `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -32,6 +33,7 @@ harness concern rather than as a flat file list.
 | `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `src/init-cli.ts`      | Thin bin entrypoint (`shopfloor-init`); prints the report and exits non-zero on a **write that failed** — never on the setup it cannot fix, which it names and leaves to the operator                                                                                                                                                                                                                                                                                                                                                |
 | `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                                                                                                                           |
+| `src/admit-cli.ts`     | Thin bin entrypoint (`shopfloor-admit`); prints the admission verdict as one line of JSON on stdout and the sentence on stderr. Exits zero on `not-a-trigger` — by far the most common outcome — and non-zero on every other refusal, so a caller who ignores stdout is still stopped by a stranger, a broken token, a run in flight, or a spent ceiling                                                                                                                                                                             |
 
 ## Pure core, IO shell
 
@@ -61,7 +63,8 @@ The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `runTrajectoryCheck`, `evaluateIteration` / `runGate`, `evaluateSetup` /
 `probeSetup`, `planInit` / `runInit`, `evaluateLabelTransition` /
 `applyLabelTransition`, `evaluateLabelVocabulary` /
-`runLabelVocabularyCheck`, `checkCliVersion`,
+`runLabelVocabularyCheck`, `evaluateAdmission` / `runAdmission`,
+`checkCliVersion`, `classifyTrigger`,
 `evaluatePromptReadiness` and
 `resolveImplementConfig` / `runImplementAgent`.
 
@@ -75,8 +78,9 @@ whether or how a run may proceed), `src/orchestration/` (a decision about what
 to run), `src/observability/` (a judgement about a run that already
 finished — it reports, it does not decide anything the run then obeys),
 `src/setup/` (a judgement about the consumer's configuration, made before any
-run exists), or `src/issue-state/` (a decision about what an issue should be
-labeled with next), and let
+run exists), `src/issue-state/` (a decision about what an issue should be
+labeled with next), or `src/trigger/` (a decision about whether an event starts
+a run at all, taken before one exists), and let
 the shell own every side effect. The shell should read gather →
 decide → act, with the interesting logic in the middle function rather than
 tangled through the IO.
@@ -237,6 +241,73 @@ PR, sandboxing, and any CI glue.
   as its own bin (`shopfloor-authorize`) because a spend gate that runs after
   the runner's setup has already let the spend happen (design review finding
   2).
+- **Admission inherits that inversion, and is the second guard to refuse on
+  uncertainty.** `evaluateAdmission` (shopfloor#46) composes the spend gate
+  with two questions that are also about spend — is a run already in flight on
+  this issue, and has the issue already had its attempts — so an unreadable
+  run list refuses. It is not "probably no runs": it is not knowing whether
+  something is already spending, and both unknowns resolve in the expensive
+  direction. It writes nothing on any verdict, for the reason the spend gate
+  writes nothing.
+- **The admission phase exists so the sequencing can be typed without moving
+  the spend gate behind the spend.** Design §2 collapses the public surface
+  into one `runPhase(rawEvent)`; review finding 2 is that one verb runs
+  authorization after `bun install`, Prisma generate, and Playwright, so on a
+  public repository an unauthorized actor forces full runner setup on every
+  label event. Admission is the answer: classification, authorization, the
+  ceiling, and the concurrency check ship as a callable — and the
+  `shopfloor-admit` bin — that a job with **nothing installed but this package
+  and `gh`** runs first. The verb count argument survives; paying before
+  deciding does not. Anything added to admission must keep that property: a
+  probe that needs a checkout or an install belongs in the run, not here.
+- **The ceiling and the concurrency check are read off the issue, which
+  reverses design §4 and §7.** Those sections derive both from
+  `gh run list --branch`, on the reasoning that a label is state the harness
+  must then keep consistent. **That mechanism cannot fire.** A workflow run
+  triggered by `issues.labeled` — or by `workflow_run` — executes on the
+  default branch, so its `head_branch` is `main`, and a list filtered by
+  `agent/issue-<n>` is empty on every real run; checked against the live
+  consumer, where every `issues`-triggered agent run reports
+  `headBranch: main`, and the only per-issue handle on a run is
+  `displayTitle`, the issue title — editable prose. Derive-don't-store was
+  argued against an alternative that never fires, so it loses here. What
+  replaces it writes nothing new: the `started` transition already adds
+  `agent:in-progress`, and GitHub keeps every `labeled` **timeline event**
+  permanently — after the label is removed and after any `always()` clear. So
+  **attempts** is how many times that label was ever added (history no later
+  edit can rewrite, and it counts runs killed before they cleaned up — the
+  blind spot §4 rejected file-counting for), and **in flight** is whether the
+  label is on the issue now. Only the second reads mutable state, and only it
+  can be fooled.
+- **The concurrency check is a narrowing, not a lock** — review finding 5's
+  other half, settled here rather than left open. §7's rejection of the label
+  as a _lock_ stands unchanged and is the reason this is not one: a maintainer
+  clearing a stuck `agent:in-progress` by hand silently unlocks concurrent
+  spending, and two events landing together can both read it absent. The real
+  mutual exclusion is a `concurrency:` group, which lives in consumer YAML and
+  stays there; the scaffolded workflow already carries one. Reading the label
+  is a cheap check in front of that lock, never a replacement for it.
+- **The attempt ceiling lives on admission, not in `runPolicy`.** Design §4
+  puts it "beside `idleMinutes` and `wallClockMinutes`"; it is not there,
+  because admission runs before a run exists and never constructs a run policy.
+  A policy field nothing in a run reads is the wall-clock guard's failure shape
+  — implemented, tested, exported, documented, and never called.
+- **The human edge is keyed on the label that was _added_, never on the issue's
+  label set.** The harness adds labels of its own (`agent:in-progress` at the
+  start of a run), and every one of those fires `issues.labeled` again. A
+  classifier reading the set would restart the run it just started. The
+  classifier also never throws: every label anyone adds to any issue reaches
+  it, and an unrecognized or malformed payload is "not a trigger for us", not
+  an error.
+- **`shopfloor-admit`'s exit code splits where `shopfloor-authorize`'s does
+  not.** That command is the last word on a spend, so every refusal leaves
+  non-zero. Admission is a gate whose _output_ is read, and its most common
+  outcome by far is `not-a-trigger` — painting a repository red for events
+  where nothing happened is how a check gets deleted (the same argument behind
+  the CLI-version check warning by default). So `not-a-trigger` exits zero and
+  every other refusal exits non-zero, which keeps a caller who ignores stdout
+  fail-safe against a stranger, a broken token, a run in flight, or a spent
+  ceiling.
 - **A plugin may add prose, never execution.** A stated plugin directory is
   refused if it ships hooks or MCP servers, from its manifest or from the
   convention directories alike. These runs pass

@@ -69,6 +69,44 @@ export {
   type RunAuthorizationResult
 } from './guardrails/run-authorization'
 
+/**
+ * The trigger boundary (shopfloor#46). `classifyTrigger` is pure over the raw
+ * webhook payload — API for the same reason its sibling escape hatches are: a
+ * consumer's own glue should ask which phase an event starts rather than
+ * re-derive it from `if:` expressions. `evaluateAdmission` composes it with the
+ * spend gate, the concurrency check, and the attempt ceiling; `runAdmission` is
+ * the shell behind it, shipped as the `shopfloor-admit` bin so a job with
+ * nothing installed runs it before the runner spends anything.
+ *
+ * The branch convention is API because both this package and the caller's glue
+ * have to name the same branch, and a second `sed` pipeline agreeing with it by
+ * eye is the binding shape this design keeps eliminating.
+ */
+export {
+  classifyTrigger,
+  PHASES,
+  type Phase,
+  type TriggerClassification,
+  type TriggerEdge
+} from './trigger/classify'
+
+export {
+  evaluateAdmission,
+  DEFAULT_MAX_ATTEMPTS,
+  type AdmissionInput,
+  type AdmissionRefusal,
+  type AdmissionVerdict,
+  type IssueHistoryProbe
+} from './trigger/admission'
+
+export { runAdmission, type RunAdmissionInput } from './trigger/run-admission'
+
+export {
+  agentBranchForIssue,
+  issueNumberFromBranch,
+  AGENT_BRANCH_PREFIX
+} from './trigger/branch'
+
 export {
   evaluatePluginDirs,
   type PluginCapability,
@@ -101,6 +139,7 @@ export {
  */
 export {
   ENTRY_LABEL,
+  IN_PROGRESS_LABEL,
   LABEL_VOCABULARY,
   REQUIRED_LABELS,
   type LabelDefinition
