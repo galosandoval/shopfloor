@@ -1,6 +1,7 @@
 /**
- * The package's public surface: the verbs a consumer calls, the error they
- * throw, the pure escape hatches the README documents (`evaluatePreflight`,
+ * The package's public surface: the verb a consumer calls (`runPhase` — one,
+ * since shopfloor#47), the setup and diagnostic commands beside it, the error
+ * they throw, the pure escape hatches the README documents (`evaluatePreflight`,
  * `buildVerifyComment`, `classifyCommand`, `evaluatePluginDirs`,
  * `checkTrajectory`, `evaluateIteration`, `evaluateSetup`,
  * `evaluateAuthorization`, `evaluatePromptReadiness`), the bundled
@@ -12,10 +13,30 @@
  * as API.
  */
 
+/**
+ * **The verb** (shopfloor#47). One entry point: it classifies the raw webhook
+ * payload, re-checks admission, resolves the phase's prompt, refuses what
+ * preflight refuses, locates or creates the branch and the pull request, runs
+ * the phase, reports, and transitions the issue's state. The four verbs it
+ * replaced — `runImplementAgent`, `runPreflight`, `postVerifyComment`,
+ * `runPluginDirsCheck` — are internals now: the sequencing between them was
+ * the interface, and it used to live in consumer YAML where it could be
+ * neither typed nor tested.
+ *
+ * `DEFAULT_PHASE_PROMPTS` is API because a consumer replacing a phase's prompt
+ * should be able to read the shim they are replacing, rather than guess at
+ * what the harness would otherwise have said.
+ */
 export {
-  runImplementAgent,
-  type RunImplementAgentResult
-} from './orchestration/implement'
+  runPhase,
+  type RunPhaseInput,
+  type RunPhaseResult
+} from './phase/run-phase'
+
+export { DEFAULT_PHASE_PROMPTS } from './phase/prompts'
+
+/** The shape of what a phase's run produces and what it accepts, both reached through `runPhase`. */
+export { type RunImplementAgentResult } from './orchestration/implement'
 
 export { ImplementAgentError } from './orchestration/implement-error'
 
@@ -41,12 +62,6 @@ export {
   type PreflightInput,
   type PreflightVerdict
 } from './guardrails/preflight'
-
-export {
-  runPreflight,
-  type RunPreflightInput,
-  type RunPreflightResult
-} from './guardrails/run-preflight'
 
 /**
  * The spend gate (shopfloor#41), exported as its own callable — and shipped as
@@ -115,8 +130,6 @@ export {
   type PluginDirFacts,
   type PluginDirsVerdict
 } from './guardrails/plugin-dirs'
-
-export { runPluginDirsCheck } from './guardrails/run-plugin-dirs'
 
 /**
  * The unfilled-prompt refusal (shopfloor#44), pure and exported for the same
@@ -188,12 +201,6 @@ export {
   buildVerifyComment,
   type VerifyCommentInput
 } from './guardrails/verify-comment'
-
-export {
-  postVerifyComment,
-  type PostVerifyCommentInput,
-  type PostVerifyCommentResult
-} from './guardrails/post-verify'
 
 export {
   checkTrajectory,

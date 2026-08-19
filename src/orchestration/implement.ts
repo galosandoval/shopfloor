@@ -6,9 +6,12 @@
  * a zero-commit failure check. It is also
  * the IO shell around the pure {@link resolveImplementConfig}: the `git` and
  * `gh` probes that answer what neither the caller nor the environment stated
- * live here. The caller owns everything outside the run itself — checking out
- * the branch, opening the PR, sandboxing (an ephemeral CI runner or a
- * container).
+ * live here.
+ *
+ * **Internal since shopfloor#47.** It is the phase's *run*, reached through
+ * `runPhase`, which owns everything outside the run itself — the branch, the
+ * pull request, and the issue's state. What is still outside both is the
+ * checkout and the sandbox (an ephemeral CI runner or a container).
  */
 
 import * as fs from 'node:fs'
@@ -299,7 +302,11 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
     if (verdict.kind === 'done')
       return { iterations: iteration, transcriptCaptured, usage }
     if (verdict.kind === 'exhausted') {
-      throw new ImplementAgentError(verdict.reason, gate?.outputTail, usage)
+      throw new ImplementAgentError(verdict.reason, gate?.outputTail, usage, {
+        // The one failure the state machine treats as its own outcome — see
+        // `ImplementAgentError.exhausted` and `evaluatePhaseOutcome`.
+        exhausted: true
+      })
     }
 
     // Keep this attempt's transcript before the next spawn overwrites it: a

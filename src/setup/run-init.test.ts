@@ -233,7 +233,7 @@ describe('runInit', () => {
 
     expect(workflow).toContain('@anthropic-ai/claude-code@2.1.220')
     expect(workflow).toMatch(
-      /@galosandoval\/shopfloor@\d+\.\d+\.\d+ shopfloor-implement/
+      /@galosandoval\/shopfloor@\d+\.\d+\.\d+ shopfloor-run-phase/
     )
   })
 

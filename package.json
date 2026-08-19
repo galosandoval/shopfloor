@@ -36,7 +36,7 @@
     }
   },
   "bin": {
-    "shopfloor-implement": "./dist/cli.js",
+    "shopfloor-run-phase": "./dist/run-phase-cli.js",
     "shopfloor-doctor": "./dist/doctor-cli.js",
     "shopfloor-init": "./dist/init-cli.js",
     "shopfloor-authorize": "./dist/authorize-cli.js",
@@ -54,7 +54,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "version:packages": "changeset version",
+    "version:packages": "GITHUB_TOKEN=${GITHUB_TOKEN:-$(gh auth token)} changeset version",
     "release": "changeset publish",
     "prepublishOnly": "npm run build"
   },

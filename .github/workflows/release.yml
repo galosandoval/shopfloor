@@ -9,8 +9,8 @@ on:
 # pull_request-triggered path never holds a write token.
 permissions: {}
 
-# Two pushes to main would otherwise race to open the Version Packages PR and
-# to publish. Never cancel in progress — a half-killed publish is worse.
+# Two pushes to main would otherwise race to publish. Never cancel in progress
+# — a half-killed publish is worse.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -34,17 +34,28 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # A PR with no changeset fails here. A PR that deliberately ships nothing
-      # records an explicit empty changeset (`npx changeset --empty`) to pass.
-      #
-      # The Version Packages PR is exempt: it is the one PR that legitimately
-      # bumps package.json with no changesets left, because consuming them is
-      # exactly what it does. Gating it would make it permanently unmergeable.
-      - name: Check for a changeset
-        if: >-
-          github.event_name == 'pull_request' &&
-          github.head_ref != 'changeset-release/main'
-        run: npx changeset status --since=origin/$BASE_REF
+      # A PR states its release decision in one of two ways, and must do one of
+      # them. Either it carries the version bump — it ran `npm run
+      # version:packages` and committed what that wrote, so merging it
+      # releases — or it carries
+      # unconsumed changesets, including the explicit empty one
+      # (`npx changeset --empty`) that a PR shipping nothing records rather than
+      # leaving "this doesn't release" to be inferred from silence. Unconsumed
+      # changesets are picked up by whichever later PR runs `npm run version:packages`.
+      - name: Check the PR states its release decision
+        if: github.event_name == 'pull_request'
+        run: |
+          set -uo pipefail
+          if git diff "origin/$BASE_REF...HEAD" -- package.json |
+            grep -qE '^\+[[:space:]]*"version":'; then
+            echo "PR bumps the version — merging it releases."
+            exit 0
+          fi
+          if npx changeset status --since="origin/$BASE_REF"; then
+            exit 0
+          fi
+          echo "::error::No release decision. Run \`npx changeset\` (or \`npx changeset --empty\`), or \`npm run version:packages\` to release on merge."
+          exit 1
         env:
           BASE_REF: ${{ github.base_ref }}
 
@@ -54,13 +65,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
       id-token: write # OIDC trusted publishing to npm — no NPM_TOKEN anywhere.
     steps:
       - uses: actions/checkout@v4
         with:
-          # changeset publish tags the commit and the action pushes those tags;
-          # pushing from a shallow clone fails with "shallow update not allowed".
+          # This job pushes the tags changeset publish creates; pushing from a
+          # shallow clone fails with "shallow update not allowed".
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -72,11 +82,22 @@ jobs:
       # range so a future npm major does not land unreviewed in the publish path.
       - run: npm install -g npm@^11.5.1
       - run: npm ci
-      - name: Create Version Packages PR or publish
-        uses: changesets/action@v1
-        with:
-          version: npm run version:packages
-          publish: npm run release
+      # One merge releases. The version bump and CHANGELOG entry arrived with
+      # the merged PR — `npm run version:packages` ran on the branch, not
+      # here — so this job only publishes what main already says. It never
+      # writes to main, which is why main's ruleset needs no bypass actor for
+      # it and no token beyond GITHUB_TOKEN is stored anywhere.
+      #
+      # A merge that did not bump (docs, CI, a PR carrying only changesets)
+      # reaches a version npm already has: `changeset publish` reports nothing
+      # to publish and exits 0. That is the no-op path, not a failure.
+      - name: Publish
+        run: |
+          set -euo pipefail
+          npm run release
+          # changeset publish tags locally; the tags are the only thing this
+          # job pushes. The ruleset targets branches, so tags are unaffected.
+          git push origin --tags
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # changeset publish shells to `npm publish` without --provenance, so
