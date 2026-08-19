@@ -17,6 +17,10 @@ tested. The consumer now passes the **raw payload** and gets a verdict.
   `conclusion: failure` on an `agent/issue-<n>` branch), or an explicit
   not-a-trigger verdict with a reason. It never throws — an unrecognized or
   malformed payload is the common case, not an error.
+- `AGENT_COMMIT_AUTHOR` — the commit identity the machine edge attributes to
+  the agent, `claude-code[bot]`. Fixed, not configurable, for the reason the
+  label vocabulary is fixed: a consumer naming their own identity here would
+  turn every push they make onto an agent branch into a retrigger.
 - `evaluateAdmission` / `runAdmission`, and the **`shopfloor-admit` bin** —
   classification, authorization, the concurrency check, and the attempt ceiling
   as one verdict, runnable by a job with nothing installed but this package and
@@ -25,6 +29,31 @@ tested. The consumer now passes the **raw payload** and gets a verdict.
 - `agentBranchForIssue` / `issueNumberFromBranch` / `AGENT_BRANCH_PREFIX` — the
   `agent/issue-<n>` convention, now package-owned, so your glue and this package
   name the same branch instead of agreeing by eye.
+
+**The machine edge is gated on three facts, not one, and authorized by them.**
+The `agent/issue-<n>` branch prefix is a pre-filter. A `workflow_run` failure
+also has to come from **your** repository (`head_repository.full_name` equal to
+`repository.full_name` — a fork PR carries the fork's ref with your repository
+in `repository`, so a stranger picks the branch name there) and from a commit
+authored by `claude-code[bot]`. An unstated head repository refuses like a
+mismatched one.
+
+Those fences then **replace** the permission probe on that edge — an admitted
+verdict says which authority let it through via `authorizedBy`:
+`{ via: 'permission', permission }` on the human edge,
+`{ via: 'continuation' }` on the machine edge, and this field replaces the
+top-level `permission` the admitted verdict carried in the first draft of this
+changeset. There is no login to probe on a continuation:
+`workflow_run.triggering_actor` is frequently `github-actions[bot]`, whose
+collaborator permission is `none`, so probing it refused the loop's own
+retrigger every time. What authorizes it instead is that pushing to
+`agent/issue-<n>` on your repository already requires write access — the fork
+fence is what keeps that true, which is why it is not optional.
+
+**Two consequences worth checking before you wire this up.** Your agent's
+commits must be authored as `claude-code[bot]` or the machine edge never fires;
+and a maintainer pushing a fix onto the agent's own branch now correctly does
+**not** retrigger the loop.
 
 **New failure modes, all of them refusals before any spend:**
 
@@ -59,10 +88,11 @@ in `[bot]` is now probed rather than refused as malformed: the machine edge
 triggers as an App, and `"github-actions[bot]" is not a GitHub login` was a
 false reason. The endpoint answers for these logins with `permission: "none"`,
 so **a bot actor still refuses** — as `not-permitted` now instead of
-`undetermined`. If you authorize the loop's own retrigger today by some other
-route, nothing changes; if you were relying on the `undetermined` spelling, it
-moved. Separately, a refusal caused by `gh` being missing now says so rather
-than reporting a bare `the permission probe failed`.
+`undetermined`. That refusal is correct and no longer in the loop's way:
+admission does not probe the machine edge at all (above). If you call
+`shopfloor-authorize` directly and were relying on the `undetermined` spelling
+for a bot login, it moved. Separately, a refusal caused by `gh` being missing
+now says so rather than reporting a bare `the permission probe failed`.
 
 `shopfloor-authorize` otherwise still ships unchanged. Nothing here is wired into
 `runImplementAgent`, and `runPhase` — the one verb that would call admission and

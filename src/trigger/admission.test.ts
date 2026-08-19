@@ -53,7 +53,35 @@ describe('evaluateAdmission', () => {
       branch: 'agent/issue-46',
       attempt: 1,
       maxAttempts: DEFAULT_MAX_ATTEMPTS,
-      permission: 'admin'
+      authorizedBy: { via: 'permission', permission: 'admin' }
+    })
+  })
+
+  it('admits the machine edge as a continuation, with no probe at all', () => {
+    // There is no login to probe on this edge — `triggering_actor` is whatever
+    // credential pushed, frequently a bot whose collaborator permission is
+    // `none`. `classifyTrigger` already refused anything that was not the
+    // harness's own commit on its own branch in the repository itself, and
+    // that chain is what authorizes the run. Passing no authorization here is
+    // the point: the human edge refuses without one.
+    expect(
+      admission({
+        classification: { ...triggered, edge: 'machine', actor: 'a-bot[bot]' },
+        authorization: undefined
+      })
+    ).toMatchObject({
+      admitted: true,
+      edge: 'machine',
+      authorizedBy: { via: 'continuation' }
+    })
+  })
+
+  it('still refuses the human edge when the spend gate never ran', () => {
+    const verdict = admission({ authorization: undefined })
+
+    expect(verdict).toMatchObject({
+      admitted: false,
+      refusal: 'undetermined'
     })
   })
 

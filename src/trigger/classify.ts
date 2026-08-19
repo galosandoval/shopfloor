@@ -189,6 +189,40 @@ function classifyWorkflowRun(event: PayloadRecord): TriggerClassification {
     return { triggered: false, reason: missingTargetReason(actor) }
   }
 
+  // **The branch name is a pre-filter, not the test** (design §6). A fork's
+  // branch can be called anything, `agent/issue-46` included, and a
+  // `workflow_run` from a fork PR carries the fork's ref with the base
+  // repository in `repository`. Without this the prefix alone would let a
+  // stranger's branch name address the harness's own edge. Absent rather than
+  // mismatched refuses too: this is the guard class that decides on
+  // uncertainty, and a head repository nobody stated is not this one.
+  const headRepo = asString(asRecord(run.head_repository)?.full_name)
+
+  if (headRepo !== repo) {
+    return {
+      triggered: false,
+      reason:
+        `the failure is on ${headRepo ?? 'an unstated repository'}, not on ` +
+        `${repo} — a branch named like the harness's is not the harness's`
+    }
+  }
+
+  // **Commit authorship is the decisive test** (design §6): the branch
+  // convention is a name, and a name is something a consumer can change, while
+  // the identity on the commit is written by the harness's own run. A human
+  // pushing a fix onto the agent's branch is CI red the loop must not answer —
+  // they are already at the keyboard.
+  const author = commitAuthorOf(run)
+
+  if (!isAgentAuthor(author)) {
+    return {
+      triggered: false,
+      reason:
+        `the head commit is authored by ${author ?? 'nobody the payload names'}` +
+        `, not by ${AGENT_COMMIT_AUTHOR} — this failure is somebody else's work`
+    }
+  }
+
   return {
     triggered: true,
     // A finished CI run carries no issue labels, so the phase cannot be read
@@ -244,6 +278,39 @@ function missingTargetReason(actor: string | undefined): string {
 
 function repoFrom(event: PayloadRecord): string | undefined {
   return asString(asRecord(event.repository)?.full_name)
+}
+
+/**
+ * The identity the agent's own commits carry (design §6). **Fixed, not
+ * configurable**, for the reason the label vocabulary is fixed (`CLAUDE.md`):
+ * a stated author could only be validated against a git identity this package
+ * does not own, and the failure mode is not a broken diagnostic but a silently
+ * widened trigger — one consumer naming their own login here turns every
+ * commit they push onto an agent branch into a retrigger.
+ *
+ * Read against the `name` **and** the local part of the `email`, because which
+ * of the two carries the bot identity depends on how the run's git was
+ * configured, and a payload that names it in only one place is still naming
+ * it.
+ */
+export const AGENT_COMMIT_AUTHOR = 'claude-code[bot]'
+
+/**
+ * Who the payload says wrote the head commit, preferring the name and falling
+ * back to the email — reported as-is so a refusal can quote it.
+ */
+function commitAuthorOf(run: PayloadRecord): string | undefined {
+  const author = asRecord(asRecord(run.head_commit)?.author)
+  return asString(author?.name) ?? asString(author?.email)
+}
+
+function isAgentAuthor(author: string | undefined): boolean {
+  if (!author) return false
+  const normalized = author.trim().toLowerCase()
+  return (
+    normalized === AGENT_COMMIT_AUTHOR ||
+    normalized.startsWith(`${AGENT_COMMIT_AUTHOR}@`)
+  )
 }
 
 type PayloadRecord = Record<string, unknown>

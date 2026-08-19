@@ -6,25 +6,25 @@
     "path": ".github/workflows/test.yml"
   },
   "workflow_run": {
-    "id": 18234567891,
+    "id": 18234567893,
     "name": "Test",
-    "run_number": 413,
-    "event": "push",
+    "run_number": 415,
+    "event": "pull_request",
     "status": "completed",
-    "conclusion": "success",
+    "conclusion": "failure",
     "head_branch": "agent/issue-46",
-    "head_sha": "9c2b1d0e7a6f5c4b3a2d1e0f9c8b7a6d5e4f3a21",
-    "html_url": "https://github.com/galosandoval/shopfloor/actions/runs/18234567891",
-    "actor": { "login": "galosandoval", "type": "User" },
-    "triggering_actor": { "login": "galosandoval", "type": "User" },
+    "head_sha": "c0ffee00d15ea5e0c0ffee00d15ea5e0c0ffee00",
+    "html_url": "https://github.com/galosandoval/shopfloor/actions/runs/18234567893",
+    "actor": { "login": "drive-by", "type": "User" },
+    "triggering_actor": { "login": "drive-by", "type": "User" },
     "head_repository": {
-      "id": 900000001,
+      "id": 900000002,
       "name": "shopfloor",
-      "full_name": "galosandoval/shopfloor",
-      "fork": false
+      "full_name": "drive-by/shopfloor",
+      "fork": true
     },
     "head_commit": {
-      "id": "9c2b1d0e7a6f5c4b3a2d1e0f9c8b7a6d5e4f3a21",
+      "id": "c0ffee00d15ea5e0c0ffee00d15ea5e0c0ffee00",
       "message": "feat: classifyTrigger",
       "author": {
         "name": "claude-code[bot]",
@@ -37,7 +37,8 @@
     "name": "shopfloor",
     "full_name": "galosandoval/shopfloor",
     "default_branch": "main",
+    "private": false,
     "owner": { "login": "galosandoval", "type": "User" }
   },
-  "sender": { "login": "galosandoval", "type": "User" }
+  "sender": { "login": "drive-by", "type": "User" }
 }

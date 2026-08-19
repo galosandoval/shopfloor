@@ -135,6 +135,30 @@ export type AdmissionRefusal =
   | 'in-flight'
   | 'exhausted'
 
+/**
+ * The two ways a run gets authorized, and they are not the same question.
+ *
+ * `permission` — a person triggered this, and the spend gate probed what they
+ * may do on the repository (shopfloor#41). This is the human edge.
+ *
+ * `continuation` — **nobody triggered this**; the loop's own failed run did.
+ * There is no login to probe: the run continues work a human-edge admission
+ * already authorized, and the payload is what proves it — the harness's own
+ * commit author, on the harness's own branch, in the repository itself rather
+ * than a fork (design §6). Probing the login instead asks the wrong question
+ * and gets a wrong answer: `workflow_run.triggering_actor` is frequently
+ * `github-actions[bot]`, whose collaborator permission is `none`, so the one
+ * edge with no human on it refused every time.
+ *
+ * **The fences are the authorization**, so read them as load-bearing rather
+ * than as attribution tidiness: pushing to `agent/issue-<n>` in the repository
+ * itself already requires write access, which is a spending permission, and
+ * the fork check is what keeps that sentence true.
+ */
+export type AdmissionAuthority =
+  | { via: 'permission'; permission: SpendingPermission }
+  | { via: 'continuation' }
+
 export type AdmissionVerdict =
   | {
       admitted: true
@@ -148,8 +172,8 @@ export type AdmissionVerdict =
       /** Which attempt this would be, counting from one. */
       attempt: number
       maxAttempts: number
-      /** The permission that admitted it, echoed for the run's own record. */
-      permission: SpendingPermission
+      /** What admitted it, echoed for the run's own record. */
+      authorizedBy: AdmissionAuthority
     }
   | { admitted: false; refusal: AdmissionRefusal; reason: string }
 
@@ -167,24 +191,10 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
 
   const { phase, edge, issueNumber, actor, repo } = classification
   const maxAttempts = input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
+  const authorizedBy = authorityFor(classification, input.authorization)
 
-  if (!input.authorization) {
-    return {
-      admitted: false,
-      refusal: 'undetermined',
-      reason:
-        `Could not determine whether @${actor} may spend on ${repo}: the ` +
-        'spend gate was never run. Admission refuses on uncertainty — a ' +
-        'permission nobody asked about is not permission.'
-    }
-  }
-
-  if (!input.authorization.authorized) {
-    return {
-      admitted: false,
-      refusal: input.authorization.refusal,
-      reason: input.authorization.reason
-    }
+  if (!('via' in authorizedBy)) {
+    return { admitted: false, ...authorizedBy }
   }
 
   const branch = agentBranchForIssue(issueNumber)
@@ -242,8 +252,44 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
     branch,
     attempt: attempts + 1,
     maxAttempts,
-    permission: input.authorization.permission
+    authorizedBy
   }
+}
+
+/**
+ * Which of the two authorities admits this event, or the refusal that says
+ * neither does. Split out because the two edges ask different questions and
+ * the difference is the whole of shopfloor#46's correction: the human edge
+ * needs a probed permission and refuses without one, and the machine edge has
+ * no login worth probing — {@link classifyTrigger} already refused anything
+ * that was not the harness's own commit, on its own branch, in the repository
+ * itself.
+ */
+function authorityFor(
+  classification: Extract<TriggerClassification, { triggered: true }>,
+  authorization: AuthorizationVerdict | undefined
+): AdmissionAuthority | { refusal: AdmissionRefusal; reason: string } {
+  if (classification.edge === 'machine') {
+    return { via: 'continuation' }
+  }
+
+  const { actor, repo } = classification
+
+  if (!authorization) {
+    return {
+      refusal: 'undetermined',
+      reason:
+        `Could not determine whether @${actor} may spend on ${repo}: the ` +
+        'spend gate was never run. Admission refuses on uncertainty — a ' +
+        'permission nobody asked about is not permission.'
+    }
+  }
+
+  if (!authorization.authorized) {
+    return { refusal: authorization.refusal, reason: authorization.reason }
+  }
+
+  return { via: 'permission', permission: authorization.permission }
 }
 
 function describeRuns(count: number): string {

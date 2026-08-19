@@ -79,13 +79,25 @@ export async function runAdmission(
     return evaluateAdmission({ classification, maxAttempts: input.maxAttempts })
   }
 
-  const { verdict: authorization } = await runAuthorization({
-    actor: classification.actor,
-    repo: classification.repo,
-    env
-  })
+  // **The machine edge spends no subprocess on the spend gate**, because there
+  // is no login on it worth asking about: `triggering_actor` is whatever
+  // credential pushed, frequently `github-actions[bot]`, whose collaborator
+  // permission is `none`. Classification already refused anything that was not
+  // the harness's own commit on its own branch in the repository itself, and
+  // that chain — not a probe — is what authorizes a continuation. See
+  // `AdmissionAuthority`.
+  const authorization =
+    classification.edge === 'machine'
+      ? undefined
+      : (
+          await runAuthorization({
+            actor: classification.actor,
+            repo: classification.repo,
+            env
+          })
+        ).verdict
 
-  if (!authorization.authorized) {
+  if (authorization && !authorization.authorized) {
     return evaluateAdmission({
       classification,
       authorization,

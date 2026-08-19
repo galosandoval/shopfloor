@@ -17,6 +17,8 @@ import {
   routeExecStub
 } from '../process/exec-stub.test-helper'
 import issuesLabeled from './fixtures/issues-labeled.json'
+import workflowRunFailed from './fixtures/workflow-run-failed.json'
+import workflowRunFailedFork from './fixtures/workflow-run-failed-fork.json'
 import { runAdmission } from './run-admission'
 
 vi.mock('node:child_process', () => execStubModule())
@@ -62,7 +64,32 @@ describe('runAdmission', () => {
       issueNumber: 46,
       branch: 'agent/issue-46',
       attempt: 1,
-      permission: 'admin'
+      authorizedBy: { via: 'permission', permission: 'admin' }
+    })
+  })
+
+  it('admits the machine edge without ever running the spend gate', async () => {
+    const verdict = await runAdmission({ payload: workflowRunFailed, env })
+
+    // The probe is not merely ignored — it is never taken. The permission call
+    // on this edge would ask what `github-actions[bot]` may do and get `none`,
+    // which is how the loop's own retrigger refused every time.
+    expect(calls.some((call) => PERMISSION.test(call.join(' ')))).toBe(false)
+    expect(verdict).toMatchObject({
+      admitted: true,
+      edge: 'machine',
+      issueNumber: 46,
+      authorizedBy: { via: 'continuation' }
+    })
+  })
+
+  it('refuses a fork branch named like the harness’s, before any probe', async () => {
+    const verdict = await runAdmission({ payload: workflowRunFailedFork, env })
+
+    expect(calls).toEqual([])
+    expect(verdict).toMatchObject({
+      admitted: false,
+      refusal: 'not-a-trigger'
     })
   })
 
