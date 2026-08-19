@@ -6,15 +6,15 @@
     "path": ".github/workflows/test.yml"
   },
   "workflow_run": {
-    "id": 18234567891,
+    "id": 18234567894,
     "name": "Test",
-    "run_number": 413,
+    "run_number": 416,
     "event": "push",
     "status": "completed",
-    "conclusion": "success",
+    "conclusion": "failure",
     "head_branch": "agent/issue-46",
-    "head_sha": "9c2b1d0e7a6f5c4b3a2d1e0f9c8b7a6d5e4f3a21",
-    "html_url": "https://github.com/galosandoval/shopfloor/actions/runs/18234567891",
+    "head_sha": "5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b",
+    "html_url": "https://github.com/galosandoval/shopfloor/actions/runs/18234567894",
     "actor": { "login": "galosandoval", "type": "User" },
     "triggering_actor": { "login": "galosandoval", "type": "User" },
     "head_repository": {
@@ -24,11 +24,11 @@
       "fork": false
     },
     "head_commit": {
-      "id": "9c2b1d0e7a6f5c4b3a2d1e0f9c8b7a6d5e4f3a21",
-      "message": "feat: classifyTrigger",
+      "id": "5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b",
+      "message": "fix: take it from here",
       "author": {
-        "name": "claude-code[bot]",
-        "email": "claude-code[bot]@users.noreply.github.com"
+        "name": "Galo Sandoval",
+        "email": "galosan92@gmail.com"
       }
     }
   },
@@ -37,6 +37,7 @@
     "name": "shopfloor",
     "full_name": "galosandoval/shopfloor",
     "default_branch": "main",
+    "private": false,
     "owner": { "login": "galosandoval", "type": "User" }
   },
   "sender": { "login": "galosandoval", "type": "User" }

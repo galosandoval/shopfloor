@@ -568,10 +568,10 @@ const classification = classifyTrigger(JSON.parse(eventJson))
 
 Two edges are admitted:
 
-| Event                                               | Edge      | Keyed on                                       |
-| --------------------------------------------------- | --------- | ---------------------------------------------- |
-| `issues.labeled` with `ready-for-agent`             | `human`   | the **added** label, not the issue's label set |
-| `workflow_run.completed` with `conclusion: failure` | `machine` | a `head_branch` of `agent/issue-<n>`           |
+| Event                                               | Edge      | Keyed on                                                                                                   |
+| --------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------- |
+| `issues.labeled` with `ready-for-agent`             | `human`   | the **added** label, not the issue's label set                                                             |
+| `workflow_run.completed` with `conclusion: failure` | `machine` | a `head_branch` of `agent/issue-<n>`, on **this** repository, from a commit authored by `claude-code[bot]` |
 
 Everything else — a different label, a green CI run, a branch the harness does
 not own, a payload that will not parse — is `{ triggered: false, reason }`. That
@@ -588,9 +588,21 @@ The machine edge reads the issue number out of the branch, which is the only
 place a finished CI run says which issue it belongs to. `agentBranchForIssue`
 and `issueNumberFromBranch` are exported, because your glue and this package
 have to name the same branch and two conventions that agree by eye are the
-binding this design exists to eliminate. Design §6's decisive attribution test —
-was the head commit the agent's — belongs to the outer loop and is deliberately
-not here; what ships is the cheap branch pre-filter it pairs with.
+binding this design exists to eliminate.
+
+**The branch name is a pre-filter, not the test.** Two more fences decide the
+machine edge, and both are load-bearing rather than tidy:
+
+- `head_repository.full_name` must equal `repository.full_name`. A
+  `workflow_run` from a fork PR carries the fork's ref with **your** repository
+  in `repository`, so a stranger picks the branch name there. A head repository
+  the payload does not state refuses the same way a mismatched one does.
+- The head commit must be authored by `claude-code[bot]`
+  (`AGENT_COMMIT_AUTHOR`, matched against the commit's `name` or the local part
+  of its `email`). Your own commit onto the agent's branch is CI red the loop
+  must not answer — you are already at the keyboard. The author is fixed, not
+  configurable, for the reason the label vocabulary is: a consumer naming their
+  own identity here turns every push they make into a retrigger.
 
 #### The admission callable
 
@@ -629,9 +641,24 @@ stderr, so stdout stays machine-readable with no flag deciding which mode the
 command is in. `--max-attempts <n>` raises the ceiling.
 
 An admitted verdict carries what the run needs — `phase`, `edge`,
-`issueNumber`, `actor`, `repo`, `branch`, `attempt`, `maxAttempts`, and the
-`permission` that admitted it. A refusal carries a `reason` and one of five
-kinds:
+`issueNumber`, `actor`, `repo`, `branch`, `attempt`, `maxAttempts`, and
+`authorizedBy`, which says which of the two authorities let it through:
+
+| `authorizedBy`                           | Edge      | Means                                                             |
+| ---------------------------------------- | --------- | ----------------------------------------------------------------- |
+| `{ via: 'permission', permission: '…' }` | `human`   | A person triggered it, and the spend gate probed what they may do |
+| `{ via: 'continuation' }`                | `machine` | Nobody triggered it — the loop's own failed run did               |
+
+**The machine edge is not probed, and that is the correction rather than a
+shortcut.** There is no login on it worth asking about: `triggering_actor` is
+whatever credential pushed, frequently `github-actions[bot]`, whose collaborator
+permission is `none` — so probing it refused the one edge with no human on it,
+every time. What authorizes a continuation is that pushing to `agent/issue-<n>`
+**on your repository** already requires write access, which is a spending
+permission. The fork fence above is what keeps that sentence true, which is why
+it refuses on an unstated head repository too.
+
+A refusal carries a `reason` and one of five kinds:
 
 | `refusal`       | Means                                                             |
 | --------------- | ----------------------------------------------------------------- |
@@ -649,7 +676,8 @@ a broken token, a run in flight, or a spent ceiling.
 
 **It runs the probes in the order that costs least, and skips what it does not
 need.** An event that classifies as nothing spends no subprocess at all; an
-actor who may not spend never costs a run-list call.
+actor who may not spend never costs a run-list call; and the machine edge never
+runs the permission probe, because there is no login on it to ask about.
 
 **It writes nothing**, on any verdict — the same rule the spend gate follows,
 and for the same reason: a refusal that labelled or commented would hand any

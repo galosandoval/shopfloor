@@ -84,6 +84,7 @@ export {
  */
 export {
   classifyTrigger,
+  AGENT_COMMIT_AUTHOR,
   PHASES,
   type Phase,
   type TriggerClassification,
@@ -93,6 +94,7 @@ export {
 export {
   evaluateAdmission,
   DEFAULT_MAX_ATTEMPTS,
+  type AdmissionAuthority,
   type AdmissionInput,
   type AdmissionRefusal,
   type AdmissionVerdict,

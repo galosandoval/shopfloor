@@ -15,7 +15,9 @@ import issuesLabeled from './fixtures/issues-labeled.json'
 import issuesLabeledInProgress from './fixtures/issues-labeled-in-progress.json'
 import issuesOpened from './fixtures/issues-opened.json'
 import workflowRunFailed from './fixtures/workflow-run-failed.json'
+import workflowRunFailedFork from './fixtures/workflow-run-failed-fork.json'
 import workflowRunFailedHumanBranch from './fixtures/workflow-run-failed-human-branch.json'
+import workflowRunFailedHumanCommit from './fixtures/workflow-run-failed-human-commit.json'
 import workflowRunSucceeded from './fixtures/workflow-run-succeeded.json'
 
 describe('the phase labels', () => {
@@ -92,9 +94,61 @@ describe('classifyTrigger — the machine edge', () => {
       phase: 'implement',
       edge: 'machine',
       issueNumber: 46,
-      actor: 'galosandoval',
+      // The bot is the realistic case, and it is the one that used to refuse:
+      // authorization asked what `github-actions[bot]` may do on the
+      // repository, got `none`, and the one edge with no human on it never
+      // ran. What admits it now is the commit author and the head repository,
+      // both asserted below.
+      actor: 'github-actions[bot]',
       repo: 'galosandoval/shopfloor'
     })
+  })
+
+  it('refuses a fork whose branch is named like the harness’s', () => {
+    // The branch prefix is a pre-filter, not the test (design §6): a fork's
+    // ref is a name a stranger picks, and the commit author on it is a name
+    // they can forge just as easily. The head repository is neither.
+    const verdict = classifyTrigger(workflowRunFailedFork)
+
+    expect(verdict.triggered).toBe(false)
+    expect(verdict).toMatchObject({
+      reason: expect.stringContaining('drive-by/shopfloor')
+    })
+  })
+
+  it('refuses when the head repository is unstated', () => {
+    const run = { ...workflowRunFailed.workflow_run, head_repository: null }
+
+    expect(
+      classifyTrigger({ ...workflowRunFailed, workflow_run: run })
+    ).toEqual({
+      triggered: false,
+      reason: expect.stringContaining('an unstated repository')
+    })
+  })
+
+  it('refuses a human’s commit on the agent’s own branch', () => {
+    // CI red the loop must not answer: they are already at the keyboard.
+    const verdict = classifyTrigger(workflowRunFailedHumanCommit)
+
+    expect(verdict.triggered).toBe(false)
+    expect(verdict).toMatchObject({
+      reason: expect.stringContaining('Galo Sandoval')
+    })
+  })
+
+  it('reads the agent identity off the commit email when the name is absent', () => {
+    const run = {
+      ...workflowRunFailed.workflow_run,
+      head_commit: {
+        ...workflowRunFailed.workflow_run.head_commit,
+        author: { email: 'claude-code[bot]@users.noreply.github.com' }
+      }
+    }
+
+    expect(
+      classifyTrigger({ ...workflowRunFailed, workflow_run: run }).triggered
+    ).toBe(true)
   })
 
   it('prefers triggering_actor, whose spend the run continues', () => {
@@ -114,7 +168,9 @@ describe('classifyTrigger — the machine edge', () => {
     const run = { ...workflowRunFailed.workflow_run, triggering_actor: null }
     const payload = { ...workflowRunFailed, workflow_run: run }
 
-    expect(classifyTrigger(payload)).toMatchObject({ actor: 'galosandoval' })
+    expect(classifyTrigger(payload)).toMatchObject({
+      actor: 'github-actions[bot]'
+    })
   })
 
   it('is not a trigger when CI went green', () => {

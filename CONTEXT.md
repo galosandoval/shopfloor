@@ -249,6 +249,21 @@ PR, sandboxing, and any CI glue.
   something is already spending, and both unknowns resolve in the expensive
   direction. It writes nothing on any verdict, for the reason the spend gate
   writes nothing.
+- **The two edges are authorized by two different facts, and the machine edge
+  is not probed at all.** `AdmissionAuthority` (shopfloor#46) names them:
+  `permission` on the human edge, where a person triggered the run and the
+  spend gate probed what they may do; `continuation` on the machine edge, where
+  nobody triggered it. Probing there asks the wrong question and gets a wrong
+  answer — `workflow_run.triggering_actor` is frequently `github-actions[bot]`,
+  whose collaborator permission is `none`, so the edge refused every time. What
+  authorizes a continuation is that pushing to `agent/issue-<n>` **on the
+  repository itself** already requires write access, which is a spending
+  permission. That makes `classifyTrigger`'s two machine-edge fences part of
+  the spend gate rather than attribution niceties: the head repository must be
+  this repository (a fork PR's branch name and commit author are both
+  attacker-chosen), and the head commit must be authored by
+  `AGENT_COMMIT_AUTHOR`. Neither may be relaxed without moving authorization
+  somewhere else first.
 - **The admission phase exists so the sequencing can be typed without moving
   the spend gate behind the spend.** Design §2 collapses the public surface
   into one `runPhase(rawEvent)`; review finding 2 is that one verb runs
