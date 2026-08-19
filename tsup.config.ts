@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup'
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
-    cli: 'src/cli.ts',
+    'run-phase-cli': 'src/run-phase-cli.ts',
     'doctor-cli': 'src/doctor-cli.ts',
     'init-cli': 'src/init-cli.ts',
     'authorize-cli': 'src/authorize-cli.ts',

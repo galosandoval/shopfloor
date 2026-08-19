@@ -181,6 +181,40 @@ describe('buildWorkflowScaffold', () => {
     expect(condition).toContain("github.event.label.name == 'ready-for-agent'")
   })
 
+  it('gates the expensive job on a setup-free admission job', () => {
+    // The whole reason the collapse to one verb did not swallow admission: a
+    // spend gate that runs after `npm install` has already let the spend
+    // happen. The admit job installs nothing and the run job never starts
+    // without its answer.
+    const admit = workflow.indexOf('shopfloor-admit')
+    const checkout = workflow.indexOf('actions/checkout')
+
+    expect(admit).toBeGreaterThan(-1)
+    expect(admit).toBeLessThan(checkout)
+    expect(workflow).toContain("needs.admit.outputs.admitted == 'true'")
+  })
+
+  it('reads the refusal rather than dying on its exit code', () => {
+    // `shopfloor-admit` exits non-zero on a real refusal, and under Actions'
+    // `bash -e` that would kill the step before it wrote the output the gate
+    // reads — so a run already in flight would paint the repository red
+    // instead of skipping. Nothing is swallowed: the verdict is echoed.
+    expect(workflow).toContain('set +e')
+    expect(workflow).toContain('set -e')
+    expect(workflow).not.toContain('|| true')
+  })
+
+  it('leaves the loop itself to one step — no slug pipeline, no `gh pr create`', () => {
+    // What this file used to carry, and what shopfloor#47 deleted: the branch
+    // name computed in bash beside the one the harness computes, a PR opened
+    // by the caller, and label swaps behind `|| true`.
+    expect(workflow).toContain('shopfloor-run-phase')
+    expect(workflow).not.toContain('gh pr create')
+    expect(workflow).not.toContain('|| true')
+    expect(workflow).not.toContain('gh issue edit')
+    expect(workflow).not.toMatch(/\bsed\b|\btr\b|\bcut\b/)
+  })
+
   it('follows a renamed PAT secret', () => {
     const renamed = buildWorkflowScaffold({
       patSecret: 'LOOP_PAT',

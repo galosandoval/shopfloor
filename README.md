@@ -14,13 +14,13 @@ review loop — are intended to land as additional modules inside this same
 package later, following the harness anatomy the modules are already
 organized by (see [Module layout](#module-layout)).
 
-This package deliberately does **not** ship a GitHub Actions workflow
-template or a prompt template — those are per-consumer. See
-[`galosandoval/recipe-chat`](https://github.com/galosandoval/recipe-chat)'s
-`.github/workflows/agent-implement.yml` and `agent/implement/prompt.md` for a
-reference wiring — read it as a shape, not as a copy-paste: it predates the
-`standardsDir` removal below and still clones a standards directory, which now
-refuses the run.
+The consumer-facing surface is **one verb**, `runPhase(rawEvent)`: it
+classifies the webhook payload, re-checks admission, locates or creates the
+branch and the draft PR, runs the phase, and moves the issue's labels. What
+your CI still owns is the checkout, the exit code, and the setup-free
+admission job in front of it. `shopfloor init` scaffolds both jobs and a prompt
+skeleton; the prompt's **environment** half — your install command, your gate,
+your seeded database — is still yours and is never shipped.
 
 ## Install
 
@@ -60,19 +60,25 @@ half that says what is still wrong.
 
 ## Usage
 
-A run needs an issue number, a prompt template, and an OAuth token.
-Everything else is inferred:
+A phase run needs the webhook payload and an OAuth token. Everything else — the
+phase, the issue, the branch, the PR — comes off the payload or off the
+convention this package owns:
 
 ```ts
-import { runImplementAgent, ImplementAgentError } from '@galosandoval/shopfloor'
-import * as fs from 'node:fs'
+import { runPhase, ImplementAgentError } from '@galosandoval/shopfloor'
 
 try {
-  const result = await runImplementAgent({
-    issueNumber: '123',
-    promptTemplate: fs.readFileSync('prompt.md', 'utf8')
-  })
-  console.log(`${result.commitsAhead} commit(s) on ${result.branch}.`)
+  // With no `payload`, it reads $GITHUB_EVENT_PATH — what the runner already
+  // wrote to disk. Nothing here names an issue, a branch, or a phase.
+  const result = await runPhase()
+
+  if (!result.ran) {
+    console.error(`refused (${result.refusal}): ${result.reason}`)
+  } else {
+    console.log(
+      `${result.phase} on #${result.issueNumber}: ${result.pullRequest.url}`
+    )
+  }
 } catch (error) {
   if (error instanceof ImplementAgentError) {
     console.error(error.message, error.outputTail)
@@ -81,18 +87,43 @@ try {
 }
 ```
 
-State a field only where you disagree with what would be inferred:
+**What `runPhase` does, in order.** Re-check admission (classification, the
+spend gate, the in-flight check, the attempt ceiling) → resolve the phase's
+prompt → preflight → transition the issue to `started` → locate or create
+`agent/issue-<n>` → run the phase → push → locate or create the draft PR →
+post the verify comment → transition on the outcome.
+
+**Admission is re-checked, not assumed.** Run
+[`shopfloor-admit`](#the-admission-callable) in a job of its own first, with
+nothing installed: a spend gate behind the spend it guards is not a gate. This
+call re-asks the same question against the same payload, so a run reached by
+any other path is judged rather than admitted by assumption.
+
+**A retrigger reuses what it finds.** The branch already exists and the PR is
+already open on the machine edge, so both are located before either is created.
+Branch identity is computed in exactly one place —
+[`agentBranchForIssue`](#trigger-classification-and-admission) — and never
+re-derived from an issue title in a `sed` pipeline.
+
+**Refusals write nothing**, except preflight's — whose refusal _is_ a judgement
+about the issue, and which labels and comments it before returning. An
+admission refusal leaves the issue exactly as it found it; the in-flight case
+depends on that, because the issue belongs to a run this one does not own.
+
+Everything a run accepts is still statable, minus the four values the payload
+decides (the issue, its title, the branch, the repository):
 
 ```ts
 import { resolveBundledPluginDir } from '@galosandoval/shopfloor'
+import * as fs from 'node:fs'
 
-await runImplementAgent({
-  issueNumber: '123',
-  issueTitle: 'Add pantry filter to recipe search',
-  branch: 'agent/issue-123-pantry-filter',
-  repo: 'galosandoval/recipe-chat',
+await runPhase({
   claudeCodeOAuthToken: process.env.CLAUDE_CODE_OAUTH_TOKEN!,
-  promptTemplate: fs.readFileSync('prompt.md', 'utf8'),
+  // Prompts are keyed by phase. Unstated, a phase runs on the shim this
+  // package ships (see below).
+  prompts: { implement: fs.readFileSync('agent/implement/prompt.md', 'utf8') },
+  // The outer loop's ceiling, as `shopfloor-admit --max-attempts` states it.
+  maxAttempts: 3,
   // Claude Code plugins loaded for this session only, one --plugin-dir each,
   // so their skills reach the agent without anything landing in your git tree.
   // Every entry is validated before a token is spent. Stating this REPLACES
@@ -124,17 +155,31 @@ await runImplementAgent({
 })
 ```
 
-### The prompt template
+### Prompts, keyed by phase
 
-The template is yours — this package ships none. Before the spawn, its
-`{{PLACEHOLDER}}` tokens are rendered against the run's own resolved values.
-Six are substituted, and only these six:
+One verb discovers the phase from the payload, so prompts are keyed by phase:
+`prompts: { implement: '...' }`, or the single `PROMPT_FILE` environment
+variable, which applies to whichever phase was discovered. **A discovered phase
+with no prompt refuses at startup naming the phase** — before the branch,
+before the transition, and before a token is spent.
+
+**What ships by default is a shim, not a prompt.** `DEFAULT_PHASE_PROMPTS`
+names the phase, names the issue and the branch, says where the run's outputs
+go, and defers to the bundled skills plugin for how to carry the work out. It
+carries no procedure — that lives in skills, and two copies would have no rule
+for which wins — and no environment content: your install command, your gate,
+your seeded database are yours, and `shopfloor init` fills that block from your
+own lockfile and scripts. A run on the shim alone works; a run on your own
+prompt is the normal case.
+
+Before the spawn, a prompt's `{{PLACEHOLDER}}` tokens are rendered against the
+run's own resolved values. Six are substituted, and only these six:
 
 | Token                     | Rendered to                                                     |
 | ------------------------- | --------------------------------------------------------------- |
 | `{{ISSUE_NUMBER}}`        | `issueNumber`, as resolved                                      |
-| `{{ISSUE_TITLE}}`         | `issueTitle` — stated, from `ISSUE_TITLE`, or probed via `gh`   |
-| `{{BRANCH}}`              | `branch` — stated, from the environment, or probed via `git`    |
+| `{{ISSUE_TITLE}}`         | the issue's own title, read once via `gh`                       |
+| `{{BRANCH}}`              | `agent/issue-<n>` — the branch the verb located or created      |
 | `{{PR_DESCRIPTION_FILE}}` | absolute path the agent writes its PR description to            |
 | `{{VERIFY_REPORT_FILE}}`  | absolute path the agent writes its verify report to             |
 | `{{SCREENSHOTS_DIR}}`     | repo-relative directory the agent commits verify screenshots to |
@@ -157,7 +202,28 @@ it is reported. Check your template against this table when you upgrade.
 
 ### What a run returns
 
-A resolved run answers with `RunImplementAgentResult`:
+`runPhase` answers with `RunPhaseResult` — either a refusal or a finished run:
+
+| Field                 | Type                             | Meaning                                                           |
+| --------------------- | -------------------------------- | ----------------------------------------------------------------- |
+| `ran`                 | `boolean`                        | False for a refusal; the fields below are a finished run's        |
+| `refusal` / `reason`  | `string`                         | On a refusal: admission's own kinds, or `preflight`               |
+| `phase` / `edge`      | `Phase` / `'human' \| 'machine'` | Which phase ran, and which edge started it                        |
+| `issueNumber`         | `number`                         | The issue the payload named                                       |
+| `branch`              | `string`                         | `agent/issue-<n>`, located or created                             |
+| `pullRequest`         | `{ number, url, created }`       | `created: false` when a retrigger iterated on the PR already open |
+| `attempt`             | `number`                         | Which attempt this was, against `maxAttempts`                     |
+| `outcome`             | `RunOutcome`                     | Always `succeeded` — every other outcome leaves by throwing       |
+| `verifyCommentPosted` | `boolean`                        | Verify is best-effort and never fails a run                       |
+| `run`                 | `RunImplementAgentResult`        | What the phase's own run produced, below                          |
+
+A failed run **throws** `ImplementAgentError` — and first pushes whatever it
+committed (best-effort, so the work outlives the runner; no PR is opened for
+it) and transitions the issue: `exhausted` when the inner loop spent its ceiling with the gate still
+red, `failed` otherwise. Both terminal rows set `ready-for-human`, so no way
+out of a started run leaves an issue sitting in `agent:in-progress`.
+
+The phase's own run answers with `RunImplementAgentResult`:
 
 | Field                | Type                    | Meaning                                                                              |
 | -------------------- | ----------------------- | ------------------------------------------------------------------------------------ |
@@ -257,11 +323,9 @@ you state, or one the environment already carries, never spawns a subprocess.
 | `runPolicy.cliVersionStrictness` | `CLI_VERSION_STRICTNESS`    | —               | `'warn'`                                              |
 | `runPolicy.requiredEnvVars`      | `REQUIRED_ENV_VARS`         | —               | `[]`                                                  |
 
-`promptTemplate` is the raw template **contents**, not a path — the library
-never reads a file for it, so it carries no environment variable. `PROMPT_FILE`
-is the CLI entrypoint's own convenience: the bin reads that path and passes the
-contents in. It is the one variable in this document that does not work against
-`runImplementAgent`.
+`prompts` holds raw template **contents** keyed by phase, not paths.
+`PROMPT_FILE` is the one variable read off disk: `runPhase` reads that path and
+applies it to whichever phase the payload discovered.
 
 The four output files take no environment variable either: state one to move it,
 or leave it and it lands under `outputDir`. That is where `OUTPUT_DIR` earns its
@@ -538,18 +602,23 @@ is here to catch.
 
 ### CLI
 
-A thin bin entrypoint takes the issue number as its argument, for a drop-in
-CI step:
+A thin bin entrypoint runs whatever phase the event starts, for a drop-in CI
+step:
 
 ```sh
-CLAUDE_CODE_OAUTH_TOKEN=*** PROMPT_FILE=./prompt.md npx shopfloor-implement 123
+CLAUDE_CODE_OAUTH_TOKEN=*** GH_TOKEN=*** PROMPT_FILE=./prompt.md npx shopfloor-run-phase
 ```
 
-Every environment variable in the table above works here too — the resolution
-lives in the harness, not in this entrypoint. Inside GitHub Actions the
-branch, repository, and commit come from the runner's own `GITHUB_*`
-variables, so a workflow step restates none of them. A failed run writes its
-reason to `failure_reason.txt` under `OUTPUT_DIR` and exits non-zero.
+**It takes no arguments.** The issue, the phase, and the actor come off
+`$GITHUB_EVENT_PATH`, and the branch is the harness's own — a step that states
+nothing cannot state it wrong. Every environment variable in the table above
+still works; the resolution lives in the harness, not in this entrypoint.
+
+Its exit code splits the way `shopfloor-admit`'s does: `not-a-trigger` exits
+zero, because it is the outcome for the large majority of events that reach the
+loop and painting the repository red for those is how a check gets deleted.
+Every other refusal, and every failed run, exits non-zero. A failed run writes
+its reason to `failure_reason.txt` under `OUTPUT_DIR`.
 
 ### Trigger classification and admission
 
@@ -720,10 +789,11 @@ gathered yourself:
 import { runAdmission } from '@galosandoval/shopfloor'
 
 const verdict = await runAdmission({ maxAttempts: 5 })
-if (verdict.admitted) {
-  await runImplementAgent({ issueNumber: verdict.issueNumber, promptTemplate })
-}
+if (!verdict.admitted) process.exit(verdict.refusal === 'not-a-trigger' ? 0 : 1)
 ```
+
+Its job is to gate the expensive one from a job that installed nothing.
+`runPhase` re-asks the same question itself rather than trusting the answer.
 
 `shopfloor-authorize` is unchanged and still ships: it is the spend gate alone,
 for a caller that wants the permission question answered without the rest.
@@ -810,29 +880,20 @@ whose answer is worth trusting.
 
 ### Preflight refusal
 
-Refuse a label-triggered run before it spends any tokens — a PRD (has native
-sub-issues), a native sub-issue of a parent, or an issue that already has an
-open PR targeting it:
+`runPhase` refuses a run before it spends any tokens when the issue is a PRD
+(it has native sub-issues), a native sub-issue of a parent, or an issue that
+already has an open PR targeting it. The refusal comes back as
+`{ ran: false, refusal: 'preflight', reason }`.
 
-```ts
-import { runPreflight } from '@galosandoval/shopfloor'
+**Only on the human edge.** A retrigger continues a run whose PR is already
+open, so asking there would refuse every continuation on the evidence that the
+previous attempt worked.
 
-const { verdict } = await runPreflight({
-  issueNumber: '123',
-  repo: 'galosandoval/recipe-chat'
-})
-if (verdict.refused) {
-  console.log(verdict.reason)
-}
-```
-
-`evaluatePreflight` is the pure decision function underneath, if you already
-have the sub-issue count / parent number / linking PRs gathered another way.
-
-On a refusal it applies the `refused` row of the transition table below, and
-posts a comment explaining why — naming `ready-for-agent` (exported as
-`ENTRY_LABEL`) as the label to re-add to retry, since that is the one the
-loop's trigger watches and the one the refusal just dropped.
+It is the one refusal that writes: the judgement is about the issue, so it
+applies the `refused` row of the transition table below and posts a comment
+explaining why — naming `ready-for-agent` (exported as `ENTRY_LABEL`) as the
+label to re-add to retry, since that is the one the loop's trigger watches and
+the one the refusal just dropped.
 
 Because it applies a transition, it verifies the label vocabulary first and
 **throws** an `ImplementAgentError` if the repository is missing any of it —
@@ -840,8 +901,21 @@ before reading the issue, and whatever the verdict would have been. That is a
 different failure from a refused verdict: a verdict says this issue must not be
 implemented and is answered by labelling it, and labelling is exactly what an
 unconfigured repository cannot be trusted to do. Run `npx shopfloor-init` to
-create what is missing. `runImplementAgent` makes the same check among its
-preconditions; a job that runs both pays for the probe twice.
+create what is missing.
+
+`evaluatePreflight` is the pure decision function underneath, exported for your
+own tooling if you already have the sub-issue count, parent number, and linking
+PRs gathered another way:
+
+```ts
+import { evaluatePreflight } from '@galosandoval/shopfloor'
+
+const verdict = evaluatePreflight({
+  subIssueCount: 0,
+  parentNumber: null,
+  linkingPullRequests: []
+})
+```
 
 ### Issue state and the label vocabulary
 
@@ -907,16 +981,19 @@ to render or exhaustively switch on them. `applyLabelTransition` reads the
 issue's current labels itself unless you pass `currentLabels` — pass them if
 you already have them and save a round trip.
 
-Today this package applies exactly one row itself: `refused`, from
-`runPreflight`. The rest are yours to apply, because the caller owns the branch
-and the PR and therefore owns when a run is "done".
+**`runPhase` applies every row itself** (shopfloor#47): `refused` when
+preflight refuses, `started` before the branch exists, and `succeeded`,
+`exhausted`, or `failed` on the way out — the failing ones inside the `catch`,
+before the error is rethrown, so no way out of a started run leaves an issue in
+`agent:in-progress`. The table stays exported anyway: your own tooling acting
+on a run should apply _the_ transition rather than a second guess at it.
 
 ### Command guard
 
 Three operations an autonomous run must never perform — pushing a Prisma
 schema straight at the database instead of writing a migration, force-pushing,
 and amending — are blocked at tool-call time rather than asked for in the
-prompt. `runImplementAgent` arms this automatically: the invocation carries a
+prompt. A phase run arms this automatically: the invocation carries a
 `--settings` payload wiring a `PreToolUse` hook over `Bash` at the shipped
 hook script, and a matching command exits `2` with the reason and the
 sanctioned alternative on stderr, which the CLI feeds back to the agent as a
@@ -947,7 +1024,7 @@ string is data (a commit message mentioning `--amend` commits fine). The rule
 set is deliberately fixed and small: it is what this harness's own loop
 forbids, not a general shell allowlist.
 
-`runImplementAgent` **refuses to start** if it can't find the hook script
+A run **refuses to start** if it can't find the hook script
 beside its own bundle — a broken install fails the run rather than quietly
 running it unguarded. The hook itself fails the other way on purpose: input it
 can't read or classify exits 0, so the guard never takes a run down over a
@@ -955,29 +1032,28 @@ command it has no opinion about.
 
 ### Verify-comment posting
 
-Post the agent's verify-phase report and any committed screenshots back to
-the PR as a comment:
+`runPhase` posts the agent's verify-phase report and any committed screenshots
+back to the PR it just opened, pinned to the commit it just pushed — not to
+`GITHUB_SHA`, which on that path names a branch tip several commits behind the
+screenshots the comment links to.
+
+Best-effort by contract: verify never blocks a PR, so a failure here comes back
+as `verifyCommentPosted: false` rather than as a failed run.
+
+`buildVerifyComment` is the pure formatter underneath, exported so your own
+tooling can render the same comment:
 
 ```ts
-import { postVerifyComment } from '@galosandoval/shopfloor'
+import { buildVerifyComment } from '@galosandoval/shopfloor'
 
-await postVerifyComment({
-  issueNumber: '123',
-  verifyReportFile: '/tmp/out/verify_report.md',
-  screenshotsDir: '.agent/verify/issue-123'
+const body = buildVerifyComment({
+  report: '## What I verified\n...',
+  repo: 'galosandoval/recipe-chat',
+  ref: 'a1b2c3d',
+  screenshots: ['.agent/verify/issue-123/search.png'],
+  runUrl: 'https://github.com/o/r/actions/runs/1'
 })
 ```
-
-The repository comes from `GITHUB_REPOSITORY`, the commit the screenshots are
-pinned to from `GITHUB_SHA`, the run link from `GITHUB_SERVER_URL` /
-`GITHUB_RUN_ID`, and the PR from the head branch (`GITHUB_HEAD_REF`, else the
-checkout) via `gh` — each overridable with `repo`, `sha`, `runUrl`, `prNumber`,
-and `branch`. Outside Actions, `repo` and `sha` have nowhere to come from:
-state them, or the comment goes unposted.
-
-Best-effort by contract — it never throws, including when a value can't be
-inferred; check the returned `posted` flag. `buildVerifyComment` is the pure
-formatter underneath.
 
 ### Trajectory scorecard
 
@@ -1247,7 +1323,11 @@ export is a commitment, and nothing outside this package needs them.
 Organized by harness concern rather than a flat file list, so a future `plan`
 or `review` module has an obvious home:
 
-- `src/orchestration/` — `runImplementAgent` (the orchestrator),
+- `src/phase/` — the verb: `runPhase` (the shell), the pure decisions behind
+  it (`resolvePhasePrompt` with `DEFAULT_PHASE_PROMPTS`, `buildPullRequestFields`,
+  `evaluatePhaseOutcome`), and the two locate-or-create shells it owns
+  (`ensureAgentBranch` / `pushAgentBranch`, `ensurePullRequest`).
+- `src/orchestration/` — `runImplementAgent` (the phase's own run, internal),
   `resolveImplementConfig` (pure configuration resolution),
   `prepareClaudeInvocation` (pure CLI-invocation assembly), `spawnClaude`
   (the subprocess, with both runaway guards armed around it),
@@ -1288,17 +1368,17 @@ or `review` module has an obvious home:
   `node:child_process` stub their wiring tests share. Internal; nothing here is
   exported from `src/index.ts`.
 
-The package exports the eight verbs (`runImplementAgent`, `runPreflight`,
-`runAuthorization`, `runAdmission`, `postVerifyComment`, `runTrajectoryCheck`,
-`probeSetup`, `runInit`) and `ImplementAgentError`, the
+The package exports **one verb for the loop** — `runPhase` — alongside the
+commands that are not the loop (`runAuthorization` and `runAdmission`, the
+setup-free gates in front of it; `runTrajectoryCheck`, `probeSetup`, and
+`runInit`, which judge or configure rather than run) and `ImplementAgentError`,
+the
 documented pure escape hatches (`evaluatePreflight`, `evaluateAuthorization`,
 `buildVerifyComment`,
 `classifyCommand`, `checkTrajectory` with `formatScorecard`, `evaluateIteration`
 (the inner loop's iterate/done/exhausted rule), `evaluateSetup` with
 `formatSetupReport`, and
-`evaluatePluginDirs` — the last paired with `runPluginDirsCheck`, its shell, so
-CI glue can pre-validate a plugin directory without starting a run —
-and `evaluatePromptReadiness`, the unfilled-prompt refusal, and the trigger
+`evaluatePluginDirs`, and `evaluatePromptReadiness`, the unfilled-prompt refusal, and the trigger
 boundary's `classifyTrigger` and `evaluateAdmission`),
 `formatInitResult` (what a finished `init` did),
 `resolveBundledPluginDir` (where the bundled plugin landed),
@@ -1344,10 +1424,11 @@ tell you whether a release is safe to take.
 Releases run through [Changesets](https://github.com/changesets/changesets).
 Every PR needs a changeset (`npx changeset`); a PR that deliberately ships
 nothing records an explicit empty one (`npx changeset --empty`) rather than
-leaving "this doesn't release" to be inferred from silence. Merging to `main`
-opens or updates a "Version Packages" PR; merging _that_ bumps the version,
-tags the commit, and publishes to npm with provenance via an OIDC trusted
-publisher — there is no `NPM_TOKEN` in this repo.
+leaving "this doesn't release" to be inferred from silence. A releasing PR runs
+`npm run version:packages` on its own branch and commits the result, so it
+carries its version bump and `CHANGELOG.md` entry; merging it to `main` tags the
+commit and publishes to npm with provenance via an OIDC trusted publisher —
+there is no `NPM_TOKEN` in this repo. CI never pushes to `main`.
 
 ## License
 

@@ -21,11 +21,27 @@ export class ImplementAgentError extends Error {
    * one.
    */
   readonly usage?: RunUsage
+  /**
+   * True only when the inner loop spent its budget with the gate still red
+   * (shopfloor#47). Carried as a flag rather than left to be read off the
+   * message, because the issue state a run ends in turns on it: an exhausted
+   * run means *the work is harder than the spec allowed for* and a failed one
+   * means *something is broken*, and those are the two most different human
+   * responses in the system. Matching prose to tell them apart is the rotted
+   * binding this package keeps eliminating.
+   */
+  readonly exhausted: boolean
 
-  constructor(message: string, outputTail?: string, usage?: RunUsage) {
+  constructor(
+    message: string,
+    outputTail?: string,
+    usage?: RunUsage,
+    options: { exhausted?: boolean } = {}
+  ) {
     super(message)
     this.name = 'ImplementAgentError'
     this.outputTail = outputTail
     this.usage = usage
+    this.exhausted = options.exhausted ?? false
   }
 }

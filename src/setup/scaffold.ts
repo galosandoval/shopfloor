@@ -17,6 +17,7 @@
  * about a consumer's commands is indistinguishable from a fact about them.
  */
 
+import { ENTRY_LABEL } from '../issue-state/vocabulary'
 import {
   ENVIRONMENT_BLOCK_END,
   ENVIRONMENT_BLOCK_START,
@@ -200,21 +201,29 @@ export interface WorkflowScaffoldInput {
 /**
  * The agent workflow, wired to both admitted trigger events.
  *
+ * **Two jobs, and the split is the whole shape of it** (design review finding
+ * 2). `admit` runs `shopfloor-admit` with nothing installed but this package
+ * and `gh`: classification, the spend gate, the concurrency narrowing, and the
+ * attempt ceiling, all in front of the runner setup they exist to protect. The
+ * expensive job runs one step — `shopfloor-run-phase` — which re-asks the same
+ * question rather than trusting the answer, then owns the branch, the run, the
+ * pull request, and the issue's state.
+ *
+ * What is *not* here is the point: no slug pipeline, no `gh pr create`, no
+ * label swaps behind `|| true`, and no step deciding which issue a finished CI
+ * run belongs to. Every one of those is now a typed, tested function reading
+ * the payload the runner already wrote to disk.
+ *
  * **Everything it cannot know is a sentinel, not a guess** — and
  * `workflow-unfilled` refuses on every one of them, so a scaffolded workflow
- * cannot read green while an edge of it is dead. There are three: which CI
+ * cannot read green while an edge of it is dead. There are two left: which CI
  * workflow's completion retriggers the loop (a plausible wrong name is an edge
- * that silently never fires), which `claude` version to install, and how a
- * `workflow_run` event resolves to an issue number.
+ * that silently never fires), and which `claude` version to install.
  *
  * **Both `npx` invocations and the CLI install are pinned.** A workflow that
  * fetched the latest of either would change what it runs on a schedule nobody
  * set, and the `cli-version-pin` check exists precisely because a drifting CLI
  * is a run that fails in a way the transcript does not explain.
- *
- * The `authorize` step runs before anything is installed, deliberately: a
- * spend gate that runs after the runner's setup has already let the spend
- * happen.
  */
 export function buildWorkflowScaffold(input: WorkflowScaffoldInput): string {
   const pat = `\${{ secrets.${input.patSecret} }}`
@@ -243,25 +252,51 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  implement:
+  # Nothing is installed here. This job answers "may this event start a run?"
+  # — classification, the spend gate, the in-flight check, and the attempt
+  # ceiling — before the runner pays for anything, and refuses non-zero when
+  # the answer is no. An event the loop does not run on exits zero and skips
+  # the job below, so ordinary label traffic never paints the repo red.
+  admit:
     # Filters the human edge without filtering the machine edge out of
     # existence: \`github.event.label\` is null on a workflow_run event, so a
     # bare label condition would make that trigger fire a job that never runs.
+    # Redundant with what \`shopfloor-admit\` decides, and worth a line anyway:
+    # it keeps ordinary label traffic from starting a runner at all.
     if: >-
       github.event_name != 'issues' ||
-      github.event.label.name == 'ready-for-agent'
+      github.event.label.name == '${ENTRY_LABEL}'
+    runs-on: ubuntu-latest
+    outputs:
+      admitted: \${{ steps.admit.outputs.admitted }}
+    steps:
+      - id: admit
+        env:
+          GH_TOKEN: ${pat}
+        run: |
+          # The bin exits non-zero on a real refusal so that a caller who
+          # ignores stdout is still stopped by it. This job does not ignore
+          # stdout — it gates the expensive job on the verdict below — so a
+          # refusal here is a skip rather than a red workflow. A run already in
+          # flight, or a spent ceiling, is ordinary traffic, and a check that
+          # paints the repository red for ordinary traffic is a check people
+          # delete. The verdict is read and echoed either way; nothing is
+          # swallowed.
+          set +e
+          verdict="$(npx --yes ${shopfloor} shopfloor-admit)"
+          set -e
+          echo "$verdict"
+          echo "admitted=$(echo "$verdict" | jq -r '.admitted')" >> "$GITHUB_OUTPUT"
+
+  run-phase:
+    needs: admit
+    if: needs.admit.outputs.admitted == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
       pull-requests: write
     steps:
-      # Before the runner installs anything: refuse an actor who may not spend.
-      - name: Authorize
-        env:
-          GH_TOKEN: ${pat}
-        run: npx --yes ${shopfloor} shopfloor-authorize
-
       - uses: actions/checkout@v4
         with:
           # The PAT, not GITHUB_TOKEN: a push made with the built-in token
@@ -280,17 +315,14 @@ jobs:
       - name: Install the Claude Code CLI
         run: npm install -g ${CLAUDE_CLI_PACKAGE}@${cliVersion}
 
-      # ${ENVIRONMENT_UNFILLED_SENTINEL}: on a workflow_run event there is no
-      # \`github.event.issue.number\` — which issue a finished CI run belongs to
-      # is the outer loop's question, and the outer loop is designed and not
-      # shipped. Until it is, add the step that determines it, or leave the
-      # machine edge unwired above.
-      - name: Implement
+      # The whole of the loop, in one step. It reads GITHUB_EVENT_PATH itself,
+      # so nothing here names an issue, a branch, or a phase.
+      - name: Run the phase
         env:
           CLAUDE_CODE_OAUTH_TOKEN: \${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           GH_TOKEN: ${pat}
           PROMPT_FILE: ${input.promptFile}
           CLI_VERSION: '${cliVersion}'
-        run: npx --yes ${shopfloor} shopfloor-implement \${{ github.event.issue.number }}
+        run: npx --yes ${shopfloor} shopfloor-run-phase
 `
 }

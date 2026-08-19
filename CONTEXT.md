@@ -21,7 +21,8 @@ harness concern rather than as a flat file list.
 
 | Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/orchestration/`   | `runImplementAgent` (the orchestrator shell), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                                                                                    |
+| `src/phase/`           | **The verb** (shopfloor#47): the `runPhase` shell and every decision behind it — `resolvePhasePrompt` and the shipped per-phase shims (`DEFAULT_PHASE_PROMPTS`), `buildPullRequestFields`, `evaluatePhaseOutcome` — plus the two shells it owns that nothing else did: `ensureAgentBranch` / `pushAgentBranch` and `ensurePullRequest`, each locate-or-create                                                                                                                                                                        |
+| `src/orchestration/`   | `runImplementAgent` (the phase's run, internal since shopfloor#47), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                                                              |
 | `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting |
 | `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                                                                                                |
 | `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository                                                                  |
@@ -29,7 +30,7 @@ harness concern rather than as a flat file list.
 | `src/issue-state/`     | The label vocabulary (`LABEL_VOCABULARY` / `REQUIRED_LABELS`) and the state machine over it: the pure `evaluateLabelTransition` and its `TRANSITION_TABLE`, and the `applyLabelTransition` shell. The names are **package-owned** — see the invariant below                                                                                                                                                                                                                                                                          |
 | `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                                                                                          |
 | `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `src/cli.ts`           | Thin bin entrypoint (`shopfloor-implement <issue>`); resolution lives in the harness, not here                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `src/run-phase-cli.ts` | Thin bin entrypoint (`shopfloor-run-phase`); it names no issue and no branch — the payload does — and owns only the exit code and the failure-reason file                                                                                                                                                                                                                                                                                                                                                                            |
 | `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `src/init-cli.ts`      | Thin bin entrypoint (`shopfloor-init`); prints the report and exits non-zero on a **write that failed** — never on the setup it cannot fix, which it names and leaves to the operator                                                                                                                                                                                                                                                                                                                                                |
 | `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                                                                                                                           |
@@ -65,8 +66,10 @@ The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `applyLabelTransition`, `evaluateLabelVocabulary` /
 `runLabelVocabularyCheck`, `evaluateAdmission` / `runAdmission`,
 `checkCliVersion`, `classifyTrigger`,
-`evaluatePromptReadiness` and
-`resolveImplementConfig` / `runImplementAgent`.
+`evaluatePromptReadiness`,
+`resolveImplementConfig` / `runImplementAgent`, and the verb's own —
+`resolvePhasePrompt`, `evaluatePhaseOutcome`, and `buildPullRequestFields` /
+`ensurePullRequest`.
 
 `probeSetup` is the one shell that neither runs nor applies anything, and
 deliberately: it gathers and decides nothing, while every `run*` here acts on a
@@ -107,7 +110,66 @@ every default that can be _stated_ stays in the resolver.
 
 ## The run, end to end
 
-`runImplementAgent` is the whole flow, in order:
+`runPhase(rawEvent)` is the whole flow (shopfloor#47). One verb, because the
+verb count was never the interface — the **sequencing** was, and it used to
+live in 323 lines of consumer YAML with three `|| true` blocks and a transition
+that had never once fired. What a caller still owns is checking out the
+repository, the exit code, and the setup-free admission job in front of this
+one. Everything else, in order:
+
+1. **Re-check admission** — `runAdmission` over the same raw payload
+   (`GITHUB_EVENT_PATH` when the caller passes none): classification, the spend
+   gate, the in-flight narrowing, the attempt ceiling. The cheap
+   `shopfloor-admit` job still runs first and is still where the spend gate
+   belongs (design review finding 2); this is the re-ask, so a run reached by
+   any other path is judged rather than admitted by assumption. **A refusal
+   here writes nothing at all** — the same rule `runAdmission` follows, and the
+   only one that is safe for the in-flight case, where the issue belongs to a
+   run this one does not own.
+2. **Resolve the phase's prompt** — pure `resolvePhasePrompt`, before anything
+   is written or spent. A phase with no prompt refuses **at startup naming the
+   phase** rather than failing at spawn time. The shipped default is a thin
+   shim to the bundled skills plugin: procedure already lives in skills, and
+   environment content still ships to nobody. `PROMPT_FILE` keeps working and
+   applies to whichever phase the payload discovered.
+3. **Preflight, on the human edge only** — `runPreflight` refuses a PRD, a
+   sub-issue, or an issue a PR already links. It is the one refusal that _does_
+   write: the judgement is about the issue, so it applies the table's `refused`
+   row and comments before this verb returns. The machine edge skips it because
+   its third refusal — an open PR already targets this issue — is on a
+   retrigger the loop's own PR, so asking there would refuse every continuation
+   on the evidence that the previous attempt worked. It also verifies the label
+   vocabulary for the rows below; the machine edge, having skipped it, runs
+   `runLabelVocabularyCheck` itself — no transition in this package is applied
+   without that check in front of it.
+4. **Probe the issue title**, once — the prompt and the PR are named from the
+   same read, so the two can never disagree.
+5. **Transition to `started`** — before the branch exists, so a run killed
+   between the two is still visible as one that started.
+6. **Locate or create the branch** — `ensureAgentBranch`, on the name
+   `agentBranchForIssue` writes down and nothing else re-derives. A retrigger
+   finds the remote branch and continues it; only a first attempt creates one.
+7. **Run the phase** — `runImplementAgent`, below, unchanged and now internal.
+   **A failed run pushes what it committed** before it transitions and
+   rethrows, best-effort: an ephemeral runner would otherwise take the work
+   with it, and the human the terminal row is about to summon would arrive at
+   `agent:blocked` with nothing to read. No PR is opened for it — unvetted work
+   is not a pull request; the branch is there to be looked at.
+8. **Push, then locate or create the pull request** — `ensurePullRequest`,
+   draft, closing its issue exactly once. A retrigger iterates on the PR
+   already open rather than failing on a second `gh pr create`.
+9. **Post the verify comment**, best-effort, pinned to the commit this run
+   pushed rather than to `GITHUB_SHA`.
+10. **Transition on the outcome** — `evaluatePhaseOutcome` decides between
+    `succeeded`, `exhausted` (the inner loop spent its ceiling with the gate
+    red), and `failed`. **Every one of the three is applied, including on the
+    way out of a throw**, and each terminal row sets `ready-for-human`: this is
+    where that transition finally fires, and an issue left in
+    `agent:in-progress` forever is what the layer this replaced did instead.
+
+### The phase's run, end to end
+
+`runImplementAgent` — reached through `runPhase`, no longer API — is:
 
 1. **Resolve config** — `resolveImplementConfig`, pure, over the caller's input
    and an env record. It also refuses a run still configured for the removed
@@ -208,8 +270,8 @@ a bare overwrite would destroy on exactly the runs worth auditing. This is not
 the outer loop's handoff artifact, which is a synthesis and a later step — it is
 just refusing to delete something the run already produced.
 
-The caller owns everything outside the run: checking out the branch, opening the
-PR, sandboxing, and any CI glue.
+The caller owns what is left outside the verb: checking out the repository, the
+admission job in front of it, sandboxing, and the exit code.
 
 ## Invariants worth knowing before you change something
 
@@ -470,23 +532,24 @@ PR, sandboxing, and any CI glue.
   attention is wanted. Stated rather than inferred, because inference is how
   the bash layer got here (design review finding 3).
 - **Every caller of `applyLabelTransition` in this package verifies the
-  vocabulary first.** `runImplementAgent` does it among its preconditions
-  (step 3 above); `runPreflight` does it as its first act, before it reads the
-  issue, because it is a public entry point of its own — `runImplementAgent`
-  never calls it, so it inherits nothing from that run's startup. A shell that
+  vocabulary first.** `runImplementAgent` does it among its preconditions;
+  `runPreflight` does it as its first act, before it reads the issue, because
+  it is reached both from `runPhase` and, in a consumer's own tooling, on its
+  own. `runPhase` inherits that check on the human edge, where preflight runs
+  before the `started` transition; on the machine edge, which skips preflight,
+  it makes the check itself. Either way no row is applied without it. A shell that
   applies a row without the check in front of it is the rotted binding
   shopfloor#45 exists to eliminate, so the two go together. A missing
   vocabulary **throws** rather than becoming a refused verdict: a verdict says
   this issue must not be implemented and is answered by labelling it, and
   labelling is what an unconfigured repository cannot be trusted to do.
-- **The package owns the transition; today it applies exactly one of them.**
-  `runPreflight` applies the `refused` row — the transition this package
-  already owned, previously as two string literals. `started`, `succeeded`,
-  `exhausted`, and `failed` are stated, exported, and applied by the caller's
-  glue via `applyLabelTransition`, because the run does not own the issue's
-  lifecycle: the caller checks out the branch and opens the PR, and the verb
-  that absorbs both (design §2) is not built. What the table buys before then
-  is that the glue applies _the_ transition rather than a second guess at it.
+- **The package owns the transition, and since shopfloor#47 it applies every
+  row.** `runPreflight` applies `refused`; `runPhase` applies `started` before
+  the branch exists and `succeeded`, `exhausted`, or `failed` on the way out —
+  the failing ones inside the `catch`, before the error is rethrown, so no way
+  out of a started run leaves the issue in flight. `applyLabelTransition` and
+  the table stay exported anyway: a consumer's own glue acting on a run should
+  apply _the_ transition rather than a second guess at it.
 
 ## Standards in repo, procedures in skills
 

@@ -59,6 +59,19 @@ Prefer the real thing where the layout _is_ the thing under test:
 into a temp directory rather than stubbing `fs`, because a stubbed filesystem
 could only restate the layout the probe assumes instead of checking it.
 
+**One shell composes other shells, and it gets one more seam.** `runPhase`
+(shopfloor#47) is sequencing and nothing else — its whole content is the order
+it calls `runAdmission`, `runPreflight`, `ensureAgentBranch`,
+`runImplementAgent`, `ensurePullRequest`, `postVerifyComment`, and
+`applyLabelTransition` in, and what it does when one of them refuses. So its
+wiring test stubs those siblings, not only `node:child_process`: reaching them
+through the process boundary would mean scripting a dozen `gh` and `git`
+answers to assert an order, which tests the script rather than the sequence.
+Every decision underneath stays real — the pure functions are never mocked —
+so a test can still only assert a sequence a run would actually produce. The
+allowance is for a shell whose subject _is_ the composition; a shell that
+merely calls one other shell stubs the boundary like everything else.
+
 Two rules hold there:
 
 - **Stub the boundary, not the logic.** `describeRunawayKill` stays real — a
