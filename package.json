@@ -1,6 +1,6 @@
 {
   "name": "@galosandoval/shopfloor",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Harness for a GitHub-issue-driven SDLC agent loop: spawn Claude Code headlessly to implement an issue as a draft PR, with runaway guards, preflight refusal, and verify-comment posting.",
   "type": "module",
   "license": "MIT",
