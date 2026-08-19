@@ -1,5 +1,380 @@
 # @galosandoval/shopfloor
 
+## 0.17.0
+
+### Minor Changes
+
+- [#71](https://github.com/galosandoval/shopfloor/pull/71) [`ea20633`](https://github.com/galosandoval/shopfloor/commit/ea20633e4364028cb3dcf6a6483c6aeaf4ffeaf9) Thanks [@galosandoval](https://github.com/galosandoval)! - Add `classifyTrigger` and the setup-free admission callable (shopfloor#46).
+
+  Trigger logic lived in `if:` expressions and `env:` blocks in consumer YAML,
+  which destructures the webhook payload before anything typed can see it: which
+  event means which phase, and who may start one, could be neither typed nor
+  tested. The consumer now passes the **raw payload** and gets a verdict.
+
+  **New:**
+
+  - `classifyTrigger(payload)` — pure over the raw webhook payload. Returns the
+    phase, issue number, actor, and repo for the two admitted edges
+    (`issues.labeled` with `ready-for-agent`; `workflow_run.completed` with
+    `conclusion: failure` on an `agent/issue-<n>` branch), or an explicit
+    not-a-trigger verdict with a reason. It never throws — an unrecognized or
+    malformed payload is the common case, not an error.
+  - `evaluateAdmission` / `runAdmission`, and the **`shopfloor-admit` bin** —
+    classification, authorization, the concurrency check, and the attempt ceiling
+    as one verdict, runnable by a job with nothing installed but this package and
+    `gh`. The verdict is one line of JSON on stdout so a workflow can gate the
+    expensive job on it.
+  - `agentBranchForIssue` / `issueNumberFromBranch` / `AGENT_BRANCH_PREFIX` — the
+    `agent/issue-<n>` convention, now package-owned, so your glue and this package
+    name the same branch instead of agreeing by eye.
+
+  **New failure modes, all of them refusals before any spend:**
+
+  - Admission **refuses on uncertainty**, like the spend gate it wraps and unlike
+    every other guard here. An unreadable issue is `undetermined`, not "no
+    attempts" — it is not knowing whether something is already spending. Give the
+    probe a token that can read issues, or admission refuses every event.
+  - It refuses at three attempts per issue by default (`--max-attempts <n>`, or
+    `maxAttempts`), and while the issue carries `agent:in-progress`. Both are new
+    ceilings on a loop that previously had none. **The token needs issue read
+    access** — the count comes from `gh api repos/…/issues/<n>/timeline` and
+    `gh issue view`.
+
+  **Where the counts come from, and why it is not where the design said.** Both
+  are read off the issue: attempts is how many times `agent:in-progress` was ever
+  added (GitHub keeps `labeled` timeline events permanently, so this survives the
+  label being cleared and counts runs killed before cleanup), and in-flight is
+  whether that label is on the issue now. Design §4/§7 derive both from
+  `gh run list --branch`, which cannot work — a run triggered by `issues.labeled`
+  or `workflow_run` executes on the **default branch**, so a list filtered by
+  `agent/issue-<n>` is empty on every real run. Nothing new is written to make
+  this work; the `started` transition already adds the label.
+
+  **Read the concurrency check for exactly what it is:** a narrowing, not a lock.
+  A maintainer clearing a stuck `agent:in-progress` unlocks concurrent spending,
+  and two events landing together can both read it absent. Keep the
+  `concurrency:` group in your workflow — it is the real mutual exclusion, and
+  this does not replace it.
+
+  **`shopfloor-authorize` changes behaviour in two small ways.** A login ending
+  in `[bot]` is now probed rather than refused as malformed: the machine edge
+  triggers as an App, and `"github-actions[bot]" is not a GitHub login` was a
+  false reason. The endpoint answers for these logins with `permission: "none"`,
+  so **a bot actor still refuses** — as `not-permitted` now instead of
+  `undetermined`. If you authorize the loop's own retrigger today by some other
+  route, nothing changes; if you were relying on the `undetermined` spelling, it
+  moved. Separately, a refusal caused by `gh` being missing now says so rather
+  than reporting a bare `the permission probe failed`.
+
+  `shopfloor-authorize` otherwise still ships unchanged. Nothing here is wired into
+  `runImplementAgent`, and `runPhase` — the one verb that would call admission and
+  then run — is not built: this is the admission half, shipped first so the spend
+  gate never ends up behind the spend.
+
+## 0.16.0
+
+### Minor Changes
+
+- [#69](https://github.com/galosandoval/shopfloor/pull/69) [`1459347`](https://github.com/galosandoval/shopfloor/commit/145934727c320f79b160993304758078c3ef99e3) Thanks [@galosandoval](https://github.com/galosandoval)! - Label vocabulary + pure state transition table, with verify-and-refuse at
+  startup (shopfloor#45).
+
+  **What breaks.** A run against a repository missing any of the six labels now
+  **fails before the spawn**, naming every one that is absent, where it
+  previously started and silently skipped the transition later. So does a run
+  whose `gh label list` cannot be read at all — that refusal says "could not be
+  read" rather than naming labels, because an unauthenticated `gh` and an
+  unconfigured repository are different things to go fix. If you are on `0.10.x`
+  and have never run `npx shopfloor-init`, expect this to fail your next run:
+  `npx shopfloor-doctor` shows the gap, `npx shopfloor-init` creates what is
+  missing. This is deliberate. In the live consumer, a workflow step swapping
+  `ready-for-agent` for `ready-for-human` had failed on _every_ successful run
+  since it was written — the label did not exist and `|| true` swallowed it — so
+  a transition the pipeline claimed to make had never once happened.
+
+  `runPreflight` fails the same way, and for the same reason: it applies the
+  `refused` row, and it is a public entry point `runImplementAgent` never calls,
+  so a job running it as its own CI step inherits none of the run's startup
+  checks. It now verifies the vocabulary as its first act — before it reads the
+  issue — and **throws** `ImplementAgentError` rather than returning a refused
+  verdict. The two are different failures: a verdict says the issue must not be
+  implemented and is answered by labelling it, which is exactly the write an
+  unconfigured repository cannot be trusted with. If you call `runPreflight`
+  against a repository lacking a label, expect a throw where you previously got a
+  verdict — and previously got a label transition that silently did not happen.
+  A job running preflight and the run pays for the `gh label list` probe twice.
+
+  The check **verifies and never creates**: creating labels is a durable write to
+  a shared human workspace, and it stays with `init`, at a moment a human asked
+  for it. It is the last precondition before the CLI probe, so every local check
+  gets to refuse for free first.
+
+  **Also new to a preflight refusal.** `runPreflight` no longer carries
+  `agent:implement` / `agent:blocked` as string literals; it applies the
+  `refused` row of the transition table, which additionally sets
+  `ready-for-human` and drops `ready-for-agent`. It now reads the issue's labels
+  (on the `gh issue view` it already made) rather than assuming them, so it never
+  re-adds a label the issue already has, and a `gh` failure there surfaces
+  instead of being swallowed.
+
+  **Its comment text changed, and the old one was wrong.** A refusal used to say
+  "re-add `agent:implement` to retry". The scaffolded workflow triggers on
+  `ready-for-agent`, and GitHub fires `issues.labeled` only when a label is
+  _added_ — so following that instruction relabelled the issue without
+  retriggering anything. It now names `ready-for-agent` (exported as
+  `ENTRY_LABEL`) and states the labels the transition left behind.
+
+  **New exports.** `LABEL_VOCABULARY` and `REQUIRED_LABELS` move out of the
+  doctor module onto their own — same names, same values, still exported from the
+  package root, so no import changes. Alongside them: `ENTRY_LABEL`,
+  `applyLabelTransition`
+  (the `gh` shell), the pure `evaluateLabelTransition` with `TRANSITION_TABLE`
+  and `RUN_OUTCOMES`, and `evaluateLabelVocabulary` /
+  `runLabelVocabularyCheck` behind the new precondition.
+
+  Every outcome the harness can produce has exactly one row, `ready-for-human`
+  included — it is set by every terminal outcome, whatever the run produced. Each
+  row is a target set rather than a list of edits, so applying one twice writes
+  nothing the second time, and labels outside the vocabulary are never touched.
+  This package applies exactly one row itself today (`refused`); `started`,
+  `succeeded`, `exhausted`, and `failed` are yours to apply from CI glue, which
+  is what the exports are for.
+
+## 0.15.0
+
+### Minor Changes
+
+- [#67](https://github.com/galosandoval/shopfloor/pull/67) [`9d1fb81`](https://github.com/galosandoval/shopfloor/commit/9d1fb814009315b6dcc03080887dda26f075c6c8) Thanks [@galosandoval](https://github.com/galosandoval)! - A run refuses before spawning when its prompt was never filled in
+  (shopfloor#44).
+
+  **New failure mode: a prompt that previously ran now refuses.** Two things in
+  the prompt template fail the run among the pre-spawn preconditions, before any
+  `git` or `gh` probe and before a single token is spent:
+
+  - **`TODO(shopfloor)`** — the sentinel `shopfloor init` writes wherever it could
+    not read a value off your project. The refusal names the lines it is on.
+  - **A `{{TOKEN}}` outside the six this package substitutes** — `{{ISSUE_NUMBER}}`,
+    `{{ISSUE_TITLE}}`, `{{BRANCH}}`, `{{PR_DESCRIPTION_FILE}}`,
+    `{{VERIFY_REPORT_FILE}}`, `{{SCREENSHOTS_DIR}}`. A misspelling, or a token that
+    used to exist — `{{STANDARDS_DIR}}` is the live case. The refusal names each
+    offender beside the table of real ones.
+
+  Both previously ran. An unrecognized token rendered as literal text, unchanged
+  and unreported, so an unfilled placeholder was indistinguishable from prose: a
+  consumer who skipped filling the environment block paid for a whole run that
+  then failed on a command their repository does not have. The refusal is the
+  design's last open item, and it is why `init` writes a sentinel rather than a
+  plausible default.
+
+  **Is the bump safe for you?** A template with no sentinel, carrying only the six
+  tokens spelled exactly as above, is unaffected. `npx shopfloor-doctor` reports
+  most of the rest without spending anything — but a green doctor is not proof,
+  because the run is the stricter check of the two: the doctor looks for the
+  sentinel only inside the environment fences and tolerates spaces and
+  lower-casing in a token, while the run refuses on the sentinel **anywhere** in
+  the prompt and on `{{ ISSUE_NUMBER }}` or `{{issue_number}}` as readily as on a
+  misspelling — the renderer substitutes none of them, so all three would have
+  reached the agent as literal text.
+
+  **The doctor's wording changed to match.** Its `prompt-tokens` check used to
+  report an unrecognized token as one that "renders as literal text, unchanged and
+  unreported"; that is no longer true of any run, so it now reports one that
+  "nothing substitutes, so a run refuses before spawning". Same check, same
+  pass/fail, new detail string — worth knowing only if you assert on the doctor's
+  text.
+
+  **What still does not refuse:** a _missing_ token. Leaving one out is a choice
+  this package does not second-guess — the doctor reports it, a run does not
+  refuse over it. And the check reads the template rather than the rendered
+  prompt, so a `{{...}}` that arrives inside an issue title is the issue's data
+  and never blocks the loop.
+
+  **New export: `evaluatePromptReadiness`** — the pure verdict, over prompt text
+  and a token table, for tooling that wants to ask before a run does.
+
+## 0.14.0
+
+### Minor Changes
+
+- [#64](https://github.com/galosandoval/shopfloor/pull/64) [`6da6ed6`](https://github.com/galosandoval/shopfloor/commit/6da6ed643ae254f8d0a832f5e81369dcbf66517c) Thanks [@galosandoval](https://github.com/galosandoval)! - `shopfloor init` — one command from an empty repository to a working loop
+  (shopfloor#43).
+
+  **New bin: `shopfloor-init`.** `doctor` tells you what is wrong with your setup;
+  `init` fixes the half a command can. It runs `doctor`'s evaluation first and
+  writes only what that verdict says is missing: the six labels, the workflow
+  wired to `issues.labeled` and `workflow_run.completed`, and the prompt carrying
+  the six substituted tokens.
+
+  **The environment block is filled, not left as a placeholder.** `init` reads
+  your lockfile (`bun.lock`, `pnpm-lock.yaml`, `yarn.lock`, `package-lock.json`)
+  and your `package.json` scripts, and writes the install command and the gate —
+  `pnpm run typecheck && pnpm run test` — into the prompt's fenced environment
+  block. Where it cannot determine a value it writes the `TODO(shopfloor)`
+  sentinel, which `doctor`'s `prompt-environment-block` check already fails on.
+  Never an empty string and never prose: a scaffold that emitted a plausible
+  default would replicate the `standardsDir` failure shape in the one file a run
+  cannot work without.
+
+  **New check: `workflow-unfilled`.** The same sentinel names what `init` cannot
+  know about the workflow — the `workflow_run` source, and the `claude` version
+  when no `CLI_VERSION` is stated — and this check is what refuses on it. Read
+  this as a new failure you will see: **a repository `init` just scaffolded fails
+  `doctor` on `workflow-unfilled` until you replace those values.** That is the
+  point. Without it a scaffolded workflow reads fully green while its machine
+  edge is dead, because a `workflow_run` block whose `workflows:` names a
+  sentinel is still wired to the event and passes `workflow-triggers`. If you
+  consume `SetupCheckId`, it has gained a member.
+
+  **This is the first thing in this package that writes to your repository**, so
+  the constraints matter as much as the capability:
+
+  - **Re-runnable.** A second run on a configured repository writes nothing.
+  - **Never a silent overwrite.** An existing file is left alone or rewritten only
+    after you confirm it by name. With no TTY attached — in CI — every overwrite
+    is declined, so this is safe to run there, though a fresh repository will
+    still have labels created and files scaffolded.
+  - **An unreadable `gh` creates nothing.** A label probe that answered `unknown`
+    is not evidence of a missing label, and creating six on no evidence is a
+    durable write to a shared human workspace.
+  - **A prompt whose environment `init` cannot account for is left alone.** No
+    fences means the environment is prose this command cannot locate. A rewrite
+    for a missing _token_ keeps an already-filled block verbatim rather than
+    rebuilding it. And a block still carrying the sentinel on a project that
+    states nothing to fill it with is skipped, not re-derived — otherwise every
+    run would ask you to approve an overwrite of a file `init` itself wrote.
+
+  What `init` does not do, and names in its report instead: set secrets,
+  authenticate `gh`, or merge the scaffolded workflow to your default branch —
+  without which the `workflow_run` edge cannot fire. Every planned write carries
+  the reason it is there, and the merge rides on the action that creates the need
+  for it, because with no workflow on disk the doctor reports that check unknown
+  rather than failing and nothing else would say it.
+
+  **The scaffolded workflow is a starting point you own**, wired to both events,
+  checking out with the PAT, running the spend gate first, and **installing the
+  `claude` CLI** — the harness spawns it from PATH, and nothing else on a fresh
+  runner puts it there, so a scaffold without that step produced a workflow that
+  could not run. Both `npx` invocations and that install are pinned: to the
+  version of this package doing the scaffolding, and to your `CLI_VERSION`. Its
+  job condition filters the label on `issues` without filtering `workflow_run`
+  out of existence — `github.event.label` is null on that event, so a bare label
+  condition would ship a workflow that passes its own doctor with the loop half
+  of it dead. Three things in it are inert by design and marked with the
+  sentinel: the CI workflow whose completion retriggers the loop, the CLI version
+  when you state none, and how a `workflow_run` event resolves to an issue number
+  — the outer loop, designed and not shipped.
+
+  **The six labels are created with a colour and a description**, not as bare
+  names GitHub then colours at random.
+
+  **New exports:** `runInit`, `formatInitResult`, `LABEL_VOCABULARY` with the
+  `LabelDefinition` type, and the types `RunInitInput`, `RunInitResult`,
+  `InitPlan`, `InitAction`, `CreateLabelsAction`, `WriteFileAction`, `InitSkip`.
+  The planner, the scaffold builders, and the project probe stay internal — the
+  command is the surface. **`REQUIRED_LABELS` is now `readonly string[]`** rather
+  than a literal tuple, derived from `LABEL_VOCABULARY`; code that depended on
+  the literal member types will need widening.
+
+  **Two scope lines in `CLAUDE.md` are amended** rather than quietly stretched:
+  the package now ships a prompt _skeleton_ (a shim to the skills plugin — the
+  content is still read off your project, never shipped) and a workflow template
+  (a starting point you then own; nothing reads it back). Label creation lands
+  here, at a moment a human asked for it, which is where design §11 puts it — but
+  nothing is being removed from a run: no run has ever created a label, and a
+  run's side stays verify-and-refuse. No existing behaviour changes.
+
+## 0.13.0
+
+### Minor Changes
+
+- [#62](https://github.com/galosandoval/shopfloor/pull/62) [`b099715`](https://github.com/galosandoval/shopfloor/commit/b0997151073ca8c12744085e18033cfbcef6e91f) Thanks [@galosandoval](https://github.com/galosandoval)! - A run now reports what it cost (shopfloor#42).
+
+  **New field on the run result: `usage`.** The CLI's `stream-json` output already
+  flowed through the harness process — the idle guard reads it as a heartbeat —
+  and every byte of it was dropped. It is now parsed as it arrives, and
+  `RunImplementAgentResult.usage` carries the tokens (`inputTokens`,
+  `outputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`), the
+  `costUsd` where the stream reports one, and a `source` field. `RunUsage` and
+  `TokenUsage` are exported.
+
+  This lands before the outer loop deliberately, not after it: the inner loop
+  shipped in 0.11.0 multiplies spend by N and bounds a run by attempts, which is a
+  ceiling on the wrong axis. Nothing in this package acts on the numbers yet — the
+  consumer is your CI glue, and evals.
+
+  **Read `source` before treating the numbers as a total.** `'reported'` means
+  every spawn reached its terminal `result` event and these are the CLI's own
+  figures. `'observed'` means at least one did not — a run a guard killed, or one
+  whose stream was unreadable — and the totals are then the harness's own sum over
+  the `assistant` messages it watched go by, each counted at the snapshot taken
+  when its message started. **That sum is not a total, and not uniformly a floor.**
+  `outputTokens` and `cacheCreationInputTokens` undercount, since the snapshot
+  precedes the message's final count and a run killed mid-message contributes
+  nothing. `inputTokens` and `cacheReadInputTokens` overcount, usually by a lot:
+  every turn re-sends the conversation, so summing across N turns counts the same
+  prefix up to N times. A run that iterated reports the sum across its iterations,
+  and degrades to `'observed'` if any single iteration did.
+
+  A `'observed'` total carries no `costUsd` even where one was seen: a cost covers
+  a whole session, and a complete price beside an incomplete token count is
+  exactly the misreading `source` exists to prevent.
+
+  **`ImplementAgentError` gained a `usage` field**, so a failed run reports its
+  spend too — a guard kill, a non-zero CLI exit, an exhausted attempt ceiling, and
+  a run that committed nothing all spent real tokens and all leave by throwing. It
+  is `undefined` only for a failure that refused before the spawn.
+
+  **No new failure mode.** Metering never fails a run: a malformed or unrecognized
+  line is skipped, and a run whose stream said nothing about usage reports zeroes
+  with `source: 'observed'` rather than absence — so "free" is never confused with
+  "unmeasured".
+
+  Two things to know if you depend on the surrounding behaviour. `usage` is
+  non-optional on `RunImplementAgentResult`, so a hand-built result object (a test
+  double, say) will not typecheck until it carries one. And `SpawnClaudeResult`
+  gained the same field — internal, but it is what the orchestrator's wiring tests
+  construct.
+
+## 0.12.0
+
+### Minor Changes
+
+- Sharpen the authorization guard shipped in 0.11.0 (shopfloor#41).
+
+  **Breaking for anyone constructing an `AuthorizationInput` by hand.**
+  `PermissionProbe`'s discriminant is now `answered`, not `read`: `read` is also
+  one of the permission levels being judged, and `{ read: true, permission:
+'read' }` reads as a contradiction it is not. `AuthorizationInput.probe` is now
+  optional — omit it and the verdict is `undetermined` with "the permission was
+  never probed", which is what a caller that skipped the probe should get rather
+  than a probe result invented on its behalf. Callers of `runAuthorization` (the
+  shell) and of `shopfloor-authorize` (the bin) are unaffected; only direct
+  callers of the pure `evaluateAuthorization` need to rename the field.
+
+  **The probe now reads `role_name`.** `runAuthorization` shells
+  `gh api repos/{repo}/collaborators/{actor}/permission --jq '.role_name //
+.permission'`. The endpoint's legacy `permission` field reports only `admin` /
+  `write` / `read` / `none`, which collapses `maintain` into `write` and `triage`
+  into `read` and makes two of the levels this guard distinguishes unreachable.
+  An API old enough not to send `role_name` falls back to `permission` rather
+  than refusing.
+
+  **New failure mode: custom repository roles are now refused.** An
+  organization's custom role arrives as a name this guard has never seen, so its
+  holder is `undetermined` and the run stops — deliberate, given the guard
+  refuses on uncertainty, but it will stop a run that the previous
+  `permission`-field probe would have allowed. If your org uses custom roles,
+  check that the actors triggering runs hold `admin`, `maintain`, or `write`
+  directly.
+
+  An authorized verdict's `permission` is now the exported `SpendingPermission`
+  union rather than `string`, so a caller switching on it gets exhaustiveness
+  from the compiler.
+
+  One internal move rides along: `asExecFailure` in `src/process/` is now the
+  single narrowing of a rejected `execFile`, shared by the doctor's probe and
+  this one, along with the `node:child_process` stub their wiring tests use. Not
+  exported; nothing about the public surface changes there.
+
 ## 0.11.0
 
 ### Minor Changes
