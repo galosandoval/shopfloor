@@ -106,18 +106,85 @@ function runningCliVersion(version: string | undefined) {
  * against this — stubbing the check itself would prove only that a stub was
  * called.
  */
-function pluginDirsAreValid({ shipsHooks }: { shipsHooks?: boolean } = {}) {
+function pluginDirsAreValid({
+  shipsHooks,
+  transcriptReadable = true
+}: { shipsHooks?: boolean; transcriptReadable?: boolean } = {}) {
   statSyncMock.mockImplementation((target: string) => {
     const isCapability =
       target.endsWith('/hooks') || target.endsWith('/.mcp.json')
     if (isCapability && !shipsHooks) throw new Error('ENOENT')
     return { isDirectory: () => !target.endsWith('.json') }
   })
-  readFileSyncMock.mockImplementation((target: string) =>
-    target.endsWith('plugin.json')
-      ? JSON.stringify({ name: 'skills', skills: ['./skills/tdd'] })
-      : 'an agent-written PR description'
-  )
+  readFileSyncMock.mockImplementation((target: string) => {
+    if (target.endsWith('plugin.json'))
+      return JSON.stringify({ name: 'skills', skills: ['./skills/tdd'] })
+    if (target.endsWith('transcript.jsonl')) {
+      if (!transcriptReadable) throw new Error('ENOENT')
+      return transcript
+    }
+    return 'an agent-written PR description'
+  })
+}
+
+/**
+ * The session transcript the closure condition (shopfloor#48) grades — every
+ * run reads one now, so a run whose trajectory closes is the baseline rather
+ * than a per-test arrangement. Set in `beforeEach`; a test about the gate
+ * assigns another built by {@link trajectoryOf}.
+ */
+let transcript = ''
+
+/** One JSONL transcript line per event. */
+function transcriptOf(...events: unknown[]): string {
+  return events.map((event) => JSON.stringify(event)).join('\n')
+}
+
+function bashTurn(id: string, command: string) {
+  return {
+    type: 'assistant',
+    message: {
+      id: `msg-${id}`,
+      content: [{ type: 'tool_use', id, input: { command } }]
+    }
+  }
+}
+
+function toolResult(id: string, isError: boolean) {
+  return {
+    type: 'user',
+    message: {
+      content: [{ type: 'tool_result', tool_use_id: id, is_error: isError }]
+    }
+  }
+}
+
+/**
+ * A second attempt that does the work the way it claims to — which is what the
+ * closure feedback asks for, and the only thing that ends such a run.
+ */
+function fixesTrajectoryOnSecondAttempt() {
+  spawnClaudeMock.mockImplementation(async () => {
+    if (spawnClaudeMock.mock.calls.length >= 2) transcript = trajectoryOf()
+    return spawnResult()
+  })
+}
+
+/**
+ * A trajectory that closes: the suite run red, run green, and only then a
+ * commit. `broken` drops the failing run and the gate before the commit, which
+ * is the shortcut-to-green shape both gating invariants exist to catch.
+ */
+function trajectoryOf({ broken }: { broken?: boolean } = {}): string {
+  return broken
+    ? transcriptOf(bashTurn('t1', 'git commit -m "ship it"'))
+    : transcriptOf(
+        bashTurn('t1', 'npm test'),
+        toolResult('t1', true),
+        bashTurn('t2', 'npm test'),
+        toolResult('t2', false),
+        bashTurn('t3', 'git commit -m "feat: the work"')
+      )
 }
 
 function baseInput(
@@ -185,6 +252,9 @@ beforeEach(() => {
   // is restored to the happy default here rather than leaking into the next.
   runningCliVersion('2.1.220')
   gateExits(0)
+  // Every run is graded against its transcript before it may close, so one
+  // that closes is the baseline — see `trajectoryOf`.
+  transcript = trajectoryOf()
   // Every run resolves a plugin directory now — the bundled one when nothing
   // states a list — so a filesystem answering plugin probes is the baseline,
   // not a per-suite arrangement.
@@ -1012,5 +1082,123 @@ describe('runImplementAgent inner loop', () => {
     await runImplementAgent(gated())
 
     expect(preserveIterationTranscript).toHaveBeenCalledOnce()
+  })
+})
+
+/**
+ * The closure condition (shopfloor#48) as a run actually reaches it. The
+ * verdicts themselves are tested pure in `guardrails/closure.test.ts`; these
+ * exist because that suite would stay green with the gate never armed, which is
+ * the coverage gap this repository has shipped once already.
+ */
+describe('runImplementAgent trajectory closure', () => {
+  const gated = (overrides: Partial<RunImplementAgentConfig> = {}) =>
+    baseInput({
+      ...overrides,
+      runPolicy: { gateCommand: 'bun run verify', ...overrides.runPolicy }
+    })
+
+  it('closes a green run whose trajectory holds', async () => {
+    const result = await runImplementAgent(gated())
+
+    expect(result.iterations).toBe(1)
+  })
+
+  it('blocks a green gate reached on a violating trajectory once the budget is spent', async () => {
+    transcript = trajectoryOf({ broken: true })
+
+    await expect(
+      runImplementAgent(gated({ runPolicy: { maxIterations: 1 } }))
+    ).rejects.toMatchObject({
+      closure: {
+        cause: 'violation',
+        violations: ['gate-before-commit', 'red-before-green']
+      }
+    })
+  })
+
+  it('spends another attempt on a violating trajectory while budget remains', async () => {
+    transcript = trajectoryOf({ broken: true })
+    fixesTrajectoryOnSecondAttempt()
+
+    const result = await runImplementAgent(
+      gated({ runPolicy: { maxIterations: 3 } })
+    )
+
+    expect(result.iterations).toBe(2)
+  })
+
+  it('carries the violated invariants into the next attempt’s prompt', async () => {
+    transcript = trajectoryOf({ broken: true })
+    fixesTrajectoryOnSecondAttempt()
+
+    await runImplementAgent(gated({ runPolicy: { maxIterations: 3 } }))
+
+    expect(spawnNumber(2).prompt).toContain('gate-before-commit')
+    expect(spawnNumber(1).prompt).not.toContain('gate-before-commit')
+  })
+
+  it('iterates a run with no gate command when its trajectory does not close', async () => {
+    // The only thing that makes a gateless run spawn twice: without a gate
+    // there is no other signal, and the trajectory needs no consumer config.
+    transcript = trajectoryOf({ broken: true })
+    fixesTrajectoryOnSecondAttempt()
+
+    const result = await runImplementAgent(baseInput())
+
+    expect(spawnSyncMock).not.toHaveBeenCalled()
+    expect(result.iterations).toBe(2)
+  })
+
+  it('blocks a run whose transcript could not be read, budget or not', async () => {
+    pluginDirsAreValid({ transcriptReadable: false })
+
+    await expect(
+      runImplementAgent(gated({ runPolicy: { maxIterations: 3 } }))
+    ).rejects.toMatchObject({ closure: { cause: 'no-evidence' } })
+    // No second attempt: another spawn cannot conjure a transcript.
+    expect(spawnClaudeMock).toHaveBeenCalledOnce()
+  })
+
+  it('blocks when capture did not write this attempt’s transcript', async () => {
+    // The stale-evidence hole: `captureTranscript` returning false leaves the
+    // *previous* attempt's session sitting at `transcriptFile`, perfectly
+    // readable and about a different attempt. A readable file is not the
+    // question; a captured one is.
+    vi.mocked(captureTranscript).mockReturnValue(false)
+
+    await expect(runImplementAgent(gated())).rejects.toMatchObject({
+      closure: { cause: 'no-evidence' }
+    })
+  })
+
+  it('does not block on an advisory finding', async () => {
+    transcript = transcriptOf(
+      bashTurn('t1', 'npm test'),
+      toolResult('t1', true),
+      bashTurn('t2', 'npm test'),
+      toolResult('t2', false),
+      bashTurn('t3', 'git commit -m "feat: the work"'),
+      // Gating invariants intact; `no-forbidden-git-ops` is not one of them.
+      bashTurn('t4', 'git push --force origin HEAD')
+    )
+
+    await expect(runImplementAgent(gated())).resolves.toMatchObject({
+      iterations: 1
+    })
+  })
+
+  it('grades against the consumer’s own gate command', async () => {
+    transcript = transcriptOf(
+      bashTurn('t1', 'make check'),
+      toolResult('t1', true),
+      bashTurn('t2', 'make check'),
+      toolResult('t2', false),
+      bashTurn('t3', 'git commit -m "feat: the work"')
+    )
+
+    await expect(
+      runImplementAgent(gated({ runPolicy: { gateCommand: 'make check' } }))
+    ).resolves.toMatchObject({ iterations: 1 })
   })
 })

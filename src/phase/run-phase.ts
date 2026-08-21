@@ -31,6 +31,10 @@ import { postVerifyComment } from '../guardrails/post-verify'
 import { runPreflight } from '../guardrails/run-preflight'
 import { runLabelVocabularyCheck } from '../guardrails/run-label-vocabulary'
 import { applyLabelTransition } from '../issue-state/apply-transition'
+import {
+  commentOnIssueBestEffort,
+  type IssueRef
+} from '../issue-state/issue-comment'
 import type { RunOutcome } from '../issue-state/transition'
 import {
   resolveImplementConfig,
@@ -38,6 +42,7 @@ import {
   type RunImplementAgentConfig
 } from '../orchestration/config'
 import { ImplementAgentError } from '../orchestration/implement-error'
+import type { ClosureBlock } from '../guardrails/closure'
 import {
   runImplementAgent,
   type RunImplementAgentResult
@@ -221,12 +226,6 @@ export async function runPhase(
   }
 }
 
-/** The issue a run is about, in the shape `gh` and every shell below take it. */
-interface IssueRef {
-  issueNumber: string
-  repo: string
-}
-
 /**
  * Everything between a finished run and a human owning it: push what was
  * committed, locate or open the draft PR, post the verify proof, and set
@@ -302,7 +301,7 @@ async function requireLabelVocabulary(
  */
 async function runPhaseAgent(
   runInput: RunImplementAgentConfig,
-  context: { issue: IssueRef; branch: string; cwd: string }
+  context: PhaseRunContext
 ): Promise<RunImplementAgentResult> {
   try {
     return await runImplementAgent(runInput)
@@ -316,6 +315,15 @@ async function runPhaseAgent(
     // not a pull request; the branch is there to be looked at.
     await pushBestEffort(context)
 
+    // Said before the transition, not after: the transition is a `gh` call
+    // that can itself fail, and it is the *comment* that carries the only copy
+    // of the violated invariants a human ever sees on the issue. Losing the
+    // label leaves an issue mislabelled; losing the comment leaves
+    // `agent:blocked` with no statement of what blocked it.
+    if (error instanceof ImplementAgentError && error.closure) {
+      await commentOnClosureBlock(context, error.closure)
+    }
+
     await applyLabelTransition({
       ...context.issue,
       outcome: evaluatePhaseOutcome({
@@ -324,15 +332,55 @@ async function runPhaseAgent(
           error instanceof ImplementAgentError ? error.exhausted : false
       })
     })
+
     throw error
   }
 }
 
-/** A push whose own failure is reported and then dropped — see its caller. */
-async function pushBestEffort(context: {
+/**
+ * What the failure path needs about the run in flight — the three values that
+ * have travelled together since this file existed, named once rather than
+ * respelled at each helper below.
+ */
+interface PhaseRunContext {
+  issue: IssueRef
   branch: string
   cwd: string
-}): Promise<void> {
+}
+
+/**
+ * Say on the issue why the trajectory blocked this run (shopfloor#48).
+ *
+ * `agent:blocked` says a human is needed; it does not say what for, and the
+ * one thing this failure has that the others do not is a stated list of
+ * invariants the run violated. Without the comment that list reaches only the
+ * failure-reason artifact, which is on the CI run rather than on the issue the
+ * human is looking at.
+ *
+ * Best-effort, like every other report this package writes: a comment that
+ * fails to post must not replace the failure worth reporting.
+ */
+async function commentOnClosureBlock(
+  context: PhaseRunContext,
+  closure: ClosureBlock
+): Promise<void> {
+  const violated =
+    closure.violations.length > 0
+      ? `\n\n**Violated:** ${closure.violations.map((id) => `\`${id}\``).join(', ')}`
+      : ''
+
+  await commentOnIssueBestEffort(
+    context.issue,
+    `The implement phase blocked this run on its own trajectory.\n\n` +
+      `**Reason:** ${closure.reason}${violated}\n\n` +
+      `What the run committed is on \`${context.branch}\`; no pull ` +
+      'request was opened for it.',
+    'the closure block'
+  )
+}
+
+/** A push whose own failure is reported and then dropped — see its caller. */
+async function pushBestEffort(context: PhaseRunContext): Promise<void> {
   try {
     await pushAgentBranch({ branch: context.branch, cwd: context.cwd })
   } catch (error) {

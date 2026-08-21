@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { applyLabelTransition } from '../issue-state/apply-transition'
+import { commentOnIssue } from '../issue-state/issue-comment'
 import { ENTRY_LABEL } from '../issue-state/vocabulary'
 import { ImplementAgentError } from '../orchestration/implement-error'
 import {
@@ -106,15 +107,10 @@ export async function runPreflight(
       outcome: 'refused',
       currentLabels
     })
-    await gh([
-      'issue',
-      'comment',
-      input.issueNumber,
-      '--repo',
-      input.repo,
-      '--body',
+    await commentOnIssue(
+      { issueNumber: input.issueNumber, repo: input.repo },
       refusalComment(verdict.reason, transition.add)
-    ])
+    )
   }
 
   return { verdict }

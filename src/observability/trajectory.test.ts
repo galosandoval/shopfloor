@@ -1,6 +1,8 @@
 import {
   checkTrajectory,
   formatScorecard,
+  resolveGatePatterns,
+  DEFAULT_GATE_COMMAND_PATTERNS,
   DEFAULT_HEADROOM_FRACTION,
   TRAJECTORY_INVARIANT_IDS,
   type TranscriptEvent,
@@ -360,5 +362,33 @@ describe('formatScorecard', () => {
   it('is a pure function of its findings', () => {
     const findings = checkTrajectory(cleanTrajectory(), OPTIONS)
     expect(formatScorecard(findings)).toBe(formatScorecard(findings))
+  })
+})
+
+describe('resolveGatePatterns', () => {
+  it('grades against the package defaults when no gate command was stated', () => {
+    expect(resolveGatePatterns(undefined)).toEqual(
+      DEFAULT_GATE_COMMAND_PATTERNS
+    )
+  })
+
+  it('recognizes the consumer gate the harness itself runs', () => {
+    const patterns = resolveGatePatterns('make check')
+
+    expect(patterns.some((pattern) => pattern.test('make check'))).toBe(true)
+  })
+
+  it('keeps the defaults alongside it', () => {
+    const patterns = resolveGatePatterns('make check')
+
+    expect(patterns.some((pattern) => pattern.test('npm test'))).toBe(true)
+  })
+
+  it('matches the stated gate literally, metacharacters included', () => {
+    const patterns = resolveGatePatterns('bun run test:all (fast)')
+
+    expect(
+      patterns.some((pattern) => pattern.test('bun run test:all (fast)'))
+    ).toBe(true)
   })
 })

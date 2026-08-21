@@ -225,20 +225,25 @@ out of a started run leaves an issue sitting in `agent:in-progress`.
 
 The phase's own run answers with `RunImplementAgentResult`:
 
-| Field                | Type                    | Meaning                                                                              |
-| -------------------- | ----------------------- | ------------------------------------------------------------------------------------ |
-| `branch`             | `string`                | The branch committed on, as resolved — stated, inferred, or probed                   |
-| `commitsAhead`       | `number`                | Commits on `branch` since `main`, per `git rev-list --count`                         |
-| `prDescription`      | `'agent' \| 'fallback'` | Whether the agent wrote its own PR description, or this run supplied one             |
-| `transcriptCaptured` | `boolean`               | Whether the session transcript was found and copied to `transcriptFile`              |
-| `cliVersion`         | `string \| undefined`   | The CLI version this run spawned; undefined when that probe failed or was unreadable |
-| `iterations`         | `number`                | How many times the run spawned the CLI — always `1` without a `gateCommand`          |
-| `usage`              | `RunUsage`              | What the run spent, summed over its iterations — see below                           |
+| Field                | Type                    | Meaning                                                                                                         |
+| -------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `branch`             | `string`                | The branch committed on, as resolved — stated, inferred, or probed                                              |
+| `commitsAhead`       | `number`                | Commits on `branch` since `main`, per `git rev-list --count`                                                    |
+| `prDescription`      | `'agent' \| 'fallback'` | Whether the agent wrote its own PR description, or this run supplied one                                        |
+| `transcriptCaptured` | `boolean`               | Whether the session transcript was found and copied to `transcriptFile`                                         |
+| `cliVersion`         | `string \| undefined`   | The CLI version this run spawned; undefined when that probe failed or was unreadable                            |
+| `iterations`         | `number`                | How many times the run spawned the CLI — `1` without a `gateCommand`, unless the trajectory sent it round again |
+| `usage`              | `RunUsage`              | What the run spent, summed over its iterations — see below                                                      |
 
-`prDescription: 'fallback'` and `transcriptCaptured: false` are **not**
-failures — the run committed either way. They are there so CI glue can say so
-in the PR rather than presenting generated prose as the agent's own, or an
-absent transcript as an uploaded one.
+`prDescription: 'fallback'` is **not** a failure — the run committed either
+way. It is there so CI glue can say so in the PR rather than presenting
+generated prose as the agent's own.
+
+`transcriptCaptured` used to be the same kind of report, and is not any more:
+the [closure condition](#the-closure-condition) blocks a run whose last attempt
+was not captured, so it is always `true` on a result. It stays on the type
+because a caller reading it as "there is a transcript to upload" still gets the
+right answer.
 
 #### What a run spent
 
@@ -1080,11 +1085,14 @@ Four process invariants, each graded `pass`, `fail`, or `not-evaluable`:
 | `no-forbidden-git-ops` | The run force-pushed or amended                                  |
 | `turn-budget-headroom` | Turn usage reached the headroom threshold (default: ≥80% of cap) |
 
-**Advisory, and only advisory.** A violating run still succeeds — this reports,
-it never fails a run, never throws, and never changes an exit code. A missing
-or unreadable transcript returns `graded: false` rather than an error, and an
-empty or truncated one grades every invariant `not-evaluable`: a run this can't
-read is not a run it condemns.
+**`runTrajectoryCheck` itself is advisory.** It reports, never throws, and
+never changes an exit code. A missing or unreadable transcript returns
+`graded: false` rather than an error, and an empty or truncated one grades
+every invariant `not-evaluable`.
+
+**Two of the four now close a run, though.** See
+[the closure condition](#the-closure-condition) below: `runPhase` grades every
+attempt against this checker before it may succeed.
 
 What counts as the gate is per-repository. The default recognizes a whole-suite
 run under npm, pnpm, yarn, or bun (and jest/vitest invoked directly), excluding
@@ -1096,6 +1104,51 @@ partial scripts like `test:e2e`; a repo whose gate is something else states
 `checkTrajectory` is the pure grader underneath (already-parsed events in,
 findings out) and `formatScorecard` renders findings as markdown — both
 exported for callers assembling their own reporting.
+
+### The closure condition
+
+A green quality gate is necessary and no longer sufficient. Every attempt a run
+makes is graded against the checker above before the run may finish, so an
+agent that reached green by deleting a failing test does not exit as a success.
+
+Two of the four invariants gate:
+
+| Invariant              | Gating? | Why                                                                     |
+| ---------------------- | ------- | ----------------------------------------------------------------------- |
+| `gate-before-commit`   | **yes** | The implement phase's own contract, and what a shortcut to green breaks |
+| `red-before-green`     | **yes** | Same                                                                    |
+| `no-forbidden-git-ops` | no      | The `PreToolUse` command guard already refuses these at spawn time      |
+| `turn-budget-headroom` | no      | A capacity signal — a long run did nothing wrong                        |
+
+What a run does about a gating violation:
+
+- **Attempts left** — it spawns again, with the violated invariants appended to
+  the prompt. This spends from the same `maxIterations` / wall-clock budget a
+  red gate does. A run with no `gateCommand` stated can iterate here, and only
+  here: the trajectory is a signal that needs no configuration from you.
+- **No attempts left** — the run fails. `runPhase` labels the issue
+  `agent:blocked` + `ready-for-human`, pushes the branch, opens no PR, and
+  comments on the issue naming the invariants. Deliberately not
+  `agent:exhausted`, which means _the work is harder than specified_; this
+  means _something is wrong_.
+- **No transcript captured for the attempt** — the run is blocked, not passed,
+  and does not spend another attempt on it. It is the _capture_ that is
+  checked, not whether a file is readable: a failed capture leaves the previous
+  attempt's transcript in place, and grading that would close the run on
+  evidence about a different attempt. This is the one guardrail here that refuses on
+  an unreadable signal without being about spend: a definition of done that an
+  absent file satisfies is not one. **It is also the new failure mode in this
+  release** — a consumer whose transcript capture does not work will see runs
+  block that previously reached `ready-for-human`.
+
+Grading uses the package's default gate-command patterns _plus_ your own
+`runPolicy.gateCommand` matched literally, so a repository whose gate is
+`make check` is graded on `make check`.
+
+`evaluateClosure` is the pure decision (scorecard and remaining budget in,
+`pass` / `re-enter` / `block` out) and `GATING_TRAJECTORY_INVARIANTS` is the
+stated list — both exported so your own tooling can ask what a run asks. A
+block travels out on `ImplementAgentError.closure`.
 
 ### Setup doctor
 
@@ -1340,7 +1393,8 @@ or `review` module has an obvious home:
   (`evaluateAuthorization` / `runAuthorization` — the spend gate, and the one
   guard that refuses on uncertainty), the command
   policy and its `PreToolUse` hook script, plugin-directory validation, the
-  unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary
+  unfilled-prompt refusal (`evaluatePromptReadiness`), the trajectory closure
+  condition (`evaluateClosure` — the gate on the success path), the label-vocabulary
   refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck` — verify and
   refuse, never create), and
   verify-comment posting (a
@@ -1357,7 +1411,8 @@ or `review` module has an obvious home:
 - `src/observability/` — session transcript capture (for CI-artifact upload),
   and the trajectory checker that grades a finished run over that transcript:
   the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck`
-  shell. It reports; it never fails a run.
+  shell. It reports; the run's own gate over it is `evaluateClosure` in
+  `src/guardrails/`.
 - `src/setup/` — the doctor and the scaffolder: the pure `evaluateSetup` /
   `formatSetupReport` and the read-only `probeSetup` shell, and over them the
   pure `planInit` / `buildEnvironmentBlock` (both internal) and the `runInit`
@@ -1376,7 +1431,8 @@ the
 documented pure escape hatches (`evaluatePreflight`, `evaluateAuthorization`,
 `buildVerifyComment`,
 `classifyCommand`, `checkTrajectory` with `formatScorecard`, `evaluateIteration`
-(the inner loop's iterate/done/exhausted rule), `evaluateSetup` with
+(the inner loop's iterate/done/exhausted rule), `evaluateClosure` with
+`GATING_TRAJECTORY_INVARIANTS` (the trajectory closure condition), `evaluateSetup` with
 `formatSetupReport`, and
 `evaluatePluginDirs`, and `evaluatePromptReadiness`, the unfilled-prompt refusal, and the trigger
 boundary's `classifyTrigger` and `evaluateAdmission`),

@@ -33,8 +33,14 @@ import {
   spawnClaude,
   type SpawnClaudeResult
 } from './spawn-claude'
-import { evaluateIteration } from './iteration'
+import { evaluateIteration, checkIterationBudget } from './iteration'
 import { runGate } from './gate'
+import { evaluateClosure, type ClosureVerdict } from '../guardrails/closure'
+import { runTrajectoryCheck } from '../observability/run-trajectory-check'
+import {
+  resolveGatePatterns,
+  type TrajectoryFinding
+} from '../observability/trajectory'
 import {
   findMissingEnvVars,
   resolveIdleMs,
@@ -59,6 +65,12 @@ export interface RunImplementAgentResult {
   branch: string
   /** Commits made on `branch` since `main`, per `git rev-list --count`. */
   commitsAhead: number
+  /**
+   * Whether the session transcript was found and copied to `transcriptFile`.
+   * Always `true` on a result since shopfloor#48 — an attempt that was not
+   * captured cannot close the run — and kept because a caller reading it as
+   * "there is a transcript to upload" still gets the right answer.
+   */
   transcriptCaptured: boolean
   /** Whether the agent wrote its own PR description, or this run fell back to one. */
   prDescription: 'agent' | 'fallback'
@@ -70,8 +82,10 @@ export interface RunImplementAgentResult {
    */
   cliVersion?: string
   /**
-   * How many times this run spawned the CLI. Always 1 unless
-   * `runPolicy.gateCommand` is stated — only a run with a gate can iterate.
+   * How many times this run spawned the CLI. 1 unless
+   * `runPolicy.gateCommand` is stated and the gate went red, or the closure
+   * condition sent the run round again (shopfloor#48) — that second signal is
+   * the one case a gateless run iterates.
    */
   iterations: number
   /**
@@ -96,8 +110,12 @@ export interface RunImplementAgentResult {
  *
  * With a `runPolicy.gateCommand` stated it runs that gate after each spawn and
  * spawns again on a failure, carrying the failure into the next prompt, until
- * the gate passes or a budget is spent (shopfloor#40). Without one it is
- * single-shot, as it has always been.
+ * the gate passes or a budget is spent (shopfloor#40).
+ *
+ * A green gate is not on its own enough to finish: every attempt is graded
+ * against its own transcript, and one that violates a gating trajectory
+ * invariant re-enters the loop or blocks (shopfloor#48). That is also the one
+ * thing that makes a run with no gate stated spawn more than once.
  */
 export async function runImplementAgent(
   input: RunImplementAgentConfig
@@ -299,8 +317,6 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
       remainingWallClockMs: remainingWallClockMs()
     })
 
-    if (verdict.kind === 'done')
-      return { iterations: iteration, transcriptCaptured, usage }
     if (verdict.kind === 'exhausted') {
       throw new ImplementAgentError(verdict.reason, gate?.outputTail, usage, {
         // The one failure the state machine treats as its own outcome — see
@@ -309,12 +325,100 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
       })
     }
 
+    let feedback = verdict.kind === 'iterate' ? verdict.feedback : undefined
+
+    // A green gate is where a run used to end. Since shopfloor#48 it is where
+    // the run asks a second question: did the work get here the way it claims
+    // to have? A trajectory that violates a gating invariant either spends
+    // another attempt on it or blocks — it never closes as a success.
+    if (verdict.kind === 'done') {
+      const closure = judgeClosure(ctx, {
+        iteration,
+        remainingWallClockMs: remainingWallClockMs(),
+        transcriptCaptured
+      })
+
+      if (closure.kind === 'pass')
+        return { iterations: iteration, transcriptCaptured, usage }
+      if (closure.kind === 'block') {
+        throw new ImplementAgentError(closure.reason, gate?.outputTail, usage, {
+          closure
+        })
+      }
+      feedback = closure.feedback
+    }
+
     // Keep this attempt's transcript before the next spawn overwrites it: a
     // failed attempt is the one worth reading, and it is about to be replaced
     // by the attempt that fixed it.
     preserveIterationTranscript(config.transcriptFile, iteration)
-    iterationFeedback = verdict.feedback
+    iterationFeedback = feedback
   }
+}
+
+/**
+ * Grade the attempt that just finished and ask whether the run may close
+ * (shopfloor#48). Gather → decide, with the decision next door and pure: this
+ * reads the transcript and hands the scorecard, and the loop's remaining room,
+ * to {@link evaluateClosure}.
+ *
+ * The budget it reports is the *same* one `evaluateIteration` measures — a red
+ * gate and an unclosed trajectory both spend attempts out of one ceiling, and
+ * two ceilings measured separately is how a ceiling stops being one.
+ *
+ * **A run with no `gateCommand` can iterate here, and only here.** Without a
+ * gate there is no signal to iterate on and the run is single-shot; the
+ * trajectory is a second signal, and unlike the gate it needs no consumer
+ * configuration, because the invariants it grades are this package's own.
+ */
+function judgeClosure(
+  ctx: IterationLoopContext,
+  attempt: {
+    iteration: number
+    remainingWallClockMs?: number
+    /** Whether capture wrote *this* attempt's session — see below. */
+    transcriptCaptured: boolean
+  }
+): ClosureVerdict {
+  const { runPolicy } = ctx.config
+
+  return evaluateClosure({
+    findings: gradeAttempt(ctx, attempt.transcriptCaptured),
+    budgetRemaining: checkIterationBudget({
+      iteration: attempt.iteration,
+      remainingWallClockMs: attempt.remainingWallClockMs,
+      maxIterations: runPolicy.maxIterations
+    }).available
+  })
+}
+
+/**
+ * The scorecard for the attempt that just ran, or **null** when there is none
+ * of that attempt's to grade.
+ *
+ * **A readable file is not the question; a captured one is.** `captureTranscript`
+ * returns false without touching its destination, and `preserveIterationTranscript`
+ * copies rather than moves — so a failed capture on iteration N leaves iteration
+ * N-1's session (or, for a caller-supplied path, an entirely earlier run's)
+ * sitting at `transcriptFile`, readable and wrong. Grading that would close the
+ * run on evidence about a different attempt, which is precisely the walk-past
+ * this gate exists to refuse. So an uncaptured attempt is `null` and never
+ * reaches the checker at all.
+ */
+function gradeAttempt(
+  ctx: IterationLoopContext,
+  transcriptCaptured: boolean
+): TrajectoryFinding[] | null {
+  if (!transcriptCaptured) return null
+
+  const { runPolicy, transcriptFile } = ctx.config
+  const check = runTrajectoryCheck({
+    transcriptFile,
+    maxTurns: runPolicy.maxTurns,
+    gateCommandPatterns: resolveGatePatterns(runPolicy.gateCommand)
+  })
+
+  return check.graded ? check.findings : null
 }
 
 /**

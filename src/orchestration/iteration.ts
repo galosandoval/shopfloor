@@ -81,32 +81,17 @@ export type IterationVerdict =
  * starting one more spawn for the guard to kill.
  */
 export function evaluateIteration(input: IterationInput): IterationVerdict {
-  const { gate, iteration, maxIterations, remainingWallClockMs } = input
+  const { gate, iteration, maxIterations } = input
 
   if (!gate || gate.passed) return { kind: 'done' }
 
-  const stillFailing =
-    `The quality gate \`${gate.command}\` still failed after ` +
-    `${iteration} iteration(s)`
-
-  if (iteration >= maxIterations) {
+  const budget = checkIterationBudget(input)
+  if (!budget.available) {
     return {
       kind: 'exhausted',
       reason:
-        `${stillFailing} — the run's iteration budget ` +
-        `(maxIterations: ${maxIterations}) is spent.`
-    }
-  }
-
-  if (
-    remainingWallClockMs !== undefined &&
-    remainingWallClockMs < MIN_ITERATION_WALL_CLOCK_MS
-  ) {
-    return {
-      kind: 'exhausted',
-      reason:
-        `${stillFailing}, and the run's wall-clock budget is spent — too ` +
-        'little left to be worth another attempt.'
+        `The quality gate \`${gate.command}\` still failed after ` +
+        `${iteration} iteration(s) — ${budget.spent}.`
     }
   }
 
@@ -114,6 +99,69 @@ export function evaluateIteration(input: IterationInput): IterationVerdict {
     kind: 'iterate',
     feedback: feedbackFor(gate, iteration, maxIterations)
   }
+}
+
+/**
+ * Whether the loop may spawn again, which bound stopped it when not, and how
+ * that bound reads in a failure a human sees.
+ *
+ * The phrase rides on the verdict rather than being re-derived from `bound` at
+ * each caller: two callers already ask this question (a red gate and an
+ * unclosed trajectory), and a bound whose wording lives at the call sites is a
+ * third bound to keep in step every time one is added.
+ */
+export type IterationBudgetVerdict =
+  | { available: true }
+  | {
+      available: false
+      bound: 'iterations' | 'wall-clock'
+      /** The bound as a clause, e.g. "the run's wall-clock budget is spent…". */
+      spent: string
+    }
+
+/**
+ * Whether the run has room for another attempt, asked without reference to why
+ * one might be wanted.
+ *
+ * Extracted so the two things that can send a run round again — a red gate
+ * ({@link evaluateIteration}) and a trajectory that does not close
+ * (`guardrails/closure.ts`, shopfloor#48) — measure the same budget rather than
+ * each carrying its own copy of the arithmetic. Two copies of a ceiling is how
+ * a ceiling stops being one.
+ *
+ * The bounds are checked in the order a reader would ask about them, and when
+ * both are spent at once the iteration count is what the caller names — it is
+ * the bound the loop was configured with, and the wall clock has its own kill
+ * path in `spawnClaude` for the run it actually cuts off.
+ */
+export function checkIterationBudget(
+  input: Pick<
+    IterationInput,
+    'iteration' | 'maxIterations' | 'remainingWallClockMs'
+  >
+): IterationBudgetVerdict {
+  if (input.iteration >= input.maxIterations) {
+    return {
+      available: false,
+      bound: 'iterations',
+      spent:
+        `the run's iteration budget (maxIterations: ${input.maxIterations}) ` +
+        'is spent'
+    }
+  }
+  if (
+    input.remainingWallClockMs !== undefined &&
+    input.remainingWallClockMs < MIN_ITERATION_WALL_CLOCK_MS
+  ) {
+    return {
+      available: false,
+      bound: 'wall-clock',
+      spent:
+        "the run's wall-clock budget is spent, with too little left to be " +
+        'worth another attempt'
+    }
+  }
+  return { available: true }
 }
 
 /**
