@@ -31,6 +31,10 @@ import { postVerifyComment } from '../guardrails/post-verify'
 import { runPreflight } from '../guardrails/run-preflight'
 import { runLabelVocabularyCheck } from '../guardrails/run-label-vocabulary'
 import { applyLabelTransition } from '../issue-state/apply-transition'
+import {
+  commentOnIssueBestEffort,
+  type IssueRef
+} from '../issue-state/issue-comment'
 import type { RunOutcome } from '../issue-state/transition'
 import {
   resolveImplementConfig,
@@ -222,12 +226,6 @@ export async function runPhase(
   }
 }
 
-/** The issue a run is about, in the shape `gh` and every shell below take it. */
-interface IssueRef {
-  issueNumber: string
-  repo: string
-}
-
 /**
  * Everything between a finished run and a human owning it: push what was
  * committed, locate or open the draft PR, post the verify proof, and set
@@ -303,7 +301,7 @@ async function requireLabelVocabulary(
  */
 async function runPhaseAgent(
   runInput: RunImplementAgentConfig,
-  context: { issue: IssueRef; branch: string; cwd: string }
+  context: PhaseRunContext
 ): Promise<RunImplementAgentResult> {
   try {
     return await runImplementAgent(runInput)
@@ -317,6 +315,15 @@ async function runPhaseAgent(
     // not a pull request; the branch is there to be looked at.
     await pushBestEffort(context)
 
+    // Said before the transition, not after: the transition is a `gh` call
+    // that can itself fail, and it is the *comment* that carries the only copy
+    // of the violated invariants a human ever sees on the issue. Losing the
+    // label leaves an issue mislabelled; losing the comment leaves
+    // `agent:blocked` with no statement of what blocked it.
+    if (error instanceof ImplementAgentError && error.closure) {
+      await commentOnClosureBlock(context, error.closure)
+    }
+
     await applyLabelTransition({
       ...context.issue,
       outcome: evaluatePhaseOutcome({
@@ -326,11 +333,19 @@ async function runPhaseAgent(
       })
     })
 
-    if (error instanceof ImplementAgentError && error.closure) {
-      await commentOnClosureBlock(context, error.closure)
-    }
     throw error
   }
+}
+
+/**
+ * What the failure path needs about the run in flight — the three values that
+ * have travelled together since this file existed, named once rather than
+ * respelled at each helper below.
+ */
+interface PhaseRunContext {
+  issue: IssueRef
+  branch: string
+  cwd: string
 }
 
 /**
@@ -346,7 +361,7 @@ async function runPhaseAgent(
  * fails to post must not replace the failure worth reporting.
  */
 async function commentOnClosureBlock(
-  context: { issue: IssueRef; branch: string },
+  context: PhaseRunContext,
   closure: ClosureBlock
 ): Promise<void> {
   const violated =
@@ -354,29 +369,18 @@ async function commentOnClosureBlock(
       ? `\n\n**Violated:** ${closure.violations.map((id) => `\`${id}\``).join(', ')}`
       : ''
 
-  try {
-    await execFileAsync('gh', [
-      'issue',
-      'comment',
-      context.issue.issueNumber,
-      '--repo',
-      context.issue.repo,
-      '--body',
-      `The implement phase blocked this run on its own trajectory.\n\n` +
-        `**Reason:** ${closure.reason}${violated}\n\n` +
-        `What the run committed is on \`${context.branch}\`; no pull ` +
-        'request was opened for it.'
-    ])
-  } catch (error) {
-    console.warn(`Could not comment on the closure block: ${String(error)}`)
-  }
+  await commentOnIssueBestEffort(
+    context.issue,
+    `The implement phase blocked this run on its own trajectory.\n\n` +
+      `**Reason:** ${closure.reason}${violated}\n\n` +
+      `What the run committed is on \`${context.branch}\`; no pull ` +
+      'request was opened for it.',
+    'the closure block'
+  )
 }
 
 /** A push whose own failure is reported and then dropped — see its caller. */
-async function pushBestEffort(context: {
-  branch: string
-  cwd: string
-}): Promise<void> {
+async function pushBestEffort(context: PhaseRunContext): Promise<void> {
   try {
     await pushAgentBranch({ branch: context.branch, cwd: context.cwd })
   } catch (error) {

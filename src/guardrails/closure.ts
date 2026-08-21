@@ -17,7 +17,6 @@
  */
 
 import {
-  DEFAULT_GATE_COMMAND_PATTERNS,
   type TrajectoryFinding,
   type TrajectoryInvariantId
 } from '../observability/trajectory'
@@ -114,27 +113,34 @@ export type ClosureBlock = Extract<ClosureVerdict, { kind: 'block' }>
  * same verdict.
  */
 export function evaluateClosure(input: ClosureInput): ClosureVerdict {
-  const gating = (input.findings ?? []).filter(isGating)
-
-  if (
-    gating.length === 0 ||
-    gating.every((f) => f.status === 'not-evaluable')
-  ) {
-    return {
-      kind: 'block',
-      cause: 'no-evidence',
-      violations: [],
-      reason:
-        "This attempt's trajectory could not be graded — its session " +
-        'transcript is missing, unreadable, or carries no turns — so there is ' +
-        'no evidence that the quality gate ran before each commit or that a ' +
-        'failing test preceded the first one. The closure condition is met by ' +
-        'evidence that the process held, never by the absence of evidence that ' +
-        'it did not, so the run does not close as a success.'
-    }
+  if (input.findings === null) {
+    return noEvidence(
+      "This attempt's session transcript was not captured, or could not be " +
+        'read, so its trajectory was never graded'
+    )
   }
 
-  const failed = gating.filter((finding) => finding.status === 'fail')
+  const gating = input.findings.filter(isGating)
+  const evaluable = gating.filter(
+    (finding) => finding.status !== 'not-evaluable'
+  )
+
+  // Three ways to arrive with nothing graded, kept apart because the reason a
+  // human reads has to be true of the one that happened: an absent scorecard
+  // above, a scorecard that says nothing about these invariants, and one that
+  // had nothing to measure them against.
+  if (evaluable.length === 0) {
+    return noEvidence(
+      gating.length === 0
+        ? "This attempt's scorecard carries no finding for " +
+            `${GATING_TRAJECTORY_INVARIANTS.join(' or ')}, so nothing graded ` +
+            'them'
+        : "This attempt's trajectory graded neither gating invariant — its " +
+            'transcript carries no turns to measure them against'
+    )
+  }
+
+  const failed = evaluable.filter((finding) => finding.status === 'fail')
   if (failed.length === 0) return { kind: 'pass' }
 
   const violations = failed.map((finding) => finding.id)
@@ -157,33 +163,21 @@ export function evaluateClosure(input: ClosureInput): ClosureVerdict {
 }
 
 /**
- * The gate-run patterns the closure check grades against: the package defaults
- * plus, when the harness was given one, the consumer's own `gateCommand`
- * matched literally.
- *
- * Without this the gate fires falsely on every repository whose quality gate is
- * not a bare test command — `make check`, a bespoke script — because the agent
- * running exactly the command the harness runs would not be recognized as
- * running the gate. The harness knows that command; grading against anything
- * less is asking whether the agent ran *a* test suite when the question is
- * whether it ran *the* gate.
- *
- * The defaults are kept alongside rather than replaced: an agent that ran the
- * whole suite directly did verify its work, and refusing to notice would fail
- * in the expensive direction for no gain.
+ * A block for want of a graded trajectory, stating which way the evidence was
+ * absent and then the same contract every one of them ends on.
  */
-export function resolveGatePatterns(
-  gateCommand: string | undefined
-): readonly RegExp[] {
-  if (!gateCommand) return DEFAULT_GATE_COMMAND_PATTERNS
-  return [
-    ...DEFAULT_GATE_COMMAND_PATTERNS,
-    new RegExp(escapeRegExp(gateCommand))
-  ]
-}
-
-function escapeRegExp(literal: string): string {
-  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+function noEvidence(what: string): ClosureBlock {
+  return {
+    kind: 'block',
+    cause: 'no-evidence',
+    violations: [],
+    reason:
+      `${what} — so there is no evidence that the quality gate ran before ` +
+      'each commit or that a failing test preceded the first one. The ' +
+      'closure condition is met by evidence that the process held, never by ' +
+      'the absence of evidence that it did not, so the run does not close as ' +
+      'a success.'
+  }
 }
 
 function isGating(

@@ -35,13 +35,12 @@ import {
 } from './spawn-claude'
 import { evaluateIteration, checkIterationBudget } from './iteration'
 import { runGate } from './gate'
-import {
-  evaluateClosure,
-  resolveGatePatterns,
-  type ClosureVerdict
-} from '../guardrails/closure'
+import { evaluateClosure, type ClosureVerdict } from '../guardrails/closure'
 import { runTrajectoryCheck } from '../observability/run-trajectory-check'
-import type { TrajectoryFinding } from '../observability/trajectory'
+import {
+  resolveGatePatterns,
+  type TrajectoryFinding
+} from '../observability/trajectory'
 import {
   findMissingEnvVars,
   resolveIdleMs,

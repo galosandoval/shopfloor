@@ -87,18 +87,11 @@ export function evaluateIteration(input: IterationInput): IterationVerdict {
 
   const budget = checkIterationBudget(input)
   if (!budget.available) {
-    const stillFailing =
-      `The quality gate \`${gate.command}\` still failed after ` +
-      `${iteration} iteration(s)`
-
     return {
       kind: 'exhausted',
       reason:
-        budget.bound === 'iterations'
-          ? `${stillFailing} — the run's iteration budget ` +
-            `(maxIterations: ${maxIterations}) is spent.`
-          : `${stillFailing}, and the run's wall-clock budget is spent — too ` +
-            'little left to be worth another attempt.'
+        `The quality gate \`${gate.command}\` still failed after ` +
+        `${iteration} iteration(s) — ${budget.spent}.`
     }
   }
 
@@ -108,9 +101,23 @@ export function evaluateIteration(input: IterationInput): IterationVerdict {
   }
 }
 
-/** Whether the loop may spawn again, and which bound stopped it when not. */
+/**
+ * Whether the loop may spawn again, which bound stopped it when not, and how
+ * that bound reads in a failure a human sees.
+ *
+ * The phrase rides on the verdict rather than being re-derived from `bound` at
+ * each caller: two callers already ask this question (a red gate and an
+ * unclosed trajectory), and a bound whose wording lives at the call sites is a
+ * third bound to keep in step every time one is added.
+ */
 export type IterationBudgetVerdict =
-  { available: true } | { available: false; bound: 'iterations' | 'wall-clock' }
+  | { available: true }
+  | {
+      available: false
+      bound: 'iterations' | 'wall-clock'
+      /** The bound as a clause, e.g. "the run's wall-clock budget is spent…". */
+      spent: string
+    }
 
 /**
  * Whether the run has room for another attempt, asked without reference to why
@@ -134,13 +141,25 @@ export function checkIterationBudget(
   >
 ): IterationBudgetVerdict {
   if (input.iteration >= input.maxIterations) {
-    return { available: false, bound: 'iterations' }
+    return {
+      available: false,
+      bound: 'iterations',
+      spent:
+        `the run's iteration budget (maxIterations: ${input.maxIterations}) ` +
+        'is spent'
+    }
   }
   if (
     input.remainingWallClockMs !== undefined &&
     input.remainingWallClockMs < MIN_ITERATION_WALL_CLOCK_MS
   ) {
-    return { available: false, bound: 'wall-clock' }
+    return {
+      available: false,
+      bound: 'wall-clock',
+      spent:
+        "the run's wall-clock budget is spent, with too little left to be " +
+        'worth another attempt'
+    }
   }
   return { available: true }
 }

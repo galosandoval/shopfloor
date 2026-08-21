@@ -89,6 +89,39 @@ export const DEFAULT_GATE_COMMAND_PATTERNS: readonly RegExp[] = [
   /(?:^|\s)(?:jest|vitest)(?:\s|$)/
 ]
 
+/**
+ * The patterns a harness run grades against: the defaults above plus, when the
+ * caller stated one, its own `gateCommand` matched literally.
+ *
+ * Without this the `gate-before-commit` invariant fires falsely on every
+ * repository whose quality gate is not a bare test command — `make check`, a
+ * bespoke script — because the agent running exactly the command the harness
+ * runs would not be recognized as running the gate. The harness knows that
+ * command; grading against anything less is asking whether the agent ran *a*
+ * test suite when the question is whether it ran *the* gate.
+ *
+ * The defaults are kept alongside rather than replaced: an agent that ran the
+ * whole suite directly did verify its work, and refusing to notice would fail
+ * in the expensive direction for no gain.
+ *
+ * It lives here rather than beside the closure condition that motivated it
+ * (shopfloor#48): what counts as a gate run is this checker's vocabulary, and
+ * the constant it extends is right above.
+ */
+export function resolveGatePatterns(
+  gateCommand: string | undefined
+): readonly RegExp[] {
+  if (!gateCommand) return DEFAULT_GATE_COMMAND_PATTERNS
+  return [
+    ...DEFAULT_GATE_COMMAND_PATTERNS,
+    new RegExp(escapeRegExp(gateCommand))
+  ]
+}
+
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 // --- Command classification ---------------------------------------------------
 
 /** A gate run, per the patterns in force for this check. */

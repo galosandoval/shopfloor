@@ -130,8 +130,8 @@ function pluginDirsAreValid({
 /**
  * The session transcript the closure condition (shopfloor#48) grades — every
  * run reads one now, so a run whose trajectory closes is the baseline rather
- * than a per-test arrangement. Reset in `beforeEach`; a test about the gate
- * reprograms it via {@link trajectoryOf}.
+ * than a per-test arrangement. Set in `beforeEach`; a test about the gate
+ * assigns another built by {@link trajectoryOf}.
  */
 let transcript = ''
 
@@ -165,7 +165,7 @@ function toolResult(id: string, isError: boolean) {
  */
 function fixesTrajectoryOnSecondAttempt() {
   spawnClaudeMock.mockImplementation(async () => {
-    if (spawnClaudeMock.mock.calls.length >= 2) trajectoryOf()
+    if (spawnClaudeMock.mock.calls.length >= 2) transcript = trajectoryOf()
     return spawnResult()
   })
 }
@@ -175,8 +175,8 @@ function fixesTrajectoryOnSecondAttempt() {
  * commit. `broken` drops the failing run and the gate before the commit, which
  * is the shortcut-to-green shape both gating invariants exist to catch.
  */
-function trajectoryOf({ broken }: { broken?: boolean } = {}) {
-  transcript = broken
+function trajectoryOf({ broken }: { broken?: boolean } = {}): string {
+  return broken
     ? transcriptOf(bashTurn('t1', 'git commit -m "ship it"'))
     : transcriptOf(
         bashTurn('t1', 'npm test'),
@@ -254,7 +254,7 @@ beforeEach(() => {
   gateExits(0)
   // Every run is graded against its transcript before it may close, so one
   // that closes is the baseline — see `trajectoryOf`.
-  trajectoryOf()
+  transcript = trajectoryOf()
   // Every run resolves a plugin directory now — the bundled one when nothing
   // states a list — so a filesystem answering plugin probes is the baseline,
   // not a per-suite arrangement.
@@ -1105,7 +1105,7 @@ describe('runImplementAgent trajectory closure', () => {
   })
 
   it('blocks a green gate reached on a violating trajectory once the budget is spent', async () => {
-    trajectoryOf({ broken: true })
+    transcript = trajectoryOf({ broken: true })
 
     await expect(
       runImplementAgent(gated({ runPolicy: { maxIterations: 1 } }))
@@ -1118,7 +1118,7 @@ describe('runImplementAgent trajectory closure', () => {
   })
 
   it('spends another attempt on a violating trajectory while budget remains', async () => {
-    trajectoryOf({ broken: true })
+    transcript = trajectoryOf({ broken: true })
     fixesTrajectoryOnSecondAttempt()
 
     const result = await runImplementAgent(
@@ -1129,7 +1129,7 @@ describe('runImplementAgent trajectory closure', () => {
   })
 
   it('carries the violated invariants into the next attempt’s prompt', async () => {
-    trajectoryOf({ broken: true })
+    transcript = trajectoryOf({ broken: true })
     fixesTrajectoryOnSecondAttempt()
 
     await runImplementAgent(gated({ runPolicy: { maxIterations: 3 } }))
@@ -1141,7 +1141,7 @@ describe('runImplementAgent trajectory closure', () => {
   it('iterates a run with no gate command when its trajectory does not close', async () => {
     // The only thing that makes a gateless run spawn twice: without a gate
     // there is no other signal, and the trajectory needs no consumer config.
-    trajectoryOf({ broken: true })
+    transcript = trajectoryOf({ broken: true })
     fixesTrajectoryOnSecondAttempt()
 
     const result = await runImplementAgent(baseInput())

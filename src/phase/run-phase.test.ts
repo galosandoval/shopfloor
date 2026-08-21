@@ -376,6 +376,41 @@ describe('runPhase', () => {
     expect(comment?.join(' ')).toContain('gate-before-commit')
   })
 
+  it('says which invariants blocked it even when the transition then fails', async () => {
+    // The comment holds the only copy of that list a human sees on the issue,
+    // and the transition is a `gh` call of its own that can fail — so it is
+    // said first. Ordered the other way, the failure that matters most to
+    // report is the one that takes the report with it.
+    vi.mocked(runImplementAgent).mockRejectedValue(
+      new ImplementAgentError(
+        'the trajectory does not close',
+        undefined,
+        undefined,
+        {
+          closure: {
+            kind: 'block',
+            cause: 'violation',
+            violations: ['red-before-green'],
+            reason: 'the trajectory does not close'
+          }
+        }
+      )
+    )
+    vi.mocked(applyLabelTransition).mockImplementation(async ({ outcome }) => {
+      if (outcome !== 'started') throw new Error('gh: label write failed')
+      return { applied: true, transition: { outcome, add: [], remove: [] } }
+    })
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow(
+      'gh: label write failed'
+    )
+
+    const comment = calls.find(
+      (call) => call[0] === 'gh' && call[1] === 'issue' && call[2] === 'comment'
+    )
+    expect(comment?.join(' ')).toContain('red-before-green')
+  })
+
   it('reports the run failure, not a comment that failed on the way out', async () => {
     vi.mocked(runImplementAgent).mockRejectedValue(
       new ImplementAgentError('no readable transcript', undefined, undefined, {

@@ -6,13 +6,8 @@
  * suite here would say nothing about whether the gate is armed.
  */
 
+import { evaluateClosure, GATING_TRAJECTORY_INVARIANTS } from './closure'
 import {
-  evaluateClosure,
-  resolveGatePatterns,
-  GATING_TRAJECTORY_INVARIANTS
-} from './closure'
-import {
-  DEFAULT_GATE_COMMAND_PATTERNS,
   type TrajectoryFinding,
   type TrajectoryInvariantId,
   type TrajectoryStatus
@@ -140,6 +135,8 @@ describe('evaluateClosure', () => {
         cause: 'no-evidence',
         violations: []
       })
+      if (verdict.kind !== 'block') throw new Error('expected a block')
+      expect(verdict.reason).toContain('was not captured')
     }
   )
 
@@ -156,39 +153,25 @@ describe('evaluateClosure', () => {
     })
 
     expect(verdict).toMatchObject({ kind: 'block', cause: 'no-evidence' })
+    if (verdict.kind !== 'block') throw new Error('expected a block')
+    expect(verdict.reason).toContain('no turns to measure them against')
   })
 
   it('blocks a scorecard carrying no gating invariant at all', () => {
     const verdict = evaluateClosure({ findings: [], budgetRemaining: true })
 
     expect(verdict).toMatchObject({ kind: 'block', cause: 'no-evidence' })
-  })
-})
-
-describe('resolveGatePatterns', () => {
-  it('grades against the package defaults when no gate command was stated', () => {
-    expect(resolveGatePatterns(undefined)).toEqual(
-      DEFAULT_GATE_COMMAND_PATTERNS
-    )
+    if (verdict.kind !== 'block') throw new Error('expected a block')
+    expect(verdict.reason).toContain('carries no finding for')
   })
 
-  it('recognizes the consumer gate the harness itself runs', () => {
-    const patterns = resolveGatePatterns('make check')
+  it('never blames a missing transcript for a scorecard it was handed', () => {
+    // The three ways to arrive with nothing graded are different things to go
+    // fix, and a graded-but-empty scorecard reported as an unreadable
+    // transcript sends a human to look at the wrong thing.
+    const verdict = evaluateClosure({ findings: [], budgetRemaining: true })
 
-    expect(patterns.some((pattern) => pattern.test('make check'))).toBe(true)
-  })
-
-  it('keeps the defaults alongside it', () => {
-    const patterns = resolveGatePatterns('make check')
-
-    expect(patterns.some((pattern) => pattern.test('npm test'))).toBe(true)
-  })
-
-  it('matches the stated gate literally, metacharacters included', () => {
-    const patterns = resolveGatePatterns('bun run test:all (fast)')
-
-    expect(
-      patterns.some((pattern) => pattern.test('bun run test:all (fast)'))
-    ).toBe(true)
+    if (verdict.kind !== 'block') throw new Error('expected a block')
+    expect(verdict.reason).not.toContain('was not captured')
   })
 })
