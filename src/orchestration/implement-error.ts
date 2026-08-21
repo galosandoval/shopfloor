@@ -4,6 +4,7 @@
  * without importing each other.
  */
 
+import type { ClosureBlock } from '../guardrails/closure'
 import type { RunUsage } from '../observability/usage'
 
 export class ImplementAgentError extends Error {
@@ -31,17 +32,26 @@ export class ImplementAgentError extends Error {
    * binding this package keeps eliminating.
    */
   readonly exhausted: boolean
+  /**
+   * Set when the trajectory closure condition is what ended the run
+   * (shopfloor#48): the gate was green and the *process* was not. Carried
+   * whole rather than flattened into the message, so the shell that reports it
+   * can name the violated invariants — and tell a violation apart from a
+   * transcript it could not read — without matching on prose.
+   */
+  readonly closure?: ClosureBlock
 
   constructor(
     message: string,
     outputTail?: string,
     usage?: RunUsage,
-    options: { exhausted?: boolean } = {}
+    options: { exhausted?: boolean; closure?: ClosureBlock } = {}
   ) {
     super(message)
     this.name = 'ImplementAgentError'
     this.outputTail = outputTail
     this.usage = usage
     this.exhausted = options.exhausted ?? false
+    this.closure = options.closure
   }
 }

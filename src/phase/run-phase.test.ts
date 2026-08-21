@@ -17,7 +17,8 @@ import {
   calls,
   execStubModule,
   resetExecStub,
-  respondWith
+  respondWith,
+  routeExecStub
 } from '../process/exec-stub.test-helper'
 import { ImplementAgentError } from '../orchestration/implement-error'
 import { runImplementAgent } from '../orchestration/implement'
@@ -345,6 +346,56 @@ describe('runPhase', () => {
     )
 
     expect(outcomes()).toEqual(['started', 'exhausted'])
+  })
+
+  it('says on the issue which invariants blocked the run (shopfloor#48)', async () => {
+    vi.mocked(runImplementAgent).mockRejectedValue(
+      new ImplementAgentError(
+        'the trajectory does not close',
+        undefined,
+        undefined,
+        {
+          closure: {
+            kind: 'block',
+            cause: 'violation',
+            violations: ['gate-before-commit'],
+            reason: 'the trajectory does not close'
+          }
+        }
+      )
+    )
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow(
+      'the trajectory does not close'
+    )
+
+    expect(outcomes()).toEqual(['started', 'failed'])
+    const comment = calls.find(
+      (call) => call[0] === 'gh' && call[1] === 'issue' && call[2] === 'comment'
+    )
+    expect(comment?.join(' ')).toContain('gate-before-commit')
+  })
+
+  it('reports the run failure, not a comment that failed on the way out', async () => {
+    vi.mocked(runImplementAgent).mockRejectedValue(
+      new ImplementAgentError('no readable transcript', undefined, undefined, {
+        closure: {
+          kind: 'block',
+          cause: 'no-evidence',
+          violations: [],
+          reason: 'no readable transcript'
+        }
+      })
+    )
+    // The title probe still answers; only the comment fails.
+    routeExecStub([{ match: /gh issue comment/, response: { fails: 1 } }])
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow(
+      'no readable transcript'
+    )
+
+    expect(outcomes()).toEqual(['started', 'failed'])
   })
 
   it('refuses when the issue title cannot be read, before the run starts', async () => {

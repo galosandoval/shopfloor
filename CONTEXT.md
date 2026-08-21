@@ -19,22 +19,22 @@ harness concern rather than as a flat file list.
 
 ## Module map
 
-| Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/phase/`           | **The verb** (shopfloor#47): the `runPhase` shell and every decision behind it — `resolvePhasePrompt` and the shipped per-phase shims (`DEFAULT_PHASE_PROMPTS`), `buildPullRequestFields`, `evaluatePhaseOutcome` — plus the two shells it owns that nothing else did: `ensureAgentBranch` / `pushAgentBranch` and `ensurePullRequest`, each locate-or-create                                                                                                                                                                        |
-| `src/orchestration/`   | `runImplementAgent` (the phase's run, internal since shopfloor#47), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                                                              |
-| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck`), the command policy and its `PreToolUse` hook script, verify-comment posting |
-| `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                                                                                                |
-| `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository                                                                  |
-| `src/trigger/`         | The trigger boundary (shopfloor#46): the pure `classifyTrigger` over a raw webhook payload, the `agent/issue-<n>` branch convention (`agentBranchForIssue` / `issueNumberFromBranch`) both edges read and write, and admission — the pure `evaluateAdmission` and its `runAdmission` shell, which composes classification, the spend gate, the concurrency check, and the attempt ceiling (both read off the issue's own label history) into one verdict a job with nothing installed can gate on                                    |
-| `src/issue-state/`     | The label vocabulary (`LABEL_VOCABULARY` / `REQUIRED_LABELS`) and the state machine over it: the pure `evaluateLabelTransition` and its `TRANSITION_TABLE`, and the `applyLabelTransition` shell. The names are **package-owned** — see the invariant below                                                                                                                                                                                                                                                                          |
-| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                                                                                          |
-| `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `src/run-phase-cli.ts` | Thin bin entrypoint (`shopfloor-run-phase`); it names no issue and no branch — the payload does — and owns only the exit code and the failure-reason file                                                                                                                                                                                                                                                                                                                                                                            |
-| `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `src/init-cli.ts`      | Thin bin entrypoint (`shopfloor-init`); prints the report and exits non-zero on a **write that failed** — never on the setup it cannot fix, which it names and leaves to the operator                                                                                                                                                                                                                                                                                                                                                |
-| `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                                                                                                                           |
-| `src/admit-cli.ts`     | Thin bin entrypoint (`shopfloor-admit`); prints the admission verdict as one line of JSON on stdout and the sentence on stderr. Exits zero on `not-a-trigger` — by far the most common outcome — and non-zero on every other refusal, so a caller who ignores stdout is still stopped by a stranger, a broken token, a run in flight, or a spent ceiling                                                                                                                                                                             |
+| Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/phase/`           | **The verb** (shopfloor#47): the `runPhase` shell and every decision behind it — `resolvePhasePrompt` and the shipped per-phase shims (`DEFAULT_PHASE_PROMPTS`), `buildPullRequestFields`, `evaluatePhaseOutcome` — plus the two shells it owns that nothing else did: `ensureAgentBranch` / `pushAgentBranch` and `ensurePullRequest`, each locate-or-create                                                                                                                                                                                                                                                                           |
+| `src/orchestration/`   | `runImplementAgent` (the phase's run, internal since shopfloor#47), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                                                                                                                                                                 |
+| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck`), the trajectory closure condition (`evaluateClosure` — the gate on the success path, shopfloor#48), the command policy and its `PreToolUse` hook script, verify-comment posting |
+| `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard` and the `runTrajectoryCheck` shell; it still only _grades_, and what a run does about the grade is `guardrails/closure.ts` — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                                                                                                           |
+| `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository                                                                                                                                                                     |
+| `src/trigger/`         | The trigger boundary (shopfloor#46): the pure `classifyTrigger` over a raw webhook payload, the `agent/issue-<n>` branch convention (`agentBranchForIssue` / `issueNumberFromBranch`) both edges read and write, and admission — the pure `evaluateAdmission` and its `runAdmission` shell, which composes classification, the spend gate, the concurrency check, and the attempt ceiling (both read off the issue's own label history) into one verdict a job with nothing installed can gate on                                                                                                                                       |
+| `src/issue-state/`     | The label vocabulary (`LABEL_VOCABULARY` / `REQUIRED_LABELS`) and the state machine over it: the pure `evaluateLabelTransition` and its `TRANSITION_TABLE`, and the `applyLabelTransition` shell. The names are **package-owned** — see the invariant below                                                                                                                                                                                                                                                                                                                                                                             |
+| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                                                                                                                                                                                             |
+| `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `src/run-phase-cli.ts` | Thin bin entrypoint (`shopfloor-run-phase`); it names no issue and no branch — the payload does — and owns only the exit code and the failure-reason file                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `src/init-cli.ts`      | Thin bin entrypoint (`shopfloor-init`); prints the report and exits non-zero on a **write that failed** — never on the setup it cannot fix, which it names and leaves to the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `src/admit-cli.ts`     | Thin bin entrypoint (`shopfloor-admit`); prints the admission verdict as one line of JSON on stdout and the sentence on stderr. Exits zero on `not-a-trigger` — by far the most common outcome — and non-zero on every other refusal, so a caller who ignores stdout is still stopped by a stranger, a broken token, a run in flight, or a spent ceiling                                                                                                                                                                                                                                                                                |
 
 ## Pure core, IO shell
 
@@ -66,7 +66,7 @@ The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `applyLabelTransition`, `evaluateLabelVocabulary` /
 `runLabelVocabularyCheck`, `evaluateAdmission` / `runAdmission`,
 `checkCliVersion`, `classifyTrigger`,
-`evaluatePromptReadiness`,
+`evaluatePromptReadiness`, `evaluateClosure`,
 `resolveImplementConfig` / `runImplementAgent`, and the verb's own —
 `resolvePhasePrompt`, `evaluatePhaseOutcome`, and `buildPullRequestFields` /
 `ensurePullRequest`.
@@ -217,6 +217,13 @@ one. Everything else, in order:
       iterate, or exhausted. A runaway kill or a non-zero CLI exit short-circuits
       this and fails the run: the loop corrects work the gate judged, not a spawn
       that never finished.
+   5. **Grade the trajectory and close, or not** (shopfloor#48) — a `done`
+      verdict is no longer where the run ends. `runTrajectoryCheck` grades the
+      transcript this iteration just captured, and the pure `evaluateClosure`
+      returns pass, re-enter, or block. Only `pass` returns a result; a
+      re-entry becomes another iteration carrying the violated invariants as
+      feedback, and a block fails the run. The section below has the whole of
+      it.
 6. **Check the result** — an exhausted budget with the gate still red fails the
    run; so does a run that committed nothing. A missing PR description falls
    back rather than discarding finished commits.
@@ -234,7 +241,10 @@ in the code.
   caller-stated, on the same footing as `requiredEnvVars`: `bun run typecheck`
   is a consumer's vocabulary, and prompt environment content still ships to
   nobody. Unstated, there is no signal and the run stays single-shot — the
-  behaviour of every run before this loop existed.
+  behaviour of every run before this loop existed — **with one exception since
+  shopfloor#48**: a gateless run whose trajectory does not close still iterates,
+  because the trajectory is a second signal and, unlike the gate, it needs no
+  consumer configuration. The invariants it grades are this package's own.
 - **Each iteration is a fresh spawn, not a `--resume`.** The static/dynamic
   decision, taken toward static. Resuming would keep the reasoning that produced
   the failing work inside the context of the turn meant to correct it, which is
@@ -269,6 +279,74 @@ the attempts that explain why the run needed the loop, and they are the evidence
 a bare overwrite would destroy on exactly the runs worth auditing. This is not
 the outer loop's handoff artifact, which is a synthesis and a later step — it is
 just refusing to delete something the run already produced.
+
+### The closure condition
+
+shopfloor#48, design review finding 1. With the outer loop's machine edge
+firing on `workflow_run.conclusion: failure`, the loop's definition of done was
+**"CI is green"** — and an agent that deletes a failing test to get there exits
+as a success. The trajectory checker could already prove that wrong and did
+nothing about it. `evaluateClosure` is the half that acts, and four things
+about it are decisions rather than implementation.
+
+- **Two invariants gate; two stay advisory, and the list is stated.**
+  `gate-before-commit` and `red-before-green` are the implement phase's own
+  contract, and both are exactly what a shortcut to green violates.
+  `no-forbidden-git-ops` stays advisory because the command guard already
+  refuses those _at spawn time_ — a finding there reports on a guardrail that
+  acted, and blocking would be a second punishment for something that did not
+  happen. `turn-budget-headroom` stays advisory because it is a capacity
+  signal: a run that nearly used its turn cap did nothing wrong, and gating on
+  it would block long work for being long. Not every finding is a gate, and
+  which ones are is written down rather than inferred from the scorecard.
+- **No evidence blocks, and this is the one place the "unreadable signal
+  proceeds" rule does not hold.** A missing, empty, truncated, or malformed
+  transcript grades nothing, and the run does not close on it. The question is
+  whether capture wrote **this attempt's** session, not whether a file is
+  readable: `captureTranscript` returns false without touching its destination
+  and `preserveIterationTranscript` copies rather than moves, so a failed
+  capture leaves the previous attempt's transcript in place — readable, and
+  about a different attempt. Grading that would close a run on evidence of
+  something else, which is the walk-past this gate exists to refuse, so an
+  uncaptured attempt never reaches the checker at all. Everywhere else
+  in this package an unreadable signal proceeds, because a missing _diagnostic_
+  must not cause an outage — but this stopped being a diagnostic the moment it
+  became the success path's closure condition, and a gate satisfied by the
+  absence of evidence is one anything walks past by producing no transcript.
+  The direction that costs least is still the rule, and it points here: the
+  branch is pushed, the issue is labelled for a human, and the work is
+  recoverable — while an unvetted test-deleting PR merged as a success is not.
+  It also never re-enters the loop, even with budget left: another spawn
+  corrects work a scorecard judged, and cannot conjure a transcript that was
+  never written.
+- **A violation spends an attempt out of the _same_ ceiling a red gate does.**
+  `checkIterationBudget` is one function both ask, because two copies of a
+  ceiling is how a ceiling stops being one. With budget, the run re-enters
+  carrying the violated invariants as feedback — facts and one line of
+  contract, the same restraint the gate's feedback keeps, because how to work
+  test-first is the skills plugin's and a second copy here would have no rule
+  for which wins. With none, the run **fails**, which is `agent:blocked`: a
+  green gate reached on a broken process is _something is wrong_, not _the work
+  is harder than specified_, so it is deliberately not `agent:exhausted`. The
+  block travels on `ImplementAgentError.closure`, and `runPhase` says on the
+  issue which invariants it was — `agent:blocked` says a human is needed, and
+  nothing else on that path says what for.
+- **It blocks the `succeeded` row, not `ready-for-human`.** The design says a
+  violating run "does not reach `ready-for-human`". Read against the transition
+  table that means the clean-success row: `ready-for-human` marks whose move it
+  is, and every terminal outcome sets it, blocked runs included. What the gate
+  prevents is a run **closing as a success**, which is the property the design
+  was actually about.
+
+Two bounds worth knowing. The scorecard grades **one session** — the attempt
+that just finished, not the run's history — so a re-entered run is judged on
+how _that_ attempt behaved, which is the right question to ask of an attempt
+and is also why the earlier iteration transcripts are kept beside it. And the
+gate patterns the check grades against are the package defaults **plus the
+consumer's own `runPolicy.gateCommand`, matched literally**: without that,
+`gate-before-commit` would fire falsely on every repository whose gate is not a
+bare test command, since the agent running exactly the command the harness runs
+would not be recognized as running the gate.
 
 The caller owns what is left outside the verb: checking out the repository, the
 admission job in front of it, sandboxing, and the exit code.
@@ -445,6 +523,15 @@ admission job in front of it, sandboxing, and the exit code.
   best-effort wrapper around a failing run — a loop that returned unvetted work
   as a success would be a more expensive version of the single-shot run it
   replaced.
+- **A green gate is necessary and no longer sufficient.** Since shopfloor#48 a
+  run also has to close on its own trajectory, and the two gating invariants
+  are the ones a shortcut to green violates. This is the only guardrail in the
+  package that **refuses on an unreadable signal without being about spend** —
+  authorization and admission refuse on uncertainty because the failure is
+  financial and adversarial; this one refuses because the signal _is_ the
+  definition of done, and a definition of done that an absent file satisfies is
+  not one. The whole argument, and what stays advisory, is § "The closure
+  condition".
 - **Probes are best-effort and lazy.** A probe that answers nothing becomes an
   error naming what to state instead, never a silent default.
 - **The doctor holds "unknown" apart from "wrong".** A setup check whose probe

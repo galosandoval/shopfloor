@@ -40,6 +40,24 @@ export { type RunImplementAgentResult } from './orchestration/implement'
 
 export { ImplementAgentError } from './orchestration/implement-error'
 
+/**
+ * The closure condition (shopfloor#48): the pure decision that turns the
+ * trajectory scorecard from a diagnostic into a gate on the success path.
+ * Exported like its sibling guards so a consumer's own tooling can ask the
+ * question a run asks — and, more to the point, read
+ * {@link GATING_TRAJECTORY_INVARIANTS} rather than guess which findings
+ * actually block. `checkTrajectory` below is what produces the scorecard it
+ * grades.
+ */
+export {
+  evaluateClosure,
+  GATING_TRAJECTORY_INVARIANTS,
+  type ClosureBlock,
+  type ClosureInput,
+  type ClosureVerdict,
+  type GatingTrajectoryInvariantId
+} from './guardrails/closure'
+
 export { type RunImplementAgentConfig } from './orchestration/config'
 
 export {

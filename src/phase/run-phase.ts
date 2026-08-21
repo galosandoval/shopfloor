@@ -38,6 +38,7 @@ import {
   type RunImplementAgentConfig
 } from '../orchestration/config'
 import { ImplementAgentError } from '../orchestration/implement-error'
+import type { ClosureBlock } from '../guardrails/closure'
 import {
   runImplementAgent,
   type RunImplementAgentResult
@@ -324,7 +325,50 @@ async function runPhaseAgent(
           error instanceof ImplementAgentError ? error.exhausted : false
       })
     })
+
+    if (error instanceof ImplementAgentError && error.closure) {
+      await commentOnClosureBlock(context, error.closure)
+    }
     throw error
+  }
+}
+
+/**
+ * Say on the issue why the trajectory blocked this run (shopfloor#48).
+ *
+ * `agent:blocked` says a human is needed; it does not say what for, and the
+ * one thing this failure has that the others do not is a stated list of
+ * invariants the run violated. Without the comment that list reaches only the
+ * failure-reason artifact, which is on the CI run rather than on the issue the
+ * human is looking at.
+ *
+ * Best-effort, like every other report this package writes: a comment that
+ * fails to post must not replace the failure worth reporting.
+ */
+async function commentOnClosureBlock(
+  context: { issue: IssueRef; branch: string },
+  closure: ClosureBlock
+): Promise<void> {
+  const violated =
+    closure.violations.length > 0
+      ? `\n\n**Violated:** ${closure.violations.map((id) => `\`${id}\``).join(', ')}`
+      : ''
+
+  try {
+    await execFileAsync('gh', [
+      'issue',
+      'comment',
+      context.issue.issueNumber,
+      '--repo',
+      context.issue.repo,
+      '--body',
+      `The implement phase blocked this run on its own trajectory.\n\n` +
+        `**Reason:** ${closure.reason}${violated}\n\n` +
+        `What the run committed is on \`${context.branch}\`; no pull ` +
+        'request was opened for it.'
+    ])
+  } catch (error) {
+    console.warn(`Could not comment on the closure block: ${String(error)}`)
   }
 }
 
