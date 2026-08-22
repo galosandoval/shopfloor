@@ -5,6 +5,7 @@
  */
 
 import type { ClosureBlock } from '../guardrails/closure'
+import type { TrajectoryFinding } from '../observability/trajectory'
 import type { RunUsage } from '../observability/usage'
 
 export class ImplementAgentError extends Error {
@@ -40,12 +41,26 @@ export class ImplementAgentError extends Error {
    * transcript it could not read — without matching on prose.
    */
   readonly closure?: ClosureBlock
+  /**
+   * The trajectory scorecard for the attempt that failed, when one was graded
+   * (shopfloor#49). It rides out on the error for the reason `usage` does: the
+   * handoff artifact is written on the failure path, the scorecard is one of its
+   * load-bearing harness-authored facts, and a failed run never reaches a
+   * result to carry it. Absent means *not graded* — a spawn the runaway guards
+   * killed, or one whose transcript was never captured — and the handoff says
+   * so rather than rendering an empty scorecard as a clean one.
+   */
+  readonly findings?: readonly TrajectoryFinding[]
 
   constructor(
     message: string,
     outputTail?: string,
     usage?: RunUsage,
-    options: { exhausted?: boolean; closure?: ClosureBlock } = {}
+    options: {
+      exhausted?: boolean
+      closure?: ClosureBlock
+      findings?: readonly TrajectoryFinding[]
+    } = {}
   ) {
     super(message)
     this.name = 'ImplementAgentError'
@@ -53,5 +68,6 @@ export class ImplementAgentError extends Error {
     this.usage = usage
     this.exhausted = options.exhausted ?? false
     this.closure = options.closure
+    this.findings = options.findings
   }
 }

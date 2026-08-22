@@ -270,3 +270,44 @@ describe('evaluateAdmission — what the count survives', () => {
     expect(verdict).toMatchObject({ refusal: 'in-flight' })
   })
 })
+
+describe('evaluateAdmission — the failed run it continues', () => {
+  it('passes the classification’s CI failure through to the run', () => {
+    const verdict = evaluateAdmission({
+      classification: {
+        triggered: true,
+        phase: 'implement',
+        edge: 'machine',
+        issueNumber: 49,
+        actor: 'github-actions[bot]',
+        repo: 'acme/widgets',
+        ciFailure: {
+          runId: '4242',
+          runUrl: 'https://github.com/acme/widgets/actions/runs/4242'
+        }
+      },
+      history: { answered: true, labelAdditions: [], currentLabels: [] }
+    })
+
+    expect(verdict).toMatchObject({
+      admitted: true,
+      ciFailure: { runId: '4242' }
+    })
+  })
+
+  it('carries none when the classification named none', () => {
+    const verdict = evaluateAdmission({
+      classification: {
+        triggered: true,
+        phase: 'implement',
+        edge: 'machine',
+        issueNumber: 49,
+        actor: 'github-actions[bot]',
+        repo: 'acme/widgets'
+      },
+      history: { answered: true, labelAdditions: [], currentLabels: [] }
+    })
+
+    expect(verdict).not.toHaveProperty('ciFailure')
+  })
+})

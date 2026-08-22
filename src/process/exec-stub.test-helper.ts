@@ -15,6 +15,8 @@
  * test file in its own module graph, so the sharing stops at the file.
  */
 
+import { EventEmitter } from 'node:events'
+
 export interface ExecStubResponse {
   stdout?: string
   stderr?: string
@@ -71,12 +73,16 @@ export function routeExecStub(next: ExecStubRoute[]): void {
  * vi.mock('node:child_process', () => execStubModule())
  * ```
  */
-export function execStubModule(): { execFile: unknown } {
-  const run = (file: string, args: string[]) => {
+export function execStubModule(): { execFile: unknown; spawn: unknown } {
+  const answerFor = (file: string, args: string[]) => {
     calls.push([file, ...args])
     const command = [file, ...args].join(' ')
     const routed = routes.find((route) => route.match.test(command))
-    const { stdout = '', stderr = '', fails } = routed?.response ?? response
+    return { command, ...(routed?.response ?? response) }
+  }
+
+  const run = (file: string, args: string[]) => {
+    const { command, stdout = '', stderr = '', fails } = answerFor(file, args)
 
     if (fails !== undefined) {
       return Promise.reject(
@@ -110,5 +116,57 @@ export function execStubModule(): { execFile: unknown } {
     value: run
   })
 
-  return { execFile }
+  return { execFile, spawn: spawnStub(answerFor) }
+}
+
+/**
+ * The streaming half of the boundary, for a shell that reads a child's stdout
+ * as it arrives rather than buffering it — the handoff's CI log fetch, which
+ * streams precisely so a large log cannot cost it the tail.
+ *
+ * Answers from the same routing table as {@link execStubModule}'s `execFile`,
+ * so a test states one expectation per command however the shell runs it. The
+ * canned stdout arrives in **two chunks**, which is not cosmetic: a stub that
+ * emits once would let a rolling-tail bug that drops everything but the final
+ * chunk pass.
+ */
+function spawnStub(
+  answerFor: (
+    file: string,
+    args: string[]
+  ) => ExecStubResponse & { command: string }
+) {
+  return (file: string, args: string[]) => {
+    const { stdout = '', stderr = '', fails } = answerFor(file, args)
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter & { setEncoding: (encoding: string) => void }
+      stderr: EventEmitter & { setEncoding: (encoding: string) => void }
+    }
+    const stream = () =>
+      Object.assign(new EventEmitter(), { setEncoding: () => {} })
+
+    child.stdout = stream()
+    child.stderr = stream()
+
+    setImmediate(() => {
+      if (fails === 'spawn') {
+        child.emit(
+          'error',
+          Object.assign(new Error('spawn stub'), { code: 'ENOENT' })
+        )
+        return
+      }
+
+      const half = Math.ceil(stdout.length / 2)
+      if (stdout) {
+        child.stdout.emit('data', stdout.slice(0, half))
+        child.stdout.emit('data', stdout.slice(half))
+      }
+      if (stderr) child.stderr.emit('data', stderr)
+
+      child.emit('close', fails === undefined ? 0 : fails)
+    })
+
+    return child
+  }
 }

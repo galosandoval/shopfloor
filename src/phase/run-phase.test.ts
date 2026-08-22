@@ -31,6 +31,9 @@ import { agentBranchForIssue } from '../trigger/branch'
 import { DEFAULT_PHASE_PROMPTS } from './prompts'
 import { ensureAgentBranch, pushAgentBranch } from './run-branch'
 import { ensurePullRequest } from './run-pull-request'
+import { describeRunawayKill } from '../orchestration/spawn-claude'
+import { writeHandoff } from '../handoff/run-handoff'
+import { stripAttempts } from '../handoff/strip-attempts'
 import { runPhase } from './run-phase'
 
 vi.mock('node:child_process', () => execStubModule())
@@ -50,6 +53,8 @@ vi.mock('./run-branch', () => ({
   headSha: vi.fn()
 }))
 vi.mock('./run-pull-request', () => ({ ensurePullRequest: vi.fn() }))
+vi.mock('../handoff/run-handoff', () => ({ writeHandoff: vi.fn() }))
+vi.mock('../handoff/strip-attempts', () => ({ stripAttempts: vi.fn() }))
 
 const admitted = {
   admitted: true as const,
@@ -104,6 +109,12 @@ beforeEach(() => {
     posted: true,
     screenshotCount: 0
   })
+  vi.mocked(writeHandoff).mockResolvedValue({
+    file: '.agent/attempts/900.md',
+    written: true,
+    committed: true
+  })
+  vi.mocked(stripAttempts).mockResolvedValue({ stripped: true, removed: 1 })
 })
 
 describe('runPhase', () => {
@@ -442,5 +453,142 @@ describe('runPhase', () => {
 
     expect(outcomes()).toEqual([])
     expect(calls.some((call) => call[0] === 'gh')).toBe(true)
+  })
+})
+
+/**
+ * The handoff artifact (shopfloor#49). The document is tested pure in
+ * `handoff.test.ts` and the writing shell in `run-handoff.test.ts`; what is
+ * tested here is the sequencing — that a failure writes one before the branch
+ * is pushed, that a killed run still gets one, and that a success strips the
+ * trail instead of adding to it.
+ */
+describe('runPhase — the handoff trail', () => {
+  const failWith = (error: unknown) =>
+    vi.mocked(runImplementAgent).mockRejectedValue(error)
+
+  const handoff = () => vi.mocked(writeHandoff).mock.calls[0][0]
+
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // `clearAllMocks` clears calls, not implementations — an earlier suite's
+    // rejecting push would otherwise leak into every test here.
+    vi.mocked(pushAgentBranch).mockResolvedValue(undefined)
+  })
+
+  it('writes and commits one when the run fails, before the branch is pushed', async () => {
+    failWith(new ImplementAgentError('Claude CLI exited with status 1.'))
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow()
+
+    expect(handoff()).toMatchObject({
+      attempt: 1,
+      maxAttempts: 3,
+      issueNumber: 47,
+      repo: 'acme/widgets',
+      branch: agentBranchForIssue(47),
+      outcome: 'failed',
+      failure: 'Claude CLI exited with status 1.',
+      attemptsDir: '.agent/attempts'
+    })
+    expect(vi.mocked(writeHandoff).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(pushAgentBranch).mock.invocationCallOrder[0]
+    )
+  })
+
+  it('writes one for a run its runaway guards killed', async () => {
+    // The real message, not a stand-in: a kill is the case this artifact exists
+    // for, and asserting on prose no run would print would prove nothing.
+    failWith(
+      new ImplementAgentError(
+        describeRunawayKill({ reason: 'wall-clock', budgetMs: 900_000 })
+      )
+    )
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow()
+
+    expect(handoff().failure).toContain('killed by the')
+    expect(outcomes()).toEqual(['started', 'failed'])
+  })
+
+  it('records an exhausted ceiling as exhausted rather than as a failure', async () => {
+    failWith(
+      new ImplementAgentError(
+        'Spent 3 iterations with the gate red.',
+        undefined,
+        undefined,
+        {
+          exhausted: true
+        }
+      )
+    )
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow()
+
+    expect(handoff().outcome).toBe('exhausted')
+  })
+
+  it('carries the scorecard the failed attempt was graded on', async () => {
+    const findings = [
+      {
+        id: 'gate-before-commit' as const,
+        title: 'Quality gate ran before each commit',
+        status: 'fail' as const,
+        detail: 'committed 3 times, gate ran 0 times',
+        evidence: [{ turnIndex: 4 }]
+      }
+    ]
+    failWith(
+      new ImplementAgentError('blocked', undefined, undefined, { findings })
+    )
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow()
+
+    expect(handoff().scorecard).toEqual(findings)
+  })
+
+  it('carries the CI failure the machine edge continues', async () => {
+    vi.mocked(runAdmission).mockResolvedValue({
+      ...admitted,
+      edge: 'machine',
+      ciFailure: {
+        runId: '4242',
+        runUrl: 'https://github.com/acme/widgets/actions/runs/4242'
+      }
+    })
+    failWith(new ImplementAgentError('failed'))
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow()
+
+    expect(handoff().ciFailure).toMatchObject({ runId: '4242' })
+  })
+
+  it('strips the trail on success, and writes no handoff for it', async () => {
+    const result = await runPhase({ payload: {}, env, cwd: '/repo' })
+
+    expect(result).toMatchObject({ ran: true, outcome: 'succeeded' })
+    expect(vi.mocked(stripAttempts)).toHaveBeenCalledWith({
+      attemptsDir: '.agent/attempts',
+      cwd: '/repo'
+    })
+    expect(vi.mocked(writeHandoff)).not.toHaveBeenCalled()
+  })
+
+  it('keeps the trail on every ending that is not a success', async () => {
+    failWith(new ImplementAgentError('failed'))
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow()
+
+    expect(vi.mocked(stripAttempts)).not.toHaveBeenCalled()
+  })
+
+  it('does not let a failed handoff replace the failure worth reporting', async () => {
+    vi.mocked(writeHandoff).mockRejectedValue(new Error('disk full'))
+    failWith(new ImplementAgentError('Claude CLI exited with status 1.'))
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow(
+      'Claude CLI exited with status 1.'
+    )
+    expect(outcomes()).toEqual(['started', 'failed'])
   })
 })

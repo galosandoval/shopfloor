@@ -18,6 +18,10 @@ export interface ClaudeInvocationInput {
   prDescriptionFile: string
   verifyReportFile: string
   screenshotsDir: string
+  /** Repo-relative dir holding every previous attempt's handoff (shopfloor#49). */
+  attemptsDir: string
+  /** Where this attempt writes its own claims, for the next one's handoff. */
+  handoffClaimsFile: string
   /** Claude model the headless agent runs — from the caller's `RunPolicyConfig`.
    *  Omitted leaves `--model` off the vector so the Claude CLI's own default
    *  applies, rather than pinning a model string here. */
@@ -74,7 +78,9 @@ export function prepareClaudeInvocation(
     BRANCH: input.branch,
     PR_DESCRIPTION_FILE: input.prDescriptionFile,
     VERIFY_REPORT_FILE: input.verifyReportFile,
-    SCREENSHOTS_DIR: input.screenshotsDir
+    SCREENSHOTS_DIR: input.screenshotsDir,
+    ATTEMPTS_DIR: input.attemptsDir,
+    HANDOFF_CLAIMS_FILE: input.handoffClaimsFile
   }
 
   const rendered = input.promptTemplate.replace(

@@ -303,6 +303,41 @@ describe('resolveImplementConfig', () => {
       ).toBe('env-shots')
     })
 
+    it('keeps the attempts dir out of outputDir — that trail gets committed', () => {
+      expect(
+        resolveImplementConfig(baseInput({ outputDir: '/out' }), baseEnv())
+          .attemptsDir
+      ).toBe('.agent/attempts')
+    })
+
+    it('lets the attempts dir be overridden by input and by env', () => {
+      expect(
+        resolveImplementConfig(
+          baseInput({ attemptsDir: 'trail' }),
+          baseEnv({ ATTEMPTS_DIR: 'env-trail' })
+        ).attemptsDir
+      ).toBe('trail')
+      expect(
+        resolveImplementConfig(
+          baseInput(),
+          baseEnv({ ATTEMPTS_DIR: 'env-trail' })
+        ).attemptsDir
+      ).toBe('env-trail')
+    })
+
+    it('puts the claims file under outputDir — the harness reads it, git never sees it', () => {
+      expect(
+        resolveImplementConfig(baseInput({ outputDir: '/out' }), baseEnv())
+          .handoffClaimsFile
+      ).toBe(path.join('/out', 'handoff_claims.md'))
+      expect(
+        resolveImplementConfig(
+          baseInput({ handoffClaimsFile: '/elsewhere/claims.md' }),
+          baseEnv()
+        ).handoffClaimsFile
+      ).toBe('/elsewhere/claims.md')
+    })
+
     it("defaults the projects dir to Claude Code's session store", () => {
       const config = resolveImplementConfig(baseInput(), baseEnv())
 

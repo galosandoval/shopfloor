@@ -173,20 +173,26 @@ own lockfile and scripts. A run on the shim alone works; a run on your own
 prompt is the normal case.
 
 Before the spawn, a prompt's `{{PLACEHOLDER}}` tokens are rendered against the
-run's own resolved values. Six are substituted, and only these six:
+run's own resolved values. Eight are substituted, and only these eight:
 
-| Token                     | Rendered to                                                     |
-| ------------------------- | --------------------------------------------------------------- |
-| `{{ISSUE_NUMBER}}`        | `issueNumber`, as resolved                                      |
-| `{{ISSUE_TITLE}}`         | the issue's own title, read once via `gh`                       |
-| `{{BRANCH}}`              | `agent/issue-<n>` — the branch the verb located or created      |
-| `{{PR_DESCRIPTION_FILE}}` | absolute path the agent writes its PR description to            |
-| `{{VERIFY_REPORT_FILE}}`  | absolute path the agent writes its verify report to             |
-| `{{SCREENSHOTS_DIR}}`     | repo-relative directory the agent commits verify screenshots to |
+| Token                     | Rendered to                                                       |
+| ------------------------- | ----------------------------------------------------------------- |
+| `{{ISSUE_NUMBER}}`        | `issueNumber`, as resolved                                        |
+| `{{ISSUE_TITLE}}`         | the issue's own title, read once via `gh`                         |
+| `{{BRANCH}}`              | `agent/issue-<n>` — the branch the verb located or created        |
+| `{{PR_DESCRIPTION_FILE}}` | absolute path the agent writes its PR description to              |
+| `{{VERIFY_REPORT_FILE}}`  | absolute path the agent writes its verify report to               |
+| `{{SCREENSHOTS_DIR}}`     | repo-relative directory the agent commits verify screenshots to   |
+| `{{ATTEMPTS_DIR}}`        | repo-relative directory holding every previous attempt's handoff  |
+| `{{HANDOFF_CLAIMS_FILE}}` | absolute path the agent writes its own account of this attempt to |
 
-The last three are how a prompt tells the agent where to put the artifacts this
-package then reads back — a template that never names them yields a run with no
-PR description (`prDescription: 'fallback'`) and nothing to post.
+The output paths are how a prompt tells the agent where to put the artifacts
+this package then reads back — a template that never names them yields a run
+with no PR description (`prDescription: 'fallback'`) and nothing to post.
+
+`{{ATTEMPTS_DIR}}` is a **path**, not the trail itself: inlining N previous
+attempts would cost context linearly in attempt count and put the whole trail
+in static context. See [The handoff trail](#the-handoff-trail).
 
 **An unrecognized token refuses the run**, before the spawn and before any
 probe — a misspelled placeholder, or one that used to exist, like
@@ -317,6 +323,8 @@ you state, or one the environment already carries, never spawns a subprocess.
 | `transcriptFile`                 | —                           | —               | `transcript.jsonl` under `outputDir`                  |
 | `failureReasonFile`              | —                           | —               | `failure_reason.txt` under `outputDir`                |
 | `screenshotsDir`                 | `SCREENSHOTS_DIR`           | —               | `.agent/verify/issue-<N>`                             |
+| `attemptsDir`                    | `ATTEMPTS_DIR`              | —               | `.agent/attempts`                                     |
+| `handoffClaimsFile`              | —                           | —               | `handoff_claims.md` under `outputDir`                 |
 | `projectsDir`                    | `PROJECTS_DIR`              | —               | `~/.claude/projects`                                  |
 | `runPolicy.model`                | `MODEL`                     | —               | none — the Claude CLI's own default                   |
 | `runPolicy.maxTurns`             | `MAX_TURNS`                 | —               | `150`                                                 |
@@ -449,7 +457,7 @@ check rather than rendered — see below.
 
 **An unfilled prompt — fails the run.** Before any probe runs, the prompt is
 checked for the two things that mean it was never finished: `shopfloor init`'s
-`TODO(shopfloor)` sentinel, and a `{{TOKEN}}` outside [the six this package
+`TODO(shopfloor)` sentinel, and a `{{TOKEN}}` outside [the ones this package
 substitutes](#the-prompt-template). Either **refuses before spawning**, naming
 every offender — the sentinel by line number, an unknown token beside the table
 of real ones.
@@ -1150,11 +1158,61 @@ Grading uses the package's default gate-command patterns _plus_ your own
 stated list — both exported so your own tooling can ask what a run asks. A
 block travels out on `ImplementAgentError.closure`.
 
+### The handoff trail
+
+Every run used to start cold, and a failed one taught the next nothing — which
+is fine for a single-shot harness and fatal with an outer loop, because a
+bounded loop over identical attempts is not a feedback loop.
+
+Each attempt that does **not** succeed leaves a file at
+`.agent/attempts/<run-id>.md`, committed to the branch, and the next attempt
+reads the whole trail through `{{ATTEMPTS_DIR}}` — **all** of it, not just the
+last one. Attempt 3 learning only from attempt 2 is how a loop oscillates
+between two wrong approaches.
+
+**Two authors, never blended.**
+
+- **Harness-authored**, and load-bearing: the CI failure that triggered the
+  edge (a bounded tail of `gh run view --log-failed`, plus the run URL), the
+  trajectory scorecard, the run id, and the diff. **Written unconditionally** —
+  after a runaway kill, after a crash inside the run, after an exhausted
+  ceiling. Those are exactly the attempts the ceiling exists to stop, and the
+  ones that would otherwise teach the next iteration nothing.
+- **Agent-authored**, and marked as _claims_: what the agent tried, what it
+  abandoned, what it believes the root cause is, read back from
+  `{{HANDOFF_CLAIMS_FILE}}` and quoted verbatim under an unverified heading. An
+  agent that just failed is the least reliable narrator of why. When it wrote
+  none — a kill, usually — the document **says so**, naming the file it looked
+  in, rather than omitting the section. It does not guess at _why_ the file is
+  empty: a kill and an agent that skipped it look identical from here, and how
+  the attempt ended is already stated from the error the run threw.
+
+Everything is bounded and the bounds are stated: `HANDOFF_LOG_TAIL_LIMIT`,
+`HANDOFF_DIFF_LIMIT`, and `HANDOFF_CLAIMS_LIMIT` are exported constants, and a
+truncated section says it was truncated. Unbounded logs are how a handoff
+becomes context rot one iteration at a time. A log fetch that fails degrades the
+document to URL-only rather than blocking the loop.
+
+**The trail is stripped on success**, in the commit the successful run is about
+to push — the lifecycle the verify screenshots follow. It is **kept** on the
+exhausted terminal state — the PR stays open and the trail is the best account
+anyone has of what went wrong — and kept on an ordinary failure, because the
+next attempt is the reason it was written.
+
+The commits are authored as `claude-code[bot]` and skip your hooks
+(`--no-verify`). Both are deliberate: the machine edge is keyed on the head
+commit's author, so a handoff committed under the runner's ambient identity
+would stop the retrigger this artifact exists to inform, and a pre-commit hook
+failing is not a reason to lose the only record of why the attempt failed.
+
+`renderHandoff` is the pure document (facts in, markdown out) and is exported,
+along with `DEFAULT_ATTEMPTS_DIR`, for glue that reads or reproduces the trail.
+
 ### Setup doctor
 
 Everything above is a string binding a consumer has to get right on their own:
 two secrets, the label vocabulary, a workflow's trigger wiring, a prompt
-carrying six exact tokens, a CLI pin. None of them errors when it is wrong —
+carrying eight exact tokens, a CLI pin. None of them errors when it is wrong —
 they rot silently, which is what `{{STANDARDS_DIR}}` did. One command says
 which one is wrong:
 
@@ -1418,6 +1476,10 @@ or `review` module has an obvious home:
   pure `planInit` / `buildEnvironmentBlock` (both internal) and the `runInit`
   shell that is the one thing here that writes to a consumer's repository. It
   judges and configures a consumer's setup rather than a run.
+- `src/handoff/` — memory: the pure `renderHandoff` (two authorship halves, one
+  file per attempt, every section bounded) and the `writeHandoff` /
+  `stripAttempts` shell that commits the trail to the branch and removes it on
+  success. The one module whose output is written for an _agent_ to read.
 - `src/process/` — what every shell that shells out needs and none of them own:
   the one narrowing of a rejected `execFile` (`asExecFailure`) and the
   `node:child_process` stub their wiring tests share. Internal; nothing here is

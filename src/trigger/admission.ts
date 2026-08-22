@@ -59,7 +59,12 @@ import type {
 } from '../guardrails/authorization'
 import { IN_PROGRESS_LABEL } from '../issue-state/vocabulary'
 import { agentBranchForIssue } from './branch'
-import type { Phase, TriggerClassification, TriggerEdge } from './classify'
+import type {
+  CiFailureRef,
+  Phase,
+  TriggerClassification,
+  TriggerEdge
+} from './classify'
 
 /**
  * How many runs one issue gets before the ceiling trips. Design §4 puts this
@@ -174,6 +179,13 @@ export type AdmissionVerdict =
       maxAttempts: number
       /** What admitted it, echoed for the run's own record. */
       authorizedBy: AdmissionAuthority
+      /**
+       * The failed CI run this admission continues, when the classification
+       * named one — passed straight through rather than re-read, so the handoff
+       * artifact (shopfloor#49) and the trigger boundary can never disagree
+       * about which run failed.
+       */
+      ciFailure?: CiFailureRef
     }
   | { admitted: false; refusal: AdmissionRefusal; reason: string }
 
@@ -242,7 +254,7 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
     }
   }
 
-  return {
+  const verdict: AdmissionVerdict = {
     admitted: true,
     phase,
     edge,
@@ -254,6 +266,10 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
     maxAttempts,
     authorizedBy
   }
+
+  if (classification.ciFailure) verdict.ciFailure = classification.ciFailure
+
+  return verdict
 }
 
 /**

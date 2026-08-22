@@ -42,6 +42,17 @@ export type Phase = (typeof PHASES)[number]
  */
 export type TriggerEdge = 'human' | 'machine'
 
+/**
+ * The CI run whose failure retriggered the loop: what to link, and what to ask
+ * `gh` for the failing logs of. Both or neither — a run id with no URL would
+ * make the handoff's degraded form (URL-only) unrepresentable, and a URL with
+ * no id would make the undegraded one unreachable.
+ */
+export interface CiFailureRef {
+  runId: string
+  runUrl: string
+}
+
 export type TriggerClassification =
   | {
       triggered: true
@@ -52,6 +63,15 @@ export type TriggerClassification =
       actor: string
       /** `owner/repo`, straight off the payload. */
       repo: string
+      /**
+       * The failed CI run this event continues — machine edge only, and only
+       * when the payload names both halves of it. It is read here rather than
+       * re-derived later because this function is the one place the raw payload
+       * is parsed, and the handoff artifact (shopfloor#49) needs exactly this:
+       * a URL to link and an id to fetch the failing logs by. A human-edge
+       * trigger has none, which is a fact about the edge rather than a gap.
+       */
+      ciFailure?: CiFailureRef
     }
   | {
       triggered: false
@@ -223,7 +243,7 @@ function classifyWorkflowRun(event: PayloadRecord): TriggerClassification {
     }
   }
 
-  return {
+  const classification: TriggerClassification = {
     triggered: true,
     // A finished CI run carries no issue labels, so the phase cannot be read
     // off the payload the way the human edge reads it. One phase ships, so
@@ -235,6 +255,27 @@ function classifyWorkflowRun(event: PayloadRecord): TriggerClassification {
     actor,
     repo
   }
+
+  const ciFailure = ciFailureOf(run)
+  if (ciFailure) classification.ciFailure = ciFailure
+
+  return classification
+}
+
+/**
+ * Which run failed, for the handoff to link and fetch. Omitted rather than
+ * half-filled when the payload names only one of the two: a partial reference
+ * would be a fetch against an id nobody can check, or a link the logs cannot be
+ * read from.
+ */
+function ciFailureOf(run: PayloadRecord): CiFailureRef | undefined {
+  const runId =
+    typeof run.id === 'number' && Number.isSafeInteger(run.id)
+      ? String(run.id)
+      : asString(run.id)
+  const runUrl = asString(run.html_url)
+
+  return runId && runUrl ? { runId, runUrl } : undefined
 }
 
 /**

@@ -298,6 +298,66 @@ describe('runImplementAgent guard wiring', () => {
   })
 })
 
+describe('runImplementAgent handoff wiring', () => {
+  it('renders the resolved attempts dir and claims file into the prompt', async () => {
+    await runImplementAgent(
+      baseInput({
+        promptTemplate:
+          'Trail: {{ATTEMPTS_DIR}}\nClaims: {{HANDOFF_CLAIMS_FILE}}',
+        attemptsDir: 'trail',
+        handoffClaimsFile: '/out/claims.md'
+      })
+    )
+
+    expect(armedWith().prompt).toBe('Trail: trail\nClaims: /out/claims.md')
+  })
+
+  it('defaults them rather than rendering an empty path', async () => {
+    await runImplementAgent(
+      baseInput({
+        promptTemplate: '{{ATTEMPTS_DIR}} {{HANDOFF_CLAIMS_FILE}}',
+        outputDir: '/out'
+      })
+    )
+
+    expect(armedWith().prompt).toBe('.agent/attempts /out/handoff_claims.md')
+  })
+
+  it('reports the attempt’s scorecard on the result, for the handoff to carry', async () => {
+    const result = await runImplementAgent(baseInput())
+
+    expect(result.findings?.map((finding) => finding.id)).toContain(
+      'gate-before-commit'
+    )
+  })
+
+  it('reports it on the error too — a failed attempt is the one worth a handoff', async () => {
+    transcript = trajectoryOf({ broken: true })
+
+    const error = await runImplementAgent(
+      baseInput({ runPolicy: { maxIterations: 1 } })
+    ).catch((thrown: unknown) => thrown)
+
+    expect(error).toBeInstanceOf(ImplementAgentError)
+    expect(
+      (error as ImplementAgentError).findings?.map((finding) => finding.id)
+    ).toContain('gate-before-commit')
+  })
+
+  it('reports none when the spawn was killed — there is nothing of it to grade', async () => {
+    spawnClaudeMock.mockResolvedValue(
+      spawnResult({ killedBy: { reason: 'idle', budgetMs: 60_000 } })
+    )
+
+    const error = await runImplementAgent(baseInput()).catch(
+      (thrown: unknown) => thrown
+    )
+
+    expect(error).toBeInstanceOf(ImplementAgentError)
+    expect((error as ImplementAgentError).findings).toBeUndefined()
+  })
+})
+
 describe('runImplementAgent CLI-version precondition', () => {
   let warn: ReturnType<typeof vi.spyOn>
 
