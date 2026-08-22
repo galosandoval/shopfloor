@@ -21,6 +21,13 @@ the section. Every section is bounded by an exported constant
 (`HANDOFF_LOG_TAIL_LIMIT`, `HANDOFF_DIFF_LIMIT`, `HANDOFF_CLAIMS_LIMIT`) and a
 truncated one says it was truncated.
 
+The CI log bound is enforced **while fetching**, not only while rendering: the
+fetch streams a rolling tail rather than buffering the whole log and cutting it
+afterwards. This matters for exactly the runs it is for — a job log large enough
+to exhaust a read buffer belongs to a run that failed loudly, and buffering
+degraded those to URL-only. Memory stays flat however verbose the run, and the
+document states the true length whenever what it shows is a tail.
+
 **What breaks.** Two things, both in prompts:
 
 - **`shopfloor-doctor`'s `prompt-tokens` check now fails on a prompt written

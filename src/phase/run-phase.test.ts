@@ -32,7 +32,8 @@ import { DEFAULT_PHASE_PROMPTS } from './prompts'
 import { ensureAgentBranch, pushAgentBranch } from './run-branch'
 import { ensurePullRequest } from './run-pull-request'
 import { describeRunawayKill } from '../orchestration/spawn-claude'
-import { stripAttempts, writeHandoff } from '../handoff/run-handoff'
+import { writeHandoff } from '../handoff/run-handoff'
+import { stripAttempts } from '../handoff/strip-attempts'
 import { runPhase } from './run-phase'
 
 vi.mock('node:child_process', () => execStubModule())
@@ -52,10 +53,8 @@ vi.mock('./run-branch', () => ({
   headSha: vi.fn()
 }))
 vi.mock('./run-pull-request', () => ({ ensurePullRequest: vi.fn() }))
-vi.mock('../handoff/run-handoff', () => ({
-  writeHandoff: vi.fn(),
-  stripAttempts: vi.fn()
-}))
+vi.mock('../handoff/run-handoff', () => ({ writeHandoff: vi.fn() }))
+vi.mock('../handoff/strip-attempts', () => ({ stripAttempts: vi.fn() }))
 
 const admitted = {
   admitted: true as const,

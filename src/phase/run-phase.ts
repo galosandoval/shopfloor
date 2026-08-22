@@ -50,11 +50,9 @@ import {
 import type { AdmissionRefusal } from '../trigger/admission'
 import type { Phase, TriggerEdge } from '../trigger/classify'
 import { runAdmission } from '../trigger/run-admission'
-import {
-  stripAttempts,
-  writeHandoff,
-  type WriteHandoffInput
-} from '../handoff/run-handoff'
+import { writeHandoff, type WriteHandoffInput } from '../handoff/run-handoff'
+import type { AttemptsTrailLocation } from '../handoff/git'
+import { stripAttempts } from '../handoff/strip-attempts'
 import { evaluatePhaseOutcome } from './outcome'
 import { resolvePhasePrompt } from './prompts'
 import { ensureAgentBranch, headSha, pushAgentBranch } from './run-branch'
@@ -225,11 +223,15 @@ export async function runPhase(
 
   // **The trail is stripped here, on the one path that ends it.** A run that
   // closed as a success has no next attempt to inform, and the strip is a
-  // commit — so it rides out with the work rather than in a follow-up push,
-  // which is the same point the verify screenshots are stripped at. Every
-  // other ending keeps the trail: an exhausted issue keeps it because §4 posts
-  // it to a human, and a failed one keeps it because the next attempt is the
-  // whole reason it was written.
+  // commit — so it goes before `handOver` pushes, riding out with the work
+  // rather than in a follow-up push. Every other ending keeps the trail: an
+  // exhausted issue keeps it because §4 posts it to a human, and a failed one
+  // keeps it because the next attempt is the whole reason it was written.
+  //
+  // Nothing strips the verify screenshots yet — shopfloor#49 specified this
+  // point as "where the screenshots are stripped", and that place does not
+  // exist. When it does, it belongs on this line, for the same reason: a
+  // deletion that misses the pushed commit leaves the branch carrying it.
   await stripAttemptsBestEffort({ attemptsDir: config.attemptsDir, cwd })
 
   const { pullRequest, verifyCommentPosted } = await handOver({
@@ -343,13 +345,11 @@ async function runPhaseAgent(
     })
 
     // **First, because this is the run the next attempt has to learn from**
-    // (shopfloor#49). The harness-authored half is written unconditionally —
-    // after a runaway kill, after a crash inside the run, after an exhausted
-    // ceiling — since those are exactly the attempts that would otherwise teach
-    // the next iteration nothing, and a loop that re-derives the same approach
-    // three times is a token incinerator with a stop button. It is committed
-    // before the push below so the branch carries it; best-effort, because a
-    // handoff that fails to write must not replace the failure worth reporting.
+    // (shopfloor#49). Why the harness half is written on every failing path —
+    // kill, crash, exhausted ceiling alike — is on `renderHandoff`; what this
+    // ordering adds is that it lands *before* the push below, so the branch
+    // actually carries it. Best-effort, like the push: a handoff that fails to
+    // write must not replace the failure worth reporting.
     await writeHandoffBestEffort(context, error, outcome)
 
     // **The work survives the runner even when the run does not.** A failed or
@@ -415,21 +415,30 @@ async function writeHandoffBestEffort(
         : {})
     })
 
+    // **Said as a consequence, not as a step that did not happen.** A handoff
+    // that stayed on the runner's disk is a handoff the next attempt will never
+    // see, and the loop then spends an attempt re-deriving what this one already
+    // learned — the exact failure #49 exists to prevent, and one that is
+    // otherwise invisible until somebody reads three near-identical attempts.
     if (!result.written || !result.committed) {
       console.warn(
-        `Could not commit the handoff for this attempt: ${result.detail ?? 'no reason given'}`
+        `Handoff for attempt ${context.handoff.attempt} did not reach ` +
+          `${context.branch} (${result.detail ?? 'no reason given'}) — the ` +
+          'next attempt on this issue will start with no memory of this one.'
       )
     }
   } catch (handoffError) {
-    console.warn(`Could not write the handoff: ${String(handoffError)}`)
+    console.warn(
+      `Could not write the handoff (${String(handoffError)}) — the next ` +
+        'attempt on this issue will start with no memory of this one.'
+    )
   }
 }
 
 /** The success path's strip, whose own failure is reported and then dropped. */
-async function stripAttemptsBestEffort(input: {
-  attemptsDir: string
-  cwd: string
-}): Promise<void> {
+async function stripAttemptsBestEffort(
+  input: AttemptsTrailLocation
+): Promise<void> {
   try {
     const result = await stripAttempts(input)
     if (result.detail)

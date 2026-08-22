@@ -11,7 +11,9 @@
  *
  * So the cases here are the ones where git's own behaviour is the subject —
  * `docs/testing.md`, "prefer the real thing where the layout is the thing under
- * test".
+ * test". The killed-run case is here for the same reason and one more: a real
+ * repository is the only place "the file survived the kill" can mean *committed*
+ * rather than merely written.
  */
 
 import * as fs from 'node:fs'
@@ -20,11 +22,9 @@ import * as path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { AGENT_COMMIT_AUTHOR } from '../trigger/classify'
 import { DEFAULT_ATTEMPTS_DIR } from './handoff'
-import {
-  stripAttempts,
-  writeHandoff,
-  type WriteHandoffInput
-} from './run-handoff'
+import { describeRunawayKill, spawnClaude } from '../orchestration/spawn-claude'
+import { writeHandoff, type WriteHandoffInput } from './run-handoff'
+import { stripAttempts } from './strip-attempts'
 
 let cwd: string
 
@@ -84,6 +84,52 @@ describe('writeHandoff against real git', () => {
     await writeHandoff(input())
 
     expect(git('log', '-1', '--format=%an')).toBe(AGENT_COMMIT_AUTHOR)
+  })
+
+  /**
+   * **The kill is real here, and that is the point** (shopfloor#49's "verified
+   * by a test that kills the run"). Every other test of this path hands
+   * `writeHandoff` a failure string somebody typed. This one runs a child that
+   * will not stop, lets the idle guard actually kill it, and feeds the guard's
+   * own verdict through — so the assertion is that a run nobody got to shut
+   * down cleanly still leaves a committed file, rather than that a stub was
+   * called with plausible prose.
+   */
+  it('still commits a file for a run the guards actually killed', async () => {
+    const kill = await spawnClaude({
+      command: process.execPath,
+      // Silent and immortal: exactly what the idle guard exists for.
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      prompt: 'ignored-by-the-stand-in',
+      env: process.env,
+      cwd,
+      idleMs: 50,
+      checkIntervalMs: 5,
+      sigtermGraceMs: 60,
+      onSpawnError: () => {}
+    })
+
+    expect(kill.killedBy).not.toBeNull()
+
+    const result = await writeHandoff(
+      input({
+        outcome: 'exhausted',
+        failure: describeRunawayKill(kill.killedBy!),
+        // Pointed at a file the killed run never got to write, which is the
+        // whole reason the claims half has to say so rather than be omitted.
+        claimsFile: path.join(cwd, 'claims-it-never-wrote.md')
+      })
+    )
+
+    expect(result).toMatchObject({ written: true, committed: true })
+
+    const document = fs.readFileSync(path.join(cwd, result.file), 'utf8')
+    expect(document).toContain('killed by the')
+    expect(document).toContain('claims-it-never-wrote.md')
+    // The harness half is whole regardless — the guarantee the kill case exists
+    // to prove.
+    expect(document).toContain('## Harness — observed facts')
+    expect(filesIn('HEAD')).toEqual(['A\t.agent/attempts/900.md'])
   })
 
   it('summarizes what the attempt changed against the repository’s own base', async () => {

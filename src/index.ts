@@ -252,6 +252,13 @@ export { type RunUsage, type TokenUsage } from './observability/usage'
  * API because glue that reads the trail — posting it on the exhausted terminal
  * state, say — has to name the same directory a run writes to.
  *
+ * **The three bounds are API because a bound nobody can read is not a stated
+ * one.** The trail is read in full by every later attempt, so an unbounded
+ * section costs context once per *remaining* attempt rather than once — which
+ * makes the cut a number a consumer sizing its own budget has to be able to
+ * name, and the one a caller rendering a document from logs it gathered itself
+ * has to render against.
+ *
  * The shell behind it stays internal: writing and committing to the consumer's
  * repository is the harness's, and a second caller of it would be a second
  * component deciding when an attempt ended.

@@ -2,8 +2,8 @@
  * Wiring for the handoff shell. The document itself is tested pure next door;
  * what is tested here is what crosses the process boundary — that the file is
  * written and committed as the agent, that the CI log fetch degrades instead of
- * throwing, that a killed run still gets a file, and that the strip commits
- * only when there was something to strip.
+ * throwing, and that a bounded log stays bounded while it is being read. The
+ * strip is its own module and its own suite next door.
  */
 
 import * as fs from 'node:fs'
@@ -16,12 +16,8 @@ import {
   routeExecStub
 } from '../process/exec-stub.test-helper'
 import { AGENT_COMMIT_AUTHOR } from '../trigger/classify'
-import { DEFAULT_ATTEMPTS_DIR } from './handoff'
-import {
-  stripAttempts,
-  writeHandoff,
-  type WriteHandoffInput
-} from './run-handoff'
+import { DEFAULT_ATTEMPTS_DIR, HANDOFF_LOG_TAIL_LIMIT } from './handoff'
+import { writeHandoff, type WriteHandoffInput } from './run-handoff'
 
 vi.mock('node:child_process', () => execStubModule())
 
@@ -122,6 +118,35 @@ describe('writeHandoff', () => {
     expect(read(result.file)).toContain('FAIL src/thing.test.ts')
   })
 
+  /**
+   * The bound has to hold *while reading*, not only while rendering. Buffering
+   * the whole log and cutting it afterwards inverts the guarantee exactly where
+   * it matters: the loudest failures produce the biggest logs, so those were the
+   * runs that degraded to URL-only. A log far past the limit must still yield
+   * its tail.
+   */
+  it('keeps the tail of a log far larger than the bound, rather than degrading', async () => {
+    const huge = `${'x'.repeat(HANDOFF_LOG_TAIL_LIMIT * 10)}THE-ACTUAL-FAILURE`
+    routeExecStub([{ match: /gh run view 4242/, response: { stdout: huge } }])
+
+    const result = await writeHandoff(
+      input({
+        ciFailure: {
+          runId: '4242',
+          runUrl: 'https://github.com/acme/widgets/actions/runs/4242'
+        }
+      })
+    )
+
+    const document = read(result.file)
+    expect(document).toContain('THE-ACTUAL-FAILURE')
+    expect(document).not.toContain('could not be fetched')
+    // And it says it is a tail — a silent cut reads as a short log.
+    expect(document).toContain('truncated')
+    // The whole log never reaches the document, which is what the bound buys.
+    expect(document.length).toBeLessThan(huge.length)
+  })
+
   it('degrades to URL-only when the log fetch fails, rather than blocking', async () => {
     routeExecStub([{ match: /gh run view/, response: { fails: 1 } }])
 
@@ -167,39 +192,5 @@ describe('writeHandoff', () => {
     )
 
     expect(result.file).toBe('.agent/attempts/900-2.md')
-  })
-})
-
-describe('stripAttempts', () => {
-  it('removes the trail and commits the removal', async () => {
-    routeExecStub([
-      {
-        match: /git ls-files/,
-        response: { stdout: '.agent/attempts/1.md\n.agent/attempts/2.md\n' }
-      }
-    ])
-
-    const result = await stripAttempts({
-      attemptsDir: DEFAULT_ATTEMPTS_DIR,
-      cwd
-    })
-
-    expect(result).toMatchObject({ stripped: true, removed: 2 })
-    expect(commands()).toContainEqual('git rm -r --quiet -- .agent/attempts')
-    expect(commands().some((command) => command.includes(' commit '))).toBe(
-      true
-    )
-  })
-
-  it('commits nothing when there was no trail', async () => {
-    const result = await stripAttempts({
-      attemptsDir: DEFAULT_ATTEMPTS_DIR,
-      cwd
-    })
-
-    expect(result).toMatchObject({ stripped: false, removed: 0 })
-    expect(commands().some((command) => command.includes(' commit '))).toBe(
-      false
-    )
   })
 })

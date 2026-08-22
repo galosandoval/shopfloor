@@ -1,43 +1,31 @@
 /**
  * The handoff artifact's IO shell (shopfloor#49): gather what the attempt left
  * behind, render it with the pure {@link renderHandoff}, and commit it to the
- * branch — or, when the run succeeded, strip the whole trail.
+ * branch. The success path's counterpart — stripping the trail — is
+ * `strip-attempts.ts`, and the commit identity both share is `git.ts`.
  *
  * **Nothing here throws.** A handoff is memory for the *next* attempt, and a
  * failed write must never replace the failure that is actually worth reporting.
  * Every step reports what it could not do and moves on, which is also why the
  * harness half is assembled from facts that are individually optional: a run
  * killed by a runaway guard has no claims, may have no diff, and may have no
- * scorecard, and it still gets a file.
- *
- * **The commits are authored as the agent, deliberately.** The machine edge is
- * keyed on the head commit's author (`AGENT_COMMIT_AUTHOR`, design §6), and
- * these commits land on top of the agent's own before the push. A handoff
- * committed under the runner's ambient identity would make the head commit
- * somebody else's work, and the retrigger this artifact exists to inform would
- * never fire. `--no-verify` for the same class of reason: a consumer's
- * pre-commit hook failing is not a reason to lose the one record of why the
- * attempt failed.
+ * scorecard, and it still gets a file. Why that half is written at all, and why
+ * the two authorship halves never blend, is on {@link renderHandoff}.
  */
 
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
 import type { TrajectoryFinding } from '../observability/trajectory'
 import type { FailedPhaseOutcome } from '../issue-state/transition'
-import { AGENT_COMMIT_AUTHOR } from '../trigger/classify'
+import { commitPaths, git } from './git'
 import {
   attemptFileName,
   renderHandoff,
+  HANDOFF_LOG_TAIL_LIMIT,
   type HandoffCiFailure,
   type HandoffDiff
 } from './handoff'
-
-const execFileAsync = promisify(execFile)
-
-/** The email half of the identity above — what `git -c user.email` is given. */
-const AGENT_COMMIT_EMAIL = `${AGENT_COMMIT_AUTHOR}@users.noreply.github.com`
 
 export interface WriteHandoffInput {
   attempt: number
@@ -76,10 +64,8 @@ export interface WriteHandoffResult {
  * Write this attempt's handoff and commit it to the branch.
  *
  * The harness-authored half is written **unconditionally**, including after a
- * wall-clock kill or a crash inside the run. Those are exactly the attempts the
- * ceiling exists to stop and exactly the ones that would otherwise teach the
- * next iteration nothing; only the agent's claims are legitimately unavailable
- * there, and the document says so rather than omitting the section.
+ * wall-clock kill or a crash inside the run — the reasoning is on
+ * {@link renderHandoff}, which is where the document's contract lives.
  */
 export async function writeHandoff(
   input: WriteHandoffInput
@@ -130,69 +116,6 @@ export async function writeHandoff(
   }
 }
 
-export interface StripAttemptsResult {
-  stripped: boolean
-  /** How many attempt files were removed. */
-  removed: number
-  detail?: string
-}
-
-/**
- * Remove the whole trail and commit the removal — the success path, in the
- * commit the successful run is about to push.
- *
- * **All of them, and only on success.** They are kept on the exhausted terminal
- * state, where the PR stays open and the trail is the best account of what went
- * wrong that anyone has; design §4 posts it as the comment. A run that merely
- * failed keeps them too, because the next attempt is the whole reason they were
- * written.
- */
-export async function stripAttempts(input: {
-  attemptsDir: string
-  cwd: string
-}): Promise<StripAttemptsResult> {
-  const tracked = await trackedAttempts(input)
-
-  if (tracked.length === 0) {
-    return { stripped: false, removed: 0 }
-  }
-
-  try {
-    await git(input.cwd, ['rm', '-r', '--quiet', '--', input.attemptsDir])
-  } catch (error) {
-    return { stripped: false, removed: 0, detail: String(error) }
-  }
-
-  const commit = await commitPaths(
-    input.cwd,
-    [input.attemptsDir],
-    'chore(shopfloor): strip the attempt handoffs — the run succeeded'
-  )
-
-  return {
-    stripped: commit.committed,
-    removed: tracked.length,
-    detail: commit.detail
-  }
-}
-
-/** The attempt files git already has, so a strip with nothing to strip commits nothing. */
-async function trackedAttempts(input: {
-  attemptsDir: string
-  cwd: string
-}): Promise<string[]> {
-  try {
-    const { stdout } = await git(input.cwd, [
-      'ls-files',
-      '--',
-      input.attemptsDir
-    ])
-    return stdout.split('\n').filter((line) => line.trim())
-  } catch {
-    return []
-  }
-}
-
 /**
  * A bounded tail of the failing run's logs, or the reason there is none.
  *
@@ -200,6 +123,13 @@ async function trackedAttempts(input: {
  * attempt's whole advantage is knowing what broke without re-running anything —
  * so the fetch is worth making. It is still best-effort: a `gh` that cannot
  * read the logs degrades the artifact rather than failing the run.
+ *
+ * **The bound is enforced here, while reading, not only when rendering.** An
+ * earlier version buffered the whole of `gh run view --log-failed` and bounded
+ * the result, which inverted the guarantee exactly where it mattered: the runs
+ * whose logs are large enough to exhaust a buffer are the runs that failed
+ * loudest, and they were the ones degraded to URL-only. Streaming a rolling
+ * tail means log volume can no longer cost the next attempt its evidence.
  */
 async function gatherCiFailure(
   input: WriteHandoffInput
@@ -209,27 +139,77 @@ async function gatherCiFailure(
   const { runId, runUrl } = input.ciFailure
 
   try {
-    const { stdout } = await execFileAsync(
+    const { tail, totalChars } = await streamTail(
       'gh',
       ['run', 'view', runId, '--repo', input.repo, '--log-failed'],
-      { cwd: input.cwd, maxBuffer: MAX_LOG_BUFFER }
+      input.cwd
     )
-    const logTail = stdout.trim()
-    return logTail
-      ? { runUrl, logTail }
-      : { runUrl, logUnavailable: 'gh returned no failing-step logs' }
+
+    if (!tail.trim()) {
+      return { runUrl, logUnavailable: 'gh returned no failing-step logs' }
+    }
+
+    return totalChars > tail.length
+      ? { runUrl, logTail: tail, logTotalChars: totalChars }
+      : { runUrl, logTail: tail }
   } catch (error) {
     return { runUrl, logUnavailable: String(error) }
   }
 }
 
 /**
- * `gh run view --log-failed` streams whole job logs, which are routinely larger
- * than Node's 1 MB default. The document keeps a bounded tail of this; what the
- * bound here prevents is the fetch failing outright on a verbose run and
- * degrading a handoff that had logs available.
+ * How much more than the rendered bound to keep while streaming. The document
+ * cuts to {@link HANDOFF_LOG_TAIL_LIMIT}; keeping a little more here means the
+ * fetch is not silently deciding where the cut lands, and the reported total is
+ * still the true one either way.
  */
-const MAX_LOG_BUFFER = 32 * 1024 * 1024
+const STREAM_TAIL_HEADROOM = 4
+
+/**
+ * Run a command and keep only the last {@link HANDOFF_LOG_TAIL_LIMIT}-ish
+ * characters of its stdout, reporting how much there was in total.
+ *
+ * Memory stays flat however long the command talks, which is the whole point:
+ * the alternative is a buffer limit, and a buffer limit turns a verbose failure
+ * into no evidence at all.
+ */
+function streamTail(
+  command: string,
+  args: string[],
+  cwd: string
+): Promise<{ tail: string; totalChars: number }> {
+  const keep = HANDOFF_LOG_TAIL_LIMIT * STREAM_TAIL_HEADROOM
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd })
+    let tail = ''
+    let totalChars = 0
+    let stderr = ''
+
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      totalChars += chunk.length
+      tail = (tail + chunk).slice(-keep)
+    })
+
+    child.stderr.setEncoding('utf8')
+    // Bounded for the same reason stdout is, and smaller: this only ever ends up
+    // in a failure message.
+    child.stderr.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-2000)
+    })
+
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) return resolve({ tail, totalChars })
+      reject(
+        new Error(
+          `${command} exited with code ${code}${stderr.trim() ? `: ${stderr.trim()}` : ''}`
+        )
+      )
+    })
+  })
+}
 
 /**
  * What the attempt changed, summarized against the base branch — or the reason
@@ -339,47 +319,4 @@ function runUrlFor(env: NodeJS.ProcessEnv): string | undefined {
 
   const server = env.GITHUB_SERVER_URL ?? 'https://github.com'
   return `${server}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`
-}
-
-/**
- * Commit exactly these paths, as the agent, skipping the consumer's hooks.
- *
- * Path-limited rather than a bare `git commit -a`: whatever else is in the
- * working tree belongs to the agent's own commits, and sweeping it into a
- * bookkeeping commit would attribute work to a message about a handoff.
- *
- * It stages nothing — each caller has already staged what it is committing, and
- * for different reasons: the write path `add`s a file git has never seen, while
- * the strip's `git rm` stages its own deletion and leaves a pathspec that
- * matches nothing anywhere.
- */
-async function commitPaths(
-  cwd: string,
-  paths: string[],
-  message: string
-): Promise<{ committed: boolean; detail?: string }> {
-  try {
-    await git(cwd, [
-      '-c',
-      `user.name=${AGENT_COMMIT_AUTHOR}`,
-      '-c',
-      `user.email=${AGENT_COMMIT_EMAIL}`,
-      'commit',
-      '--no-verify',
-      '-m',
-      message,
-      '--',
-      ...paths
-    ])
-    return { committed: true }
-  } catch (error) {
-    return { committed: false, detail: String(error) }
-  }
-}
-
-function git(
-  cwd: string,
-  args: string[]
-): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync('git', args, { cwd })
 }

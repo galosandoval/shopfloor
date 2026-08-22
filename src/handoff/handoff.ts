@@ -72,8 +72,22 @@ export const AGENT_SECTION_HEADING =
  */
 export interface HandoffCiFailure {
   runUrl: string
-  /** Bounded here rather than by the caller; see {@link HANDOFF_LOG_TAIL_LIMIT}. */
+  /**
+   * Bounded here as well as by the caller; see {@link HANDOFF_LOG_TAIL_LIMIT}.
+   * The shell bounds it *while fetching* — a job log large enough to defeat a
+   * read is exactly the run whose tail is worth having — and this is the
+   * backstop for anyone rendering a document from logs they gathered
+   * themselves.
+   */
   logTail?: string
+  /**
+   * How long the logs were before the shell kept a tail of them, when it had to.
+   * Absent means `logTail` is the whole of them. Stated rather than implied: a
+   * tail that silently stands in for a much longer log reads as a short log, and
+   * the next attempt would draw conclusions from a beginning that was never
+   * there.
+   */
+  logTotalChars?: number
   /** Why there is no tail. Present exactly when `logTail` is absent. */
   logUnavailable?: string
 }
@@ -122,11 +136,13 @@ export interface HandoffInput extends HandoffDiff {
    * already refuses one level down.
    */
   scorecard?: readonly TrajectoryFinding[]
-  /** Why there is no diff summary. Present exactly when `diffStat` is absent. */
-  diffUnavailable?: string
   /** The agent's own account, verbatim. */
   claims?: string
-  /** Why there is none. Present exactly when `claims` is absent. */
+  /**
+   * Why there is none, used only when `claims` is absent — the shell answers
+   * both in one pass rather than deciding which to send, so a claims file that
+   * turned out to hold something wins over the reason it might not have.
+   */
   claimsUnavailable?: string
 }
 
@@ -193,13 +209,31 @@ function ciFailureSection(failure: HandoffCiFailure | undefined): string[] {
     failure.runUrl,
     '',
     ...(failure.logTail
-      ? fenced(bounded(failure.logTail, HANDOFF_LOG_TAIL_LIMIT, 'tail'), 'text')
+      ? fenced(ciLogTail(failure.logTail, failure.logTotalChars), 'text')
       : [
           `The failing logs could not be fetched (${failure.logUnavailable ?? 'no reason given'}), ` +
             'so the run URL above is all this attempt has of them.'
         ]),
     ''
   ]
+}
+
+/**
+ * The log tail, saying so whenever it is one.
+ *
+ * Two cuts can have happened by here and the document has to survive both: the
+ * shell keeps a rolling tail while fetching, because a log too large to read is
+ * exactly the run worth reading the end of, and {@link bounded} is the backstop
+ * for a caller that gathered its own. Either way the note is what matters — an
+ * unannounced tail reads as a short log.
+ */
+function ciLogTail(logTail: string, logTotalChars: number | undefined): string {
+  const droppedAtFetch = (logTotalChars ?? 0) > logTail.length
+  const tail = bounded(logTail, HANDOFF_LOG_TAIL_LIMIT, 'tail')
+
+  return droppedAtFetch
+    ? `[truncated while fetching: kept the last ${logTail.length} of ${logTotalChars} characters]\n${tail}`
+    : tail
 }
 
 function scorecardSection(
