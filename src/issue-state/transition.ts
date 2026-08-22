@@ -44,6 +44,15 @@ export const RUN_OUTCOMES = [
 export type RunOutcome = (typeof RUN_OUTCOMES)[number]
 
 /**
+ * The two ways a run that started can stop badly. Named here, beside the
+ * vocabulary it narrows, because more than the transition table reads it: the
+ * handoff artifact (shopfloor#49) is written on exactly these two endings and
+ * on neither of the others. Defining it in either consumer would make the other
+ * import across a layer it has no other business in.
+ */
+export type FailedPhaseOutcome = Extract<RunOutcome, 'failed' | 'exhausted'>
+
+/**
  * One row: where the issue should end up. Why each outcome lands where it does
  * is a comment on the row rather than a field — nothing reads a rationale
  * string, and a value carried only so a test can assert it is non-empty is a

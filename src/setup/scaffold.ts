@@ -131,7 +131,7 @@ function undeterminedGate(project: ProjectFacts): string {
 
 /**
  * The prompt skeleton — a shim to the installed skills plugin, not a procedure
- * of its own. It carries the six substituted tokens and nothing else in
+ * of its own. It carries the substituted tokens and nothing else in
  * `{{…}}` shape, because a token this package does not substitute is one a run
  * refuses to spawn over.
  *
@@ -159,12 +159,22 @@ asks for. You are already on branch \`{{BRANCH}}\`; commit your work there.
 Follow the repository's own standards — \`CLAUDE.md\` and whatever it points
 at — and the \`implement\` skill for how to carry the work out.
 
+## What previous attempts left you
+
+\`{{ATTEMPTS_DIR}}\` holds one file per previous attempt on this issue. Read
+**all** of them before you start. Each separates the harness's own
+observations, which are facts, from the previous agent's claims, which are not.
+An empty or absent directory means this is the first attempt.
+
 ## What this run must leave behind
 
 - The implementation, committed on \`{{BRANCH}}\`.
 - The pull request description, written to \`{{PR_DESCRIPTION_FILE}}\`.
 - What you verified and how, written to \`{{VERIFY_REPORT_FILE}}\`.
 - Any screenshots, saved under \`{{SCREENSHOTS_DIR}}\`.
+- Your own account of this attempt, written to \`{{HANDOFF_CLAIMS_FILE}}\`:
+  what you tried, what you abandoned and why, what you believe the root cause
+  is. Write it as you go — a run that is cut off still leaves what it had.
 
 ## Environment
 

@@ -100,8 +100,31 @@ describe('classifyTrigger — the machine edge', () => {
       // ran. What admits it now is the commit author and the head repository,
       // both asserted below.
       actor: 'github-actions[bot]',
-      repo: 'galosandoval/shopfloor'
+      repo: 'galosandoval/shopfloor',
+      // What the handoff artifact links and fetches the failing logs by
+      // (shopfloor#49) — read here because this is the one place the raw
+      // payload is parsed.
+      ciFailure: {
+        runId: '18234567890',
+        runUrl:
+          'https://github.com/galosandoval/shopfloor/actions/runs/18234567890'
+      }
     })
+  })
+
+  it('omits the failed run reference when the payload names only half of it', () => {
+    const run = { ...workflowRunFailed.workflow_run, html_url: undefined }
+    const verdict = classifyTrigger({ ...workflowRunFailed, workflow_run: run })
+
+    expect(verdict.triggered).toBe(true)
+    expect(verdict).not.toHaveProperty('ciFailure')
+  })
+
+  it('carries no failed run reference on the human edge', () => {
+    const verdict = classifyTrigger(issuesLabeled)
+
+    expect(verdict.triggered).toBe(true)
+    expect(verdict).not.toHaveProperty('ciFailure')
   })
 
   it('refuses a fork whose branch is named like the harness’s', () => {

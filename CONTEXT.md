@@ -28,6 +28,7 @@ harness concern rather than as a flat file list.
 | `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository                                                                                                                                                                     |
 | `src/trigger/`         | The trigger boundary (shopfloor#46): the pure `classifyTrigger` over a raw webhook payload, the `agent/issue-<n>` branch convention (`agentBranchForIssue` / `issueNumberFromBranch`) both edges read and write, and admission — the pure `evaluateAdmission` and its `runAdmission` shell, which composes classification, the spend gate, the concurrency check, and the attempt ceiling (both read off the issue's own label history) into one verdict a job with nothing installed can gate on                                                                                                                                       |
 | `src/issue-state/`     | The label vocabulary (`LABEL_VOCABULARY` / `REQUIRED_LABELS`) and the state machine over it: the pure `evaluateLabelTransition` and its `TRANSITION_TABLE`, the `applyLabelTransition` shell, and the one `gh issue comment` shell every comment this package writes goes through (`commentOnIssue` / `commentOnIssueBestEffort`). The names are **package-owned** — see the invariant below                                                                                                                                                                                                                                            |
+| `src/handoff/`         | **Memory** (shopfloor#49): the handoff artifact an attempt leaves for the next one — the pure `renderHandoff` (two authorship halves, every section bounded) and its `writeHandoff` / `stripAttempts` shell, which commits the trail to the branch on a failure and removes it on a success. The one module here whose output is read by an _agent_ rather than by this package                                                                                                                                                                                                                                                         |
 | `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                                                                                                                                                                                             |
 | `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `src/run-phase-cli.ts` | Thin bin entrypoint (`shopfloor-run-phase`); it names no issue and no branch — the payload does — and owns only the exit code and the failure-reason file                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -68,8 +69,8 @@ The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `checkCliVersion`, `classifyTrigger`,
 `evaluatePromptReadiness`, `evaluateClosure`,
 `resolveImplementConfig` / `runImplementAgent`, and the verb's own —
-`resolvePhasePrompt`, `evaluatePhaseOutcome`, and `buildPullRequestFields` /
-`ensurePullRequest`.
+`resolvePhasePrompt`, `evaluatePhaseOutcome`, `buildPullRequestFields` /
+`ensurePullRequest`, and `renderHandoff` / `writeHandoff`.
 
 `probeSetup` is the one shell that neither runs nor applies anything, and
 deliberately: it gathers and decides nothing, while every `run*` here acts on a
@@ -82,8 +83,9 @@ to run), `src/observability/` (a judgement about a run that already
 finished — it reports, it does not decide anything the run then obeys),
 `src/setup/` (a judgement about the consumer's configuration, made before any
 run exists), `src/issue-state/` (a decision about what an issue should be
-labeled with next), or `src/trigger/` (a decision about whether an event starts
-a run at all, taken before one exists), and let
+labeled with next), `src/trigger/` (a decision about whether an event starts
+a run at all, taken before one exists), or `src/handoff/` (what one attempt
+leaves for the next), and let
 the shell own every side effect. The shell should read gather →
 decide → act, with the interesting logic in the middle function rather than
 tangled through the IO.
@@ -160,7 +162,12 @@ one. Everything else, in order:
    already open rather than failing on a second `gh pr create`.
 9. **Post the verify comment**, best-effort, pinned to the commit this run
    pushed rather than to `GITHUB_SHA`.
-10. **Transition on the outcome** — `evaluatePhaseOutcome` decides between
+10. **Leave memory for the next attempt, or strip it** (shopfloor#49) — a run
+    that did not succeed writes and commits `.agent/attempts/<run-id>.md`
+    before the push above, so the branch carries it; a run that succeeded
+    strips the whole trail instead, in the commit it is about to push. See §
+    "The handoff artifact".
+11. **Transition on the outcome** — `evaluatePhaseOutcome` decides between
     `succeeded`, `exhausted` (the inner loop spent its ceiling with the gate
     red), and `failed`. **Every one of the three is applied, including on the
     way out of a throw**, and each terminal row sets `ready-for-human`: this is
@@ -277,8 +284,9 @@ overwrites it, so each failed attempt is copied to
 `transcript.iteration-<n>.jsonl` before the next spawn replaces it: those are
 the attempts that explain why the run needed the loop, and they are the evidence
 a bare overwrite would destroy on exactly the runs worth auditing. This is not
-the outer loop's handoff artifact, which is a synthesis and a later step — it is
-just refusing to delete something the run already produced.
+the outer loop's handoff artifact, which is a synthesis and lands in
+§ "The handoff artifact" below — it is just refusing to delete something the run
+already produced.
 
 ### The closure condition
 
@@ -359,6 +367,67 @@ would not be recognized as running the gate.
 
 The caller owns what is left outside the verb: checking out the repository, the
 admission job in front of it, sandboxing, and the exit code.
+
+### The handoff artifact
+
+shopfloor#49, design §5 and review finding 4. Every run started cold, and a
+failed run taught the next one nothing — fine while the harness is single-shot,
+fatal with an outer loop, because a bounded loop over identical attempts is a
+token incinerator with a stop button rather than a feedback loop. Five things
+about it are decisions.
+
+- **Two authors, never blended, and the split is structural.** The
+  harness-authored half is observed fact — the CI failure tail and run URL, the
+  trajectory scorecard, the run id, the diff. The agent-authored half is
+  _claims_. The next attempt has to be able to tell "CI said X" from "the last
+  agent believed X", and an agent that just failed is the least reliable
+  narrator of why: a self-authored postmortem is exactly the fluent-but-wrong
+  artifact this harness exists to catch. Pure harness authorship was rejected
+  for the opposite reason — it throws away the one thing only the agent knows,
+  unrecoverable from a transcript at any reasonable cost. The claims are
+  **quoted** line by line rather than reproduced, which is not formatting: an
+  agent that writes the harness heading into its own claims would otherwise
+  forge the half the next attempt is meant to trust.
+- **The harness half is written unconditionally, and that is the whole of
+  review finding 4.** §4 declined to _count_ `.agent/attempts/*` because a
+  wall-clock kill or a crash leaves no file; the same argument applies to the
+  memory, and the fix is the authorship split. Everything in the harness half
+  is a fact this package holds by the time the run throws, so a killed run
+  still gets a file. Only the claims are legitimately unavailable, and the
+  document **says so** — an omitted section reads as an attempt with nothing to
+  say, which is a different and wrong story. What it says is which file it
+  looked in, never _why_ that file is empty: a kill and an agent that skipped
+  it are indistinguishable from the shell, and how the attempt ended is already
+  stated above it from the error the run threw. The bound worth stating: the
+  runaway guards kill the **child**, so the harness survives to write this;
+  a `SIGKILL` of the harness process itself is uncatchable and leaves nothing,
+  which is a case no design can close.
+- **Storage is committed, deliberately breaking derive-don't-store.** The run
+  count is a _fact_ and is derived from the issue timeline; the handoff is a
+  _synthesis_ and cannot be re-derived deterministically. Named by run id, not
+  a sequence number: once the ceiling is derived from attempts, a sequence
+  number has no job left except to disagree with the real count, and the run id
+  links back to the logs.
+- **Every section is bounded, and the bounds are constants.** Unbounded logs
+  are how a handoff becomes context rot one iteration at a time — and the cost
+  is paid once per _remaining_ attempt, since the whole trail is read every
+  time. A truncated section says it was truncated: a silent cut reads as a
+  short log, and the next attempt would draw conclusions from an ending that
+  was never there. The CI log fetch degrades to URL-only rather than blocking
+  the loop, which is how every other observability path here fails.
+- **The trail is read through a path, not inlined.** `{{ATTEMPTS_DIR}}` is a
+  token like the output paths beside it, and the prompt tells the agent to read
+  **all** of it. Inlining would cost context linearly in attempt count and put
+  the trail in _static_ context; reading only the last file is how a loop
+  oscillates between two wrong approaches.
+
+Two consequences worth knowing. The commits are authored as
+`AGENT_COMMIT_AUTHOR` and skip the consumer's hooks: the machine edge is keyed
+on the head commit's author, and these commits land on top of the agent's own
+before the push, so an ambient identity here would silently stop the retrigger
+the artifact exists to inform. And a **successful** run writes none — it strips
+the trail instead, in the commit it is about to push, which is where the two
+would otherwise be the same commit adding and removing a file.
 
 ## Invariants worth knowing before you change something
 
@@ -541,6 +610,13 @@ admission job in front of it, sandboxing, and the exit code.
   definition of done, and a definition of done that an absent file satisfies is
   not one. The whole argument, and what stays advisory, is § "The closure
   condition".
+- **The handoff is memory, so it never fails a run.** Every step of writing it
+  reports what it could not do and moves on: a handoff that failed to write
+  must not replace the failure that is actually worth reporting, and the run it
+  is written for has already ended by then. This is the ordinary direction, not
+  the closure condition's inversion — an absent handoff costs the _next_
+  attempt its head start, while an absent transcript would have closed _this_
+  one on no evidence.
 - **Probes are best-effort and lazy.** A probe that answers nothing becomes an
   error naming what to state instead, never a silent default.
 - **The doctor holds "unknown" apart from "wrong".** A setup check whose probe
@@ -573,7 +649,7 @@ admission job in front of it, sandboxing, and the exit code.
   nothing refuses on is prose with a `TODO` in front of it.
 - **And the run refuses on it too, not just the doctor.** shopfloor#44 closes
   the design's one open item: a prompt still carrying the sentinel, or a
-  `{{TOKEN}}` outside the substituted six, fails among the preconditions rather
+  `{{TOKEN}}` outside the substituted set, fails among the preconditions rather
   than rendering as literal text and buying a full run that dies on a command
   the repository does not have. The check reads the **template**, not the
   rendered prompt: on tokens that is the same verdict — rendering only ever

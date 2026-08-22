@@ -182,6 +182,7 @@ export {
   evaluateLabelTransition,
   RUN_OUTCOMES,
   TRANSITION_TABLE,
+  type FailedPhaseOutcome,
   type LabelTransition,
   type LabelTransitionInput,
   type RunOutcome,
@@ -241,6 +242,29 @@ export {
  * this package needs to fold a stream this package is the one spawning.
  */
 export { type RunUsage, type TokenUsage } from './observability/usage'
+
+/**
+ * The handoff artifact (shopfloor#49) — the memory an attempt leaves for the
+ * next one. `renderHandoff` is API for the reason its sibling escape hatches
+ * are: a consumer's own glue reporting on a failed attempt should produce the
+ * same document the harness commits rather than a second account of it, and the
+ * authorship split is the whole point of the format. `DEFAULT_ATTEMPTS_DIR` is
+ * API because glue that reads the trail — posting it on the exhausted terminal
+ * state, say — has to name the same directory a run writes to.
+ *
+ * The shell behind it stays internal: writing and committing to the consumer's
+ * repository is the harness's, and a second caller of it would be a second
+ * component deciding when an attempt ended.
+ */
+export {
+  renderHandoff,
+  DEFAULT_ATTEMPTS_DIR,
+  HANDOFF_CLAIMS_LIMIT,
+  HANDOFF_DIFF_LIMIT,
+  HANDOFF_LOG_TAIL_LIMIT,
+  type HandoffCiFailure,
+  type HandoffInput
+} from './handoff/handoff'
 
 export {
   runTrajectoryCheck,

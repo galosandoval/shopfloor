@@ -125,4 +125,16 @@ admission and preflight admitted the run. **Refusals still write nothing** —
 except preflight's, whose refusal _is_ a judgement about the issue. Setup is
 still verify-and-refuse: a run creates no labels, ever.
 
+**Widened by #49, and the widening is a commit rather than a new bound**: the
+harness now also **commits files of its own** to that branch — one handoff
+artifact per failed attempt under `.agent/attempts/`, and the commit that
+strips them all when a run succeeds. The three bounds above hold unchanged, and
+two more are specific to this: it writes nothing outside `attemptsDir`, and it
+commits path-limited so nothing else in the working tree is swept into a
+bookkeeping commit. The commits are authored as the agent and skip the
+consumer's hooks — both load-bearing, and the reasons are in
+[`CONTEXT.md`](./CONTEXT.md). What the package still does not own is the
+_content_ of the agent's half: it is read back from a file the agent wrote,
+quoted verbatim, and marked as claims rather than restated as fact.
+
 Multi-step procedures belong in skills, not in this file.

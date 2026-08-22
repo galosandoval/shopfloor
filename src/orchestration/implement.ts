@@ -97,6 +97,14 @@ export interface RunImplementAgentResult {
    * `usage.ts`.
    */
   usage: RunUsage
+  /**
+   * The trajectory scorecard for the attempt that closed the run
+   * (shopfloor#49). Absent when nothing of that attempt's was graded, which is
+   * a state the closure condition only ever reaches by blocking — so on a
+   * result it is present in practice, and its absence still means *no
+   * evidence* rather than a clean sheet.
+   */
+  findings?: readonly TrajectoryFinding[]
 }
 
 /**
@@ -142,16 +150,17 @@ export async function runImplementAgent(
   }
   delete (childEnv as Record<string, unknown>).ANTHROPIC_API_KEY
 
-  const { iterations, transcriptCaptured, usage } = await runIterations({
-    config,
-    env,
-    childEnv,
-    cwd,
-    pluginDirs,
-    branch,
-    issueTitle,
-    commandGuardHookPath: resolveCommandGuardHookPath()
-  })
+  const { iterations, transcriptCaptured, usage, findings } =
+    await runIterations({
+      config,
+      env,
+      childEnv,
+      cwd,
+      pluginDirs,
+      branch,
+      issueTitle,
+      commandGuardHookPath: resolveCommandGuardHookPath()
+    })
 
   // The agent commits its own TDD work; a zero-commit run is a failure, not a PR.
   const commitsAhead = Number(
@@ -166,7 +175,8 @@ export async function runImplementAgent(
       undefined,
       // The most expensive way to produce nothing, and the failure most worth
       // seeing a price on.
-      usage
+      usage,
+      scorecardOf(findings)
     )
   }
 
@@ -188,7 +198,8 @@ export async function runImplementAgent(
     prDescription,
     cliVersion,
     iterations,
-    usage
+    usage,
+    ...scorecardOf(findings)
   }
 }
 
@@ -232,6 +243,7 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
   iterations: number
   transcriptCaptured: boolean
   usage: RunUsage
+  findings?: readonly TrajectoryFinding[]
 }> {
   const { config, env, cwd } = ctx
   const idleMs = resolveIdleMs(config.runPolicy, env)
@@ -257,6 +269,9 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
   // a total that reported only the last one would understate an iterating run by
   // exactly the multiple the loop introduced.
   let usage = NO_RUN_USAGE
+  // The last finished attempt's scorecard — null when that attempt was never
+  // graded, which the handoff reports as *no evidence* rather than as a pass.
+  let findings: TrajectoryFinding[] | null = null
 
   for (let iteration = 1; ; iteration++) {
     const startedAt = Date.now()
@@ -270,6 +285,8 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
         pluginDirs: ctx.pluginDirs,
         verifyReportFile: config.verifyReportFile,
         screenshotsDir: config.screenshotsDir,
+        attemptsDir: config.attemptsDir,
+        handoffClaimsFile: config.handoffClaimsFile,
         model: config.runPolicy.model,
         maxTurns: config.runPolicy.maxTurns,
         commandGuardHookPath: ctx.commandGuardHookPath,
@@ -296,6 +313,15 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
 
     requireFinishedSpawn(spawnResult, usage)
 
+    // Graded here rather than inside the closure judgement below, so **every**
+    // finished attempt has a scorecard — not only the ones that reached a green
+    // gate. The handoff artifact (shopfloor#49) is written on exactly the paths
+    // that never get there, and a run that spent its ceiling with the gate red
+    // is one whose process is worth knowing about. It costs one local transcript
+    // parse per iteration, and the closure condition below reads this rather
+    // than grading a second time.
+    findings = gradeAttempt(ctx, transcriptCaptured)
+
     // The gate runs on the run's own environment, not the CLI's: the OAuth
     // token and the stripped `ANTHROPIC_API_KEY` exist to keep the *agent* off
     // a metered key, and the gate is not the agent. Handing it the token would
@@ -321,7 +347,8 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
       throw new ImplementAgentError(verdict.reason, gate?.outputTail, usage, {
         // The one failure the state machine treats as its own outcome — see
         // `ImplementAgentError.exhausted` and `evaluatePhaseOutcome`.
-        exhausted: true
+        exhausted: true,
+        ...scorecardOf(findings)
       })
     }
 
@@ -335,14 +362,21 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
       const closure = judgeClosure(ctx, {
         iteration,
         remainingWallClockMs: remainingWallClockMs(),
-        transcriptCaptured
+        findings
       })
 
-      if (closure.kind === 'pass')
-        return { iterations: iteration, transcriptCaptured, usage }
+      if (closure.kind === 'pass') {
+        return {
+          iterations: iteration,
+          transcriptCaptured,
+          usage,
+          ...scorecardOf(findings)
+        }
+      }
       if (closure.kind === 'block') {
         throw new ImplementAgentError(closure.reason, gate?.outputTail, usage, {
-          closure
+          closure,
+          ...scorecardOf(findings)
         })
       }
       feedback = closure.feedback
@@ -359,7 +393,7 @@ async function runIterations(ctx: IterationLoopContext): Promise<{
 /**
  * Grade the attempt that just finished and ask whether the run may close
  * (shopfloor#48). Gather → decide, with the decision next door and pure: this
- * reads the transcript and hands the scorecard, and the loop's remaining room,
+ * hands the scorecard the loop already graded, and the loop's remaining room,
  * to {@link evaluateClosure}.
  *
  * The budget it reports is the *same* one `evaluateIteration` measures — a red
@@ -376,14 +410,14 @@ function judgeClosure(
   attempt: {
     iteration: number
     remainingWallClockMs?: number
-    /** Whether capture wrote *this* attempt's session — see below. */
-    transcriptCaptured: boolean
+    /** This attempt's scorecard, or null when it was never graded — see below. */
+    findings: TrajectoryFinding[] | null
   }
 ): ClosureVerdict {
   const { runPolicy } = ctx.config
 
   return evaluateClosure({
-    findings: gradeAttempt(ctx, attempt.transcriptCaptured),
+    findings: attempt.findings,
     budgetRemaining: checkIterationBudget({
       iteration: attempt.iteration,
       remainingWallClockMs: attempt.remainingWallClockMs,
@@ -419,6 +453,18 @@ function gradeAttempt(
   })
 
   return check.graded ? check.findings : null
+}
+
+/**
+ * The scorecard as a spreadable field, present only when there is one. Absent
+ * and empty are different answers — *never graded* versus *graded and found
+ * nothing* — and a fabricated `findings: undefined` would make the two read the
+ * same at every consumer.
+ */
+function scorecardOf(
+  findings: readonly TrajectoryFinding[] | null | undefined
+): { findings?: readonly TrajectoryFinding[] } {
+  return findings ? { findings } : {}
 }
 
 /**

@@ -10,7 +10,7 @@
  * *something is broken*.
  */
 
-import type { RunOutcome } from '../issue-state/transition'
+import type { FailedPhaseOutcome, RunOutcome } from '../issue-state/transition'
 
 /** How a phase's run ended, as the shell saw it. */
 export type PhaseEnding =
@@ -31,6 +31,11 @@ export type PhaseEnding =
  * the second by the guards that refuse it, so an ending only ever names one of
  * the three ways a run that actually started can stop.
  */
+export function evaluatePhaseOutcome(ending: {
+  failed: true
+  exhausted: boolean
+}): FailedPhaseOutcome
+export function evaluatePhaseOutcome(ending: PhaseEnding): RunOutcome
 export function evaluatePhaseOutcome(ending: PhaseEnding): RunOutcome {
   if (!ending.failed) return 'succeeded'
   return ending.exhausted ? 'exhausted' : 'failed'

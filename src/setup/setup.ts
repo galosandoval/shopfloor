@@ -6,7 +6,7 @@
  *
  * **Why this exists.** A consumer must independently get right two secrets
  * (one a PAT carrying `workflow` scope), the label vocabulary, a workflow's
- * trigger wiring, a prompt carrying six exact placeholder tokens plus an
+ * trigger wiring, a prompt carrying an exact set of placeholder tokens plus an
  * environment block, and a CLI pin. Every one is an untyped string binding —
  * the `standardsDir` failure shape, replicated across setup, and the reason
  * one transition in the live consumer's pipeline had never once fired. This
@@ -52,7 +52,14 @@ export const PROMPT_TOKENS = [
   'BRANCH',
   'PR_DESCRIPTION_FILE',
   'VERIFY_REPORT_FILE',
-  'SCREENSHOTS_DIR'
+  'SCREENSHOTS_DIR',
+  // The handoff artifact's two halves (shopfloor#49): where the trail of every
+  // previous attempt is, and where this attempt writes its own account. The
+  // first is a *path* rather than the trail itself, deliberately — inlining N
+  // attempts would cost context linearly in attempt count and put the whole
+  // trail in static context, which is the textbook case for keeping it dynamic.
+  'ATTEMPTS_DIR',
+  'HANDOFF_CLAIMS_FILE'
 ] as const
 
 /**

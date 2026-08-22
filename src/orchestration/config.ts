@@ -14,6 +14,7 @@
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { parseCliVersionStrictness } from '../guardrails/cli-version'
+import { DEFAULT_ATTEMPTS_DIR } from '../handoff/handoff'
 import {
   DEFAULT_RUN_POLICY,
   parsePositiveNumber,
@@ -77,6 +78,26 @@ export interface RunImplementAgentConfig {
    * repo rather than in a temp dir.
    */
   screenshotsDir?: string
+  /**
+   * Repo-relative dir the handoff trail is committed under (shopfloor#49) —
+   * defaults to `ATTEMPTS_DIR`, else {@link DEFAULT_ATTEMPTS_DIR}. Deliberately
+   * not derived from `outputDir`, for the reason `screenshotsDir` is not: these
+   * files are committed, so they belong in the repository rather than in a temp
+   * dir the next attempt's runner will never see.
+   *
+   * Not issue-scoped either, unlike the screenshots: the trail lives on the
+   * issue's own branch, so a second level of scoping would name the issue twice
+   * and give the agent a path to get wrong.
+   */
+  attemptsDir?: string
+  /**
+   * Path the agent writes its own account of the attempt to — the *claims* half
+   * of the handoff. Beneath `outputDir` rather than in the repository, because
+   * the harness reads it and folds it into the committed artifact under a
+   * heading that marks it unverified; a file the agent committed itself would
+   * be one the next attempt reads as fact.
+   */
+  handoffClaimsFile?: string
   /** Claude Code's session store — defaults to `PROJECTS_DIR`, else `$HOME/.claude/projects`. */
   projectsDir?: string
   /** Stated field-by-field; anything omitted falls back to {@link DEFAULT_RUN_POLICY}. */
@@ -112,6 +133,8 @@ export interface ResolvedImplementConfig {
   transcriptFile: string
   failureReasonFile: string
   screenshotsDir: string
+  attemptsDir: string
+  handoffClaimsFile: string
   projectsDir: string
   runPolicy: ResolvedRunPolicy
   cwd?: string
@@ -166,6 +189,9 @@ export function resolveImplementConfig(
       input.screenshotsDir ??
       env.SCREENSHOTS_DIR ??
       `.agent/verify/issue-${issueNumber}`,
+    attemptsDir: input.attemptsDir ?? env.ATTEMPTS_DIR ?? DEFAULT_ATTEMPTS_DIR,
+    handoffClaimsFile:
+      input.handoffClaimsFile ?? inOutputDir('handoff_claims.md'),
     projectsDir:
       input.projectsDir ??
       env.PROJECTS_DIR ??

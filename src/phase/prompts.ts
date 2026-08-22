@@ -40,12 +40,27 @@ How to carry the work out is the \`implement\` skill, from the plugin this run
 already loaded. Follow this repository's own standards — \`CLAUDE.md\` and
 whatever it points at.
 
+## What previous attempts left you
+
+\`{{ATTEMPTS_DIR}}\` holds one file per previous attempt on this issue. Read
+**all** of them before you start — not just the most recent. Each has two
+sections: the harness's own observations, which are facts, and the previous
+agent's claims, which are not. An attempt that failed is not a reliable
+narrator of why it failed.
+
+An empty or absent directory means this is the first attempt.
+
 ## What this run must leave behind
 
 - The implementation, committed on \`{{BRANCH}}\`.
 - The pull request description, written to \`{{PR_DESCRIPTION_FILE}}\`.
 - What you verified and how, written to \`{{VERIFY_REPORT_FILE}}\`.
 - Any screenshots, saved under \`{{SCREENSHOTS_DIR}}\`.
+- Your own account of this attempt, written to \`{{HANDOFF_CLAIMS_FILE}}\`:
+  what you tried, what you abandoned and why, and what you believe the root
+  cause is. Write it as you go rather than at the end — a run that is cut off
+  still leaves what it had. The harness commits it for the next attempt,
+  labelled as your claims.
 `
 }
 

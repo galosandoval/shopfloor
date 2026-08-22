@@ -35,7 +35,7 @@ import {
   commentOnIssueBestEffort,
   type IssueRef
 } from '../issue-state/issue-comment'
-import type { RunOutcome } from '../issue-state/transition'
+import type { FailedPhaseOutcome, RunOutcome } from '../issue-state/transition'
 import {
   resolveImplementConfig,
   type ResolvedImplementConfig,
@@ -50,6 +50,11 @@ import {
 import type { AdmissionRefusal } from '../trigger/admission'
 import type { Phase, TriggerEdge } from '../trigger/classify'
 import { runAdmission } from '../trigger/run-admission'
+import {
+  stripAttempts,
+  writeHandoff,
+  type WriteHandoffInput
+} from '../handoff/run-handoff'
 import { evaluatePhaseOutcome } from './outcome'
 import { resolvePhasePrompt } from './prompts'
 import { ensureAgentBranch, headSha, pushAgentBranch } from './run-branch'
@@ -200,7 +205,33 @@ export async function runPhase(
   }
   const config = resolveImplementConfig(runInput, env)
 
-  const run = await runPhaseAgent(runInput, { issue, branch, cwd })
+  const run = await runPhaseAgent(runInput, {
+    issue,
+    branch,
+    cwd,
+    handoff: {
+      attempt,
+      maxAttempts,
+      issueNumber,
+      repo,
+      branch,
+      ...(admission.ciFailure ? { ciFailure: admission.ciFailure } : {}),
+      attemptsDir: config.attemptsDir,
+      claimsFile: config.handoffClaimsFile,
+      cwd,
+      env
+    }
+  })
+
+  // **The trail is stripped here, on the one path that ends it.** A run that
+  // closed as a success has no next attempt to inform, and the strip is a
+  // commit — so it rides out with the work rather than in a follow-up push,
+  // which is the same point the verify screenshots are stripped at. Every
+  // other ending keeps the trail: an exhausted issue keeps it because §4 posts
+  // it to a human, and a failed one keeps it because the next attempt is the
+  // whole reason it was written.
+  await stripAttemptsBestEffort({ attemptsDir: config.attemptsDir, cwd })
+
   const { pullRequest, verifyCommentPosted } = await handOver({
     issue,
     issueTitle,
@@ -306,6 +337,21 @@ async function runPhaseAgent(
   try {
     return await runImplementAgent(runInput)
   } catch (error) {
+    const outcome = evaluatePhaseOutcome({
+      failed: true,
+      exhausted: error instanceof ImplementAgentError ? error.exhausted : false
+    })
+
+    // **First, because this is the run the next attempt has to learn from**
+    // (shopfloor#49). The harness-authored half is written unconditionally —
+    // after a runaway kill, after a crash inside the run, after an exhausted
+    // ceiling — since those are exactly the attempts that would otherwise teach
+    // the next iteration nothing, and a loop that re-derives the same approach
+    // three times is a token incinerator with a stop button. It is committed
+    // before the push below so the branch carries it; best-effort, because a
+    // handoff that fails to write must not replace the failure worth reporting.
+    await writeHandoffBestEffort(context, error, outcome)
+
     // **The work survives the runner even when the run does not.** A failed or
     // exhausted run has usually committed something, and an ephemeral runner
     // takes it with it — so the human this is about to summon would arrive at
@@ -324,28 +370,73 @@ async function runPhaseAgent(
       await commentOnClosureBlock(context, error.closure)
     }
 
-    await applyLabelTransition({
-      ...context.issue,
-      outcome: evaluatePhaseOutcome({
-        failed: true,
-        exhausted:
-          error instanceof ImplementAgentError ? error.exhausted : false
-      })
-    })
+    await applyLabelTransition({ ...context.issue, outcome })
 
     throw error
   }
 }
 
 /**
- * What the failure path needs about the run in flight — the three values that
- * have travelled together since this file existed, named once rather than
- * respelled at each helper below.
+ * What the failure path needs about the run in flight — the values that have
+ * travelled together since this file existed, named once rather than respelled
+ * at each helper below.
  */
 interface PhaseRunContext {
   issue: IssueRef
   branch: string
   cwd: string
+  /** Everything the handoff needs that this shell settled before the run. */
+  handoff: Omit<WriteHandoffInput, 'outcome' | 'failure' | 'scorecard'>
+}
+
+/**
+ * Write and commit this attempt's handoff, reporting its own failures rather
+ * than raising them.
+ *
+ * The scorecard rides in on the error when one was graded (shopfloor#49) —
+ * absent means the attempt was never graded, which the document states rather
+ * than rendering as a clean sheet.
+ */
+async function writeHandoffBestEffort(
+  context: PhaseRunContext,
+  error: unknown,
+  outcome: FailedPhaseOutcome
+): Promise<void> {
+  const implementError =
+    error instanceof ImplementAgentError ? error : undefined
+
+  try {
+    const result = await writeHandoff({
+      ...context.handoff,
+      outcome,
+      failure: error instanceof Error ? error.message : String(error),
+      ...(implementError?.findings
+        ? { scorecard: implementError.findings }
+        : {})
+    })
+
+    if (!result.written || !result.committed) {
+      console.warn(
+        `Could not commit the handoff for this attempt: ${result.detail ?? 'no reason given'}`
+      )
+    }
+  } catch (handoffError) {
+    console.warn(`Could not write the handoff: ${String(handoffError)}`)
+  }
+}
+
+/** The success path's strip, whose own failure is reported and then dropped. */
+async function stripAttemptsBestEffort(input: {
+  attemptsDir: string
+  cwd: string
+}): Promise<void> {
+  try {
+    const result = await stripAttempts(input)
+    if (result.detail)
+      console.warn(`Could not strip the trail: ${result.detail}`)
+  } catch (error) {
+    console.warn(`Could not strip the trail: ${String(error)}`)
+  }
 }
 
 /**

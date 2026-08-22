@@ -14,13 +14,17 @@ function baseInput(
       'Implement #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}} on {{BRANCH}}.\n' +
       'PR: {{PR_DESCRIPTION_FILE}}\n' +
       'Verify: {{VERIFY_REPORT_FILE}}\n' +
-      'Shots: {{SCREENSHOTS_DIR}}\n',
+      'Shots: {{SCREENSHOTS_DIR}}\n' +
+      'Attempts: {{ATTEMPTS_DIR}}\n' +
+      'Claims: {{HANDOFF_CLAIMS_FILE}}\n',
     issueNumber: '540',
     issueTitle: 'Invoke Claude CLI directly',
     branch: 'agent/issue-540-invoke-claude-cli-directly',
     prDescriptionFile: '/tmp/out/pr_description.txt',
     verifyReportFile: '/tmp/out/verify_report.md',
     screenshotsDir: '.agent/verify/issue-540',
+    attemptsDir: '.agent/attempts',
+    handoffClaimsFile: '/tmp/out/handoff_claims.md',
     model: MODEL,
     maxTurns: MAX_TURNS,
     ...overrides
@@ -37,7 +41,9 @@ describe('prepareClaudeInvocation', () => {
           'agent/issue-540-invoke-claude-cli-directly.\n' +
           'PR: /tmp/out/pr_description.txt\n' +
           'Verify: /tmp/out/verify_report.md\n' +
-          'Shots: .agent/verify/issue-540\n'
+          'Shots: .agent/verify/issue-540\n' +
+          'Attempts: .agent/attempts\n' +
+          'Claims: /tmp/out/handoff_claims.md\n'
       )
     })
 
