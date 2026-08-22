@@ -267,6 +267,10 @@ jobs:
   # ceiling — before the runner pays for anything, and refuses non-zero when
   # the answer is no. An event the loop does not run on exits zero and skips
   # the job below, so ordinary label traffic never paints the repo red.
+  #
+  # It writes exactly once: a spent ceiling lands \`agent:exhausted\` and posts
+  # the attempt trail here, because the job below is gated on this verdict and
+  # so never runs to do it. That needs the PAT to be able to write issues.
   admit:
     # Filters the human edge without filtering the machine edge out of
     # existence: \`github.event.label\` is null on a workflow_run event, so a

@@ -202,6 +202,43 @@ describe('renderHandoff', () => {
       expect(document).toMatch(/not graded|never graded|no .*scorecard/i)
     })
   })
+
+  describe('what the attempt spent (shopfloor#50)', () => {
+    const usage = {
+      inputTokens: 12345,
+      outputTokens: 6789,
+      cacheCreationInputTokens: 1000,
+      cacheReadInputTokens: 200000,
+      source: 'reported' as const,
+      costUsd: 1.5
+    }
+
+    it('states the four buckets and the cost the ceiling argument is made in', () => {
+      const document = renderHandoff({ ...baseInput, usage })
+
+      expect(document).toContain('12,345')
+      expect(document).toContain('6,789')
+      expect(document).toContain('200,000')
+      expect(document).toContain('$1.50')
+    })
+
+    it('says when the total is observed rather than reported', () => {
+      const document = renderHandoff({
+        ...baseInput,
+        usage: { ...usage, source: 'observed', costUsd: undefined }
+      })
+
+      // A killed run's partial count read as its price is the one misreading
+      // `source` exists to prevent, and this document is read by whoever
+      // decides whether another attempt is worth paying for.
+      expect(document).toContain('Observed')
+      expect(document).not.toContain('$')
+    })
+
+    it('reports a run that never spawned as a spend of nothing, not as unknown', () => {
+      expect(renderHandoff(baseInput)).toContain('Nothing —')
+    })
+  })
 })
 
 describe('attemptFileName', () => {

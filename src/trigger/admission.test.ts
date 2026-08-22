@@ -5,6 +5,7 @@ import {
   evaluateAdmission,
   type AdmissionInput
 } from './admission'
+import { agentBranchForIssue } from './branch'
 import type { TriggerClassification } from './classify'
 
 const triggered: TriggerClassification = {
@@ -211,6 +212,30 @@ describe('evaluateAdmission — refusals', () => {
       refusal: 'exhausted',
       reason: expect.stringContaining('#46')
     })
+  })
+
+  it('carries the facts the terminal state is written from, and only there', () => {
+    // shopfloor#50: the exhausted refusal is the one a caller acts on — it has
+    // to label and comment on *this* issue's branch — and re-deriving those
+    // facts is how a report ends up on a different issue than the refusal.
+    const spent = [...ONE_ATTEMPT, ...ONE_ATTEMPT, ...ONE_ATTEMPT]
+
+    expect(
+      admission({ history: history(spent, ['ready-for-agent']) })
+    ).toMatchObject({
+      ceiling: {
+        issueNumber: 46,
+        repo: 'galosandoval/shopfloor',
+        branch: agentBranchForIssue(46),
+        attempts: 3,
+        maxAttempts: 3,
+        currentLabels: ['ready-for-agent']
+      }
+    })
+
+    expect(
+      admission({ history: history(ONE_ATTEMPT, [IN_PROGRESS_LABEL]) })
+    ).not.toHaveProperty('ceiling')
   })
 
   it('honours a stated ceiling over the default', () => {

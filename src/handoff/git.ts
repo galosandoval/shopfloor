@@ -52,6 +52,12 @@ export function git(
  * for different reasons: the write path `add`s a file git has never seen, while
  * the strip's `git rm` stages its own deletion and leaves a pathspec that
  * matches nothing anywhere.
+ *
+ * **No paths means an empty commit, deliberately** (shopfloor#50). The loop's
+ * closing mark has to be on the head commit whether or not there was a trail to
+ * strip, and a pathspec matching nothing would fail the commit rather than
+ * making an empty one. The pathspec is dropped in that case for the same
+ * reason: `git commit --allow-empty -- <nothing>` is not a command.
  */
 export async function commitPaths(
   cwd: string,
@@ -66,10 +72,10 @@ export async function commitPaths(
       `user.email=${AGENT_COMMIT_EMAIL}`,
       'commit',
       '--no-verify',
+      ...(paths.length === 0 ? ['--allow-empty'] : []),
       '-m',
       message,
-      '--',
-      ...paths
+      ...(paths.length === 0 ? [] : ['--', ...paths])
     ])
     return { committed: true }
   } catch (error) {

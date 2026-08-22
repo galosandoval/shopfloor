@@ -141,6 +141,25 @@ export interface ResolvedImplementConfig {
 }
 
 /**
+ * Where the handoff trail lives, resolved the one way every optional input here
+ * resolves: stated → environment → package default.
+ *
+ * On its own rather than inline in {@link resolveImplementConfig}, because a
+ * **second** caller asks the same question from outside a run: the terminal
+ * state reads the trail off the branch when the ceiling is spent
+ * (shopfloor#50), from a job that never builds a run config at all. Two copies
+ * of a precedence chain is how the two drift, and a trail written to one
+ * directory and read from another is an empty comment on an issue that has a
+ * trail.
+ */
+export function resolveAttemptsDir(
+  stated: string | undefined,
+  env: NodeJS.ProcessEnv
+): string {
+  return stated ?? env.ATTEMPTS_DIR ?? DEFAULT_ATTEMPTS_DIR
+}
+
+/**
  * Resolve a caller's partial config against `env` into the full set of values
  * a run needs. Total and pure — the only failures are a run that cannot be
  * identified (no issue number) or authenticated (no OAuth token), both of
@@ -189,7 +208,7 @@ export function resolveImplementConfig(
       input.screenshotsDir ??
       env.SCREENSHOTS_DIR ??
       `.agent/verify/issue-${issueNumber}`,
-    attemptsDir: input.attemptsDir ?? env.ATTEMPTS_DIR ?? DEFAULT_ATTEMPTS_DIR,
+    attemptsDir: resolveAttemptsDir(input.attemptsDir, env),
     handoffClaimsFile:
       input.handoffClaimsFile ?? inOutputDir('handoff_claims.md'),
     projectsDir:

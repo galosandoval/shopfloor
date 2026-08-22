@@ -187,7 +187,42 @@ export type AdmissionVerdict =
        */
       ciFailure?: CiFailureRef
     }
-  | { admitted: false; refusal: AdmissionRefusal; reason: string }
+  | {
+      admitted: false
+      refusal: AdmissionRefusal
+      reason: string
+      /**
+       * The facts behind a spent ceiling, present **exactly** on the
+       * `exhausted` refusal (shopfloor#50).
+       *
+       * A refusal that only says "no" is the whole of what every other one
+       * needs, because there is nothing to do about a stranger or an unreadable
+       * token beyond reading the sentence. The ceiling is different: it is the
+       * loop's terminal state, and a caller has to land `agent:exhausted` and
+       * post the trail on the issue this is about. Carried rather than
+       * re-derived, so the state the caller writes can never be about a
+       * different issue than the one the verdict refused.
+       */
+      ceiling?: SpentCeiling
+    }
+
+/** Which issue spent which ceiling, and what the issue is labeled with now. */
+export interface SpentCeiling {
+  issueNumber: number
+  repo: string
+  /** Where the trail is committed — the branch this issue's attempts ran on. */
+  branch: string
+  /** How many runs the issue has had. */
+  attempts: number
+  maxAttempts: number
+  /**
+   * The issue's labels at the moment of the refusal. The terminal state has to
+   * be idempotent — every later event on this branch trips the same ceiling —
+   * and this is what lets the report tell a first trip from the fourth without
+   * a second probe.
+   */
+  currentLabels: readonly string[]
+}
 
 /** Decide whether an event may start a run. */
 export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
@@ -246,6 +281,14 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
     return {
       admitted: false,
       refusal: 'exhausted',
+      ceiling: {
+        issueNumber,
+        repo,
+        branch,
+        attempts,
+        maxAttempts,
+        currentLabels: input.history.currentLabels
+      },
       reason:
         `Issue #${issueNumber} has already had ${describeRuns(attempts)}, and ` +
         `the ceiling is ${maxAttempts}. The work is harder than the spec said, ` +

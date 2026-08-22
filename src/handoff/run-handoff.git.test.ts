@@ -20,11 +20,11 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { AGENT_COMMIT_AUTHOR } from '../trigger/classify'
+import { AGENT_COMMIT_AUTHOR, LOOP_CLOSED_TRAILER } from '../trigger/classify'
 import { DEFAULT_ATTEMPTS_DIR } from './handoff'
 import { describeRunawayKill, spawnClaude } from '../orchestration/spawn-claude'
 import { writeHandoff, type WriteHandoffInput } from './run-handoff'
-import { stripAttempts } from './strip-attempts'
+import { closeLoop } from './close-loop'
 
 let cwd: string
 
@@ -146,7 +146,7 @@ describe('writeHandoff against real git', () => {
   })
 })
 
-describe('stripAttempts against real git', () => {
+describe('closeLoop against real git', () => {
   const commitTrail = () => {
     fs.mkdirSync(path.join(cwd, DEFAULT_ATTEMPTS_DIR), { recursive: true })
     fs.writeFileSync(path.join(cwd, DEFAULT_ATTEMPTS_DIR, '1.md'), 'one\n')
@@ -158,12 +158,12 @@ describe('stripAttempts against real git', () => {
   it('actually commits the removal — the whole point of the strip', async () => {
     commitTrail()
 
-    const result = await stripAttempts({
+    const result = await closeLoop({
       attemptsDir: DEFAULT_ATTEMPTS_DIR,
       cwd
     })
 
-    expect(result).toMatchObject({ stripped: true, removed: 2 })
+    expect(result).toMatchObject({ closed: true, removed: 2 })
     // Committed, not merely staged: a run that leaves the deletion in the index
     // pushes a branch that still carries the trail.
     expect(git('ls-files', '--', DEFAULT_ATTEMPTS_DIR)).toBe('')
@@ -174,15 +174,20 @@ describe('stripAttempts against real git', () => {
     ])
   })
 
-  it('leaves the repository alone when there is no trail', async () => {
+  it('commits an empty mark when there is no trail, changing no file', async () => {
     const before = git('rev-parse', 'HEAD')
 
-    const result = await stripAttempts({
+    const result = await closeLoop({
       attemptsDir: DEFAULT_ATTEMPTS_DIR,
       cwd
     })
 
-    expect(result).toMatchObject({ stripped: false, removed: 0 })
-    expect(git('rev-parse', 'HEAD')).toBe(before)
+    expect(result).toMatchObject({ closed: true, removed: 0 })
+    // A new commit, and one that touches nothing: the mark is the whole of it,
+    // and a working tree left dirty here would be swept into the next push.
+    expect(git('rev-parse', 'HEAD')).not.toBe(before)
+    expect(filesIn('HEAD')).toEqual([])
+    expect(git('status', '--porcelain')).toBe('')
+    expect(git('log', '-1', '--format=%B')).toContain(LOOP_CLOSED_TRAILER)
   })
 })

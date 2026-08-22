@@ -9,6 +9,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  calls,
   execStubModule,
   resetExecStub,
   routeExecStub
@@ -78,6 +79,16 @@ async function runBin(): Promise<void> {
   }
 }
 
+/**
+ * The bin does one more thing after it prints — the terminal state — so a test
+ * about that has to wait past the stdout line {@link runBin} watches for.
+ */
+async function settled(): Promise<void> {
+  for (let tick = 0; tick < 100 && exitCodes.length === 0; tick++) {
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+}
+
 function verdict(): Record<string, unknown> {
   return JSON.parse(printed.out.join('\n'))
 }
@@ -138,6 +149,41 @@ describe('shopfloor-admit', () => {
 
     expect(exitCodes).toEqual([1])
     expect(verdict()).toMatchObject({ refusal: 'exhausted' })
+  })
+
+  it('lands the terminal state on a spent ceiling — the one write this job makes', async () => {
+    // The expensive job is gated on this verdict, so this is the last place the
+    // ceiling is observed: nothing downstream survives to apply the row or post
+    // the trail (shopfloor#50).
+    routeExecStub([
+      { match: /collaborators/, response: { stdout: 'admin' } },
+      { match: /timeline/, response: { stdout: 'agent:in-progress' } },
+      { match: /gh issue view/, response: { stdout: '' } }
+    ])
+    process.argv = ['node', 'admit-cli', '--max-attempts', '1']
+
+    await runBin()
+    await settled()
+
+    const commands = calls.map((call) => call.join(' '))
+    expect(commands).toContainEqual(
+      expect.stringContaining('contents/.agent/attempts?ref=agent/issue-46')
+    )
+    expect(commands).toContainEqual(
+      expect.stringContaining('gh issue comment 46')
+    )
+    expect(printed.err.join('\n')).toContain('#46')
+  })
+
+  it('leaves every other refusal exactly as it found it', async () => {
+    routeExecStub([{ match: /collaborators/, response: { stdout: 'read' } }])
+
+    await runBin()
+    await settled()
+
+    expect(calls.some((call) => call.join(' ').includes('issue comment'))).toBe(
+      false
+    )
   })
 
   it('refuses a --max-attempts that is not a number of runs', async () => {

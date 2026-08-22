@@ -19,23 +19,23 @@ harness concern rather than as a flat file list.
 
 ## Module map
 
-| Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/phase/`           | **The verb** (shopfloor#47): the `runPhase` shell and every decision behind it — `resolvePhasePrompt` and the shipped per-phase shims (`DEFAULT_PHASE_PROMPTS`), `buildPullRequestFields`, `evaluatePhaseOutcome` — plus the two shells it owns that nothing else did: `ensureAgentBranch` / `pushAgentBranch` and `ensurePullRequest`, each locate-or-create                                                                                                                                                                                                                                                                           |
-| `src/orchestration/`   | `runImplementAgent` (the phase's run, internal since shopfloor#47), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                                                                                                                                                                 |
-| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck`), the trajectory closure condition (`evaluateClosure` — the gate on the success path, shopfloor#48), the command policy and its `PreToolUse` hook script, verify-comment posting |
-| `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard`, the `resolveGatePatterns` that decides what counts as a gate run for a repository, and the `runTrajectoryCheck` shell; it still only _grades_, and what a run does about the grade is `guardrails/closure.ts` — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                       |
-| `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository                                                                                                                                                                     |
-| `src/trigger/`         | The trigger boundary (shopfloor#46): the pure `classifyTrigger` over a raw webhook payload, the `agent/issue-<n>` branch convention (`agentBranchForIssue` / `issueNumberFromBranch`) both edges read and write, and admission — the pure `evaluateAdmission` and its `runAdmission` shell, which composes classification, the spend gate, the concurrency check, and the attempt ceiling (both read off the issue's own label history) into one verdict a job with nothing installed can gate on                                                                                                                                       |
-| `src/issue-state/`     | The label vocabulary (`LABEL_VOCABULARY` / `REQUIRED_LABELS`) and the state machine over it: the pure `evaluateLabelTransition` and its `TRANSITION_TABLE`, the `applyLabelTransition` shell, and the one `gh issue comment` shell every comment this package writes goes through (`commentOnIssue` / `commentOnIssueBestEffort`). The names are **package-owned** — see the invariant below                                                                                                                                                                                                                                            |
-| `src/handoff/`         | **Memory** (shopfloor#49): the handoff artifact an attempt leaves for the next one — the pure `renderHandoff` (two authorship halves, every section bounded) and the two shells beside it, split by what they do rather than by what they share — `writeHandoff` (`run-handoff.ts`) commits an attempt's document to the branch on a failure, `stripAttempts` (`strip-attempts.ts`) removes the trail on a success, and `git.ts` holds the commit identity both are bound to. The one module here whose output is read by an _agent_ rather than by this package                                                                        |
-| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                                                                                                                                                                                             |
-| `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `src/run-phase-cli.ts` | Thin bin entrypoint (`shopfloor-run-phase`); it names no issue and no branch — the payload does — and owns only the exit code and the failure-reason file                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `src/init-cli.ts`      | Thin bin entrypoint (`shopfloor-init`); prints the report and exits non-zero on a **write that failed** — never on the setup it cannot fix, which it names and leaves to the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `src/admit-cli.ts`     | Thin bin entrypoint (`shopfloor-admit`); prints the admission verdict as one line of JSON on stdout and the sentence on stderr. Exits zero on `not-a-trigger` — by far the most common outcome — and non-zero on every other refusal, so a caller who ignores stdout is still stopped by a stranger, a broken token, a run in flight, or a spent ceiling                                                                                                                                                                                                                                                                                |
+| Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/phase/`           | **The verb** (shopfloor#47): the `runPhase` shell and every decision behind it — `resolvePhasePrompt` and the shipped per-phase shims (`DEFAULT_PHASE_PROMPTS`), `buildPullRequestFields`, `evaluatePhaseOutcome` — plus the two shells it owns that nothing else did: `ensureAgentBranch` / `pushAgentBranch` and `ensurePullRequest`, each locate-or-create                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `src/orchestration/`   | `runImplementAgent` (the phase's run, internal since shopfloor#47), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck`), the trajectory closure condition (`evaluateClosure` — the gate on the success path, shopfloor#48), the command policy and its `PreToolUse` hook script, verify-comment posting                                                                                                                                                                                                                                                 |
+| `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard`, the `resolveGatePatterns` that decides what counts as a gate run for a repository, and the `runTrajectoryCheck` shell; it still only _grades_, and what a run does about the grade is `guardrails/closure.ts` — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                                                                                                                                                                                                                                                                       |
+| `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `src/trigger/`         | The trigger boundary (shopfloor#46): the pure `classifyTrigger` over a raw webhook payload, the `agent/issue-<n>` branch convention (`agentBranchForIssue` / `issueNumberFromBranch`) both edges read and write, and admission — the pure `evaluateAdmission` and its `runAdmission` shell, which composes classification, the spend gate, the concurrency check, and the attempt ceiling (both read off the issue's own label history) into one verdict a job with nothing installed can gate on                                                                                                                                                                                                                                                                                                                                                                                       |
+| `src/issue-state/`     | The label vocabulary (`LABEL_VOCABULARY` / `REQUIRED_LABELS`) and the state machine over it: the pure `evaluateLabelTransition` and its `TRANSITION_TABLE`, the `applyLabelTransition` shell, and the one `gh issue comment` shell every comment this package writes goes through (`commentOnIssue` / `commentOnIssueBestEffort`). The names are **package-owned** — see the invariant below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `src/handoff/`         | **Memory** (shopfloor#49): the handoff artifact an attempt leaves for the next one — the pure `renderHandoff` (two authorship halves, every section bounded, and since shopfloor#50 what the attempt spent) and the two shells beside it, split by what they do rather than by what they share — `writeHandoff` (`run-handoff.ts`) commits an attempt's document to the branch on a failure, `closeLoop` (`close-loop.ts`) ends the loop on a success — stripping the trail if there is one, and marking the commit closed either way — and `git.ts` holds the commit identity both are bound to. And the trail's other reader (shopfloor#50): the pure `buildExhaustionReport` / `reportExhaustion`, which post the accumulated trail and land `agent:exhausted` when the attempt ceiling is spent. The one module here whose output is read by an _agent_ rather than by this package |
+| `src/process/`         | Subprocess plumbing no single shell owns: `asExecFailure` (the one narrowing of a rejected `execFile` — a spawn failure carries no numeric `code`, and that distinction is load-bearing in two shells) and the `node:child_process` stub their wiring tests share. Internal, never exported                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `src/index.ts`         | The public surface — nothing else is API                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `src/run-phase-cli.ts` | Thin bin entrypoint (`shopfloor-run-phase`); it names no issue and no branch — the payload does — and owns only the exit code and the failure-reason file                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `src/doctor-cli.ts`    | Thin bin entrypoint (`shopfloor-doctor`); prints the report and sets the exit code, nothing else                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `src/init-cli.ts`      | Thin bin entrypoint (`shopfloor-init`); prints the report and exits non-zero on a **write that failed** — never on the setup it cannot fix, which it names and leaves to the operator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `src/authorize-cli.ts` | Thin bin entrypoint (`shopfloor-authorize`); prints the verdict and exits non-zero on any refusal. Its own bin so a setup-free job runs the spend gate before the runner installs anything                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `src/admit-cli.ts`     | Thin bin entrypoint (`shopfloor-admit`); prints the admission verdict as one line of JSON on stdout and the sentence on stderr. Exits zero on `not-a-trigger` — by far the most common outcome — and non-zero on every other refusal, so a caller who ignores stdout is still stopped by a stranger, a broken token, a run in flight, or a spent ceiling                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ## Pure core, IO shell
 
@@ -70,7 +70,8 @@ The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `evaluatePromptReadiness`, `evaluateClosure`,
 `resolveImplementConfig` / `runImplementAgent`, and the verb's own —
 `resolvePhasePrompt`, `evaluatePhaseOutcome`, `buildPullRequestFields` /
-`ensurePullRequest`, and `renderHandoff` / `writeHandoff`.
+`ensurePullRequest`, `renderHandoff` / `writeHandoff`, and
+`buildExhaustionReport` / `reportExhaustion`.
 
 `probeSetup` is the one shell that neither runs nor applies anything, and
 deliberately: it gathers and decides nothing, while every `run*` here acts on a
@@ -127,7 +128,11 @@ one. Everything else, in order:
    any other path is judged rather than admitted by assumption. **A refusal
    here writes nothing at all** — the same rule `runAdmission` follows, and the
    only one that is safe for the in-flight case, where the issue belongs to a
-   run this one does not own.
+   run this one does not own. **One refusal is the exception** (shopfloor#50):
+   a spent ceiling is the loop's terminal state, so it lands `agent:exhausted`
+   and posts the trail — normally from the `shopfloor-admit` job, which gates
+   this verb out of existence, and from here for a caller that arrived another
+   way. The report is idempotent, so the two can never both post.
 2. **Resolve the phase's prompt** — pure `resolvePhasePrompt`, before anything
    is written or spent. A phase with no prompt refuses **at startup naming the
    phase** rather than failing at spawn time. The shipped default is a thin
@@ -435,6 +440,82 @@ the artifact exists to inform. And a **successful** run writes none — it strip
 the trail instead, in the commit it is about to push, which is where the two
 would otherwise be the same commit adding and removing a file.
 
+### The outer loop closes
+
+shopfloor#50, design §4, §6, §7 and review finding 5. The pieces the loop is
+made of landed one ticket at a time — the machine edge and attribution in
+shopfloor#46, the ceiling with it, the memory in shopfloor#49 — and what this
+one settles is the two ends: which of the harness's own commits may retrigger
+it, and what happens when the ceiling trips.
+
+- **The three runaway guards, stated together, because each is blind to the
+  other two's failure.** _Idle_ catches a stalled agent, _wall-clock_ catches an
+  agent looping within a run, and the _attempt ceiling_ catches an agent looping
+  across runs. The third is the one this loop makes reachable at all: without a
+  machine edge nothing retriggers, and with one an unbounded event loop is the
+  most expensive failure mode in the system. Where the ceiling lives — admission,
+  not `runPolicy` — is an invariant below.
+- **The harness's own commits retrigger the loop, except the one that closed
+  it.** Both commits this package makes are authored as the agent deliberately
+  (see § "The handoff artifact"), and the machine edge keys on that author. The
+  asymmetry between them _is_ the loop: a failed attempt's handoff commit must
+  retrigger, since that is how the loop iterates, while the successful run's
+  strip must not — it handed the branch to a human, and answering CI red on top
+  of it would spend an attempt on work nobody asked the agent to keep, starting
+  cold, since the strip is what removed the trail. `LOOP_CLOSED_TRAILER` on the
+  closing commit is how a stateless edge can tell them apart, and it is a
+  trailer on its own line rather than a message prefix for the reason the commit
+  author is a fixed name: `chore(shopfloor):` is prose anybody can write.
+  **The closing commit is made even when there is nothing to strip**, empty if
+  it has to be: a first-attempt success has no trail, and it is the most likely
+  success there is — a mark made only when a trail existed would leave the
+  common case unmarked, which is the excluded case reached by the likelier
+  path.
+  **The consequence is deliberate and worth naming**: CI that goes red on a
+  branch a run finished successfully is now a review comment rather than a
+  retrigger. The loop iterates on attempts that failed; a finished attempt has
+  an open pull request and a human on it.
+- **The ceiling's terminal state is `agent:exhausted`, and the trail is the
+  comment.** Preflight-blocked and exhausted are the two failures with the most
+  different human responses in the system — _fix the issue's shape_ versus _the
+  work is harder than specified, or the spec is wrong_ — so they are two rows,
+  not one. The comment is the accumulated handoff trail because it is already
+  written and is already the best account of what went wrong; the alternative is
+  a human opening N commits to reconstruct what the harness knows. The pull
+  request **stays open** and the trail is **not stripped**: closing it discards
+  partial work, and the trail is the evidence the comment is made of. The
+  comment names the recovery exactly — raise the ceiling — and rules out the
+  obvious wrong guess: re-labelling cannot clear a count read off a permanent
+  timeline, and the next event would trip the same ceiling silently, since the
+  label this report lands is what stops it commenting twice.
+- **It reports once, off the label rather than off a memory.** A stateless edge
+  trips the same ceiling on every later event, so the terminal state has to be
+  idempotent. `agent:exhausted` on the issue is what says it already happened —
+  the same derive-don't-store reading the ceiling itself gets, one label over.
+- **The write happens in the admission job, and that is the narrow exception to
+  "admission writes nothing".** `runAdmission` still writes nothing on any
+  verdict; `reportExhaustion` is a separate callable a caller runs on the
+  `exhausted` refusal, and the shipped `shopfloor-admit` bin does. It has to be
+  there rather than in `runPhase`, because the expensive job is gated on the
+  verdict — nothing downstream survives to apply a row. What makes it safe where
+  a labelling refusal would not be: the ceiling is derived from history **this
+  package wrote**, and the refusal is only reached after classification admitted
+  a real trigger and, on the human edge, the spend gate admitted the actor.
+  There is no drive-by path to it. The trail is read through `gh api` contents
+  rather than off disk, since that job has no checkout.
+- **The ceiling bounds attempts; the argument for the bound is in tokens.** Each
+  attempt's handoff now states what that attempt spent (shopfloor#42's `usage`,
+  off the error the run threw), so the comment a spent ceiling posts _is_ the
+  cost of the last three runs. `source` is stated on every line, because an
+  observed total is not a total and a killed run's partial count read as its
+  price is the misreading that number exists to prevent.
+- **Design §4's own mechanism stays reversed.** That section derives the count
+  from `gh run list --branch` and asks for `--workflow` and `--event` filters
+  that are validated rather than assumed; shopfloor#46 established that the
+  mechanism cannot fire at all, and the count comes off the issue timeline. The
+  filters are moot, not skipped — there is no run list being counted. Same for
+  §4's "put the ceiling in `runPolicy`", below.
+
 ## Invariants worth knowing before you change something
 
 - **Refuse early, cheaply.** A misconfigured run should fail before the spawn,
@@ -472,7 +553,10 @@ would otherwise be the same commit adding and removing a file.
   run list refuses. It is not "probably no runs": it is not knowing whether
   something is already spending, and both unknowns resolve in the expensive
   direction. It writes nothing on any verdict, for the reason the spend gate
-  writes nothing.
+  writes nothing — and since shopfloor#50 the **job** around it makes exactly
+  one write, on the `exhausted` verdict, through a separate callable. The
+  function's rule is unchanged; § "The outer loop closes" has why the exception
+  is narrow.
 - **The two edges are authorized by two different facts, and the machine edge
   is not probed at all.** `AdmissionAuthority` (shopfloor#46) names them:
   `permission` on the human edge, where a person triggered the run and the
@@ -566,24 +650,30 @@ would otherwise be the same commit adding and removing a file.
   Bumping it is editing the tag in `package.json`; fork tags use the
   `galosandoval-skills@<version>` scheme so incoming upstream `v*` tags cannot
   collide with them.
-- **The two runaway guards catch different failures.** Idle catches a _stalled_
-  agent; wall-clock catches a _looping_ one that stays chatty forever and is
-  structurally immune to the idle guard. Neither substitutes for the other.
+- **The three runaway guards catch different failures.** Idle catches a
+  _stalled_ agent; wall-clock catches a _looping_ one that stays chatty forever
+  and is structurally immune to the idle guard; the attempt ceiling catches one
+  looping _across_ runs, which neither of the other two can see at all. None
+  substitutes for another, and only the first two live in `runPolicy` — see the
+  invariant on where the ceiling lives.
 - **The two runaway guards bound different scopes.** The idle budget is armed
   in full on every spawn; the wall-clock budget belongs to the **run** and is
   spent across its iterations. Anything that adds a spawn to a run must take its
   wall-clock budget from the same remainder, or the ceiling stops being one.
-- **The run result names its spend, and nothing in this package acts on it
-  yet.** `usage` (shopfloor#42) is the CLI's `stream-json` parsed as it arrives
+- **The run result names its spend, and since shopfloor#50 the handoff reports
+  it — nothing in this package still _acts_ on it.** `usage` (shopfloor#42) is
+  the CLI's `stream-json` parsed as it arrives
   — the stream the idle guard was already reading for a heartbeat, and that the
   harness otherwise dropped. It lands on `RunImplementAgentResult`, summed over
   every iteration, because a loop that multiplies spend by N and measures only
   attempts is a ceiling on the wrong axis (design review finding 6). **Its
   consumer today is the caller** — CI glue reporting a run's cost, and evals,
-  for which §3.3 of the gap analysis names this the prerequisite. The ceiling
-  that reads it is the outer loop's, and it is not built; that this is a
-  measurement and not yet a guardrail is deliberate, and the order the design
-  asked for. Which is why metering breaks the package's usual pure/shell pairing
+  for which §3.3 of the gap analysis names this the prerequisite — and, since
+  shopfloor#50, the handoff document, so the trail a spent ceiling posts states
+  what each attempt cost. It still decides nothing: the ceiling bounds
+  _attempts_, and the spend is what makes the argument about raising it
+  readable. That this is a measurement and not yet a guardrail is deliberate,
+  and the order the design asked for. Which is why metering breaks the package's usual pure/shell pairing
   and has no `run*` half: it decides nothing. It reports, like everything else
   in `src/observability/`. A **failed** run reports on
   `ImplementAgentError.usage` instead, since it never reaches a result — and

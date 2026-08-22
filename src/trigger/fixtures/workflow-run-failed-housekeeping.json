@@ -1,0 +1,56 @@
+{
+  "action": "completed",
+  "workflow": {
+    "id": 77000001,
+    "name": "Test",
+    "path": ".github/workflows/test.yml"
+  },
+  "workflow_run": {
+    "id": 18234567891,
+    "name": "Test",
+    "run_number": 412,
+    "event": "push",
+    "status": "completed",
+    "conclusion": "failure",
+    "head_branch": "agent/issue-46",
+    "head_sha": "3f1a0c9e0f6b4d2a8c7e1b5d9a0f3c2e4b6d8a01",
+    "html_url": "https://github.com/galosandoval/shopfloor/actions/runs/18234567891",
+    "actor": {
+      "login": "github-actions[bot]",
+      "type": "Bot"
+    },
+    "triggering_actor": {
+      "login": "github-actions[bot]",
+      "type": "Bot"
+    },
+    "head_repository": {
+      "id": 900000001,
+      "name": "shopfloor",
+      "full_name": "galosandoval/shopfloor",
+      "fork": false
+    },
+    "head_commit": {
+      "id": "3f1a0c9e0f6b4d2a8c7e1b5d9a0f3c2e4b6d8a01",
+      "message": "chore(shopfloor): strip the attempt handoffs — the run succeeded\n\nShopfloor-Loop: closed\n",
+      "author": {
+        "name": "claude-code[bot]",
+        "email": "claude-code[bot]@users.noreply.github.com"
+      }
+    }
+  },
+  "repository": {
+    "id": 900000001,
+    "name": "shopfloor",
+    "full_name": "galosandoval/shopfloor",
+    "default_branch": "main",
+    "private": false,
+    "owner": {
+      "login": "galosandoval",
+      "type": "User"
+    }
+  },
+  "sender": {
+    "login": "galosandoval",
+    "type": "User"
+  }
+}

@@ -97,3 +97,13 @@ export const ENTRY_LABEL = 'ready-for-agent'
  * vocabulary exists to eliminate.
  */
 export const IN_PROGRESS_LABEL = 'agent:in-progress'
+
+/**
+ * The outer loop's terminal state (shopfloor#50): the issue spent its attempt
+ * ceiling without ever passing the gate. Named on its own for the reason
+ * {@link IN_PROGRESS_LABEL} is, and read for a second job besides the
+ * transition table's row — its **presence** is what says the ceiling has
+ * already been reported, so a stateless edge that trips the same ceiling on
+ * every later event posts the trail once rather than every time.
+ */
+export const EXHAUSTED_LABEL = 'agent:exhausted'

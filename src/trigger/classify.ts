@@ -243,6 +243,24 @@ function classifyWorkflowRun(event: PayloadRecord): TriggerClassification {
     }
   }
 
+  // **The harness's own loop-closing commit is not an agent failure**
+  // (shopfloor#50). The commits this package makes on the branch carry the
+  // agent's identity deliberately — the author check above is what keeps the
+  // retrigger alive after a failed attempt pushes its handoff. The one commit
+  // that must *not* answer for the loop is the one that ended it: a successful
+  // run strips the trail and hands the branch to a human, so CI red on top of
+  // that is a review comment rather than a continuation, and answering it would
+  // spend another attempt on work nobody asked the agent to keep.
+  if (closesTheLoop(run)) {
+    return {
+      triggered: false,
+      reason:
+        "the head commit is this package's own loop-closing commit " +
+        `("${LOOP_CLOSED_TRAILER}") — the run it belongs to succeeded and the ` +
+        "branch is a human's now, so this failure is theirs to read"
+    }
+  }
+
   const classification: TriggerClassification = {
     triggered: true,
     // A finished CI run carries no issue labels, so the phase cannot be read
@@ -343,6 +361,35 @@ export const AGENT_COMMIT_AUTHOR = 'claude-code[bot]'
 function commitAuthorOf(run: PayloadRecord): string | undefined {
   const author = asRecord(asRecord(run.head_commit)?.author)
   return asString(author?.name) ?? asString(author?.email)
+}
+
+/**
+ * The trailer this package writes on a commit that **closed** the loop on a
+ * branch — today the successful run's strip of the attempt trail, and whatever
+ * else lands in that same commit later (the verify screenshots were specified
+ * for it).
+ *
+ * **A trailer rather than a message prefix**, for the reason the commit author
+ * is a fixed name rather than a configurable one: `chore(shopfloor):` is prose
+ * a consumer's own tooling can write by accident, while a trailer on its own
+ * line is a machine-readable statement this package is the only writer of.
+ *
+ * The handoff commit deliberately carries none. That asymmetry *is* the outer
+ * loop: a failed attempt's push must retrigger — it is how the loop iterates —
+ * and a successful run's must not.
+ */
+export const LOOP_CLOSED_TRAILER = 'Shopfloor-Loop: closed'
+
+/**
+ * Whether the head commit is the one that ended the loop on this branch.
+ *
+ * Read off its own line, so a message *quoting* the trailer — an agent
+ * describing this mechanism in a commit body, say — cannot claim it.
+ */
+function closesTheLoop(run: PayloadRecord): boolean {
+  const message = asString(asRecord(run.head_commit)?.message) ?? ''
+
+  return message.split('\n').some((line) => line.trim() === LOOP_CLOSED_TRAILER)
 }
 
 function isAgentAuthor(author: string | undefined): boolean {

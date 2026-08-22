@@ -33,7 +33,8 @@ import { ensureAgentBranch, pushAgentBranch } from './run-branch'
 import { ensurePullRequest } from './run-pull-request'
 import { describeRunawayKill } from '../orchestration/spawn-claude'
 import { writeHandoff } from '../handoff/run-handoff'
-import { stripAttempts } from '../handoff/strip-attempts'
+import { closeLoop } from '../handoff/close-loop'
+import { reportExhaustion } from '../handoff/run-exhaustion'
 import { runPhase } from './run-phase'
 
 vi.mock('node:child_process', () => execStubModule())
@@ -54,7 +55,8 @@ vi.mock('./run-branch', () => ({
 }))
 vi.mock('./run-pull-request', () => ({ ensurePullRequest: vi.fn() }))
 vi.mock('../handoff/run-handoff', () => ({ writeHandoff: vi.fn() }))
-vi.mock('../handoff/strip-attempts', () => ({ stripAttempts: vi.fn() }))
+vi.mock('../handoff/close-loop', () => ({ closeLoop: vi.fn() }))
+vi.mock('../handoff/run-exhaustion', () => ({ reportExhaustion: vi.fn() }))
 
 const admitted = {
   admitted: true as const,
@@ -114,7 +116,13 @@ beforeEach(() => {
     written: true,
     committed: true
   })
-  vi.mocked(stripAttempts).mockResolvedValue({ stripped: true, removed: 1 })
+  vi.mocked(closeLoop).mockResolvedValue({ closed: true, removed: 1 })
+  vi.mocked(reportExhaustion).mockResolvedValue({
+    reported: true,
+    transitioned: true,
+    attemptsRead: 3,
+    attemptsPosted: 3
+  })
 })
 
 describe('runPhase', () => {
@@ -211,6 +219,53 @@ describe('runPhase', () => {
     expect(vi.mocked(applyLabelTransition)).not.toHaveBeenCalled()
     expect(vi.mocked(runImplementAgent)).not.toHaveBeenCalled()
     expect(vi.mocked(ensureAgentBranch)).not.toHaveBeenCalled()
+    expect(vi.mocked(reportExhaustion)).not.toHaveBeenCalled()
+  })
+
+  it('lands the terminal state when the ceiling is what refused', async () => {
+    // shopfloor#50: the one refusal that leaves something behind, because the
+    // spent ceiling *is* the outer loop's terminal state and no run follows it
+    // to apply one.
+    const ceiling = {
+      issueNumber: 47,
+      repo: 'acme/widgets',
+      branch: agentBranchForIssue(47),
+      attempts: 3,
+      maxAttempts: 3,
+      currentLabels: ['agent:blocked']
+    }
+    vi.mocked(runAdmission).mockResolvedValue({
+      admitted: false,
+      refusal: 'exhausted',
+      reason: 'the ceiling is spent',
+      ceiling
+    })
+
+    const result = await runPhase({ payload: {}, env, cwd: '/repo' })
+
+    expect(result).toMatchObject({ ran: false, refusal: 'exhausted' })
+    expect(vi.mocked(reportExhaustion)).toHaveBeenCalledWith({
+      ceiling,
+      env,
+      cwd: '/repo'
+    })
+    // Still no run, no branch, and no transition of its own: the report owns
+    // the row it applies.
+    expect(vi.mocked(runImplementAgent)).not.toHaveBeenCalled()
+    expect(vi.mocked(applyLabelTransition)).not.toHaveBeenCalled()
+
+    // A caller who moved the trail told this verb where it is, and the report
+    // reads it off the branch rather than out of the default directory.
+    await runPhase({
+      payload: {},
+      env,
+      cwd: '/repo',
+      attemptsDir: '.harness/attempts'
+    })
+
+    expect(vi.mocked(reportExhaustion).mock.calls[1][0]).toMatchObject({
+      attemptsDir: '.harness/attempts'
+    })
   })
 
   it('leaves a preflight refusal to the transition preflight already applied', async () => {
@@ -547,6 +602,29 @@ describe('runPhase — the handoff trail', () => {
     expect(handoff().scorecard).toEqual(findings)
   })
 
+  it('carries what the failed attempt spent, which is the ceiling argument', async () => {
+    const usage = {
+      inputTokens: 10,
+      outputTokens: 20,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      source: 'observed' as const
+    }
+    failWith(new ImplementAgentError('killed', undefined, usage))
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow()
+
+    expect(handoff().usage).toEqual(usage)
+  })
+
+  it('carries no spend for a run that refused before it spawned', async () => {
+    failWith(new ImplementAgentError('a precondition refused'))
+
+    await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow()
+
+    expect(handoff()).not.toHaveProperty('usage')
+  })
+
   it('carries the CI failure the machine edge continues', async () => {
     vi.mocked(runAdmission).mockResolvedValue({
       ...admitted,
@@ -567,7 +645,7 @@ describe('runPhase — the handoff trail', () => {
     const result = await runPhase({ payload: {}, env, cwd: '/repo' })
 
     expect(result).toMatchObject({ ran: true, outcome: 'succeeded' })
-    expect(vi.mocked(stripAttempts)).toHaveBeenCalledWith({
+    expect(vi.mocked(closeLoop)).toHaveBeenCalledWith({
       attemptsDir: '.agent/attempts',
       cwd: '/repo'
     })
@@ -579,7 +657,7 @@ describe('runPhase — the handoff trail', () => {
 
     await expect(runPhase({ payload: {}, env, cwd: '/repo' })).rejects.toThrow()
 
-    expect(vi.mocked(stripAttempts)).not.toHaveBeenCalled()
+    expect(vi.mocked(closeLoop)).not.toHaveBeenCalled()
   })
 
   it('does not let a failed handoff replace the failure worth reporting', async () => {

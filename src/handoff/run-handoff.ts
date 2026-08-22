@@ -2,7 +2,7 @@
  * The handoff artifact's IO shell (shopfloor#49): gather what the attempt left
  * behind, render it with the pure {@link renderHandoff}, and commit it to the
  * branch. The success path's counterpart — stripping the trail — is
- * `strip-attempts.ts`, and the commit identity both share is `git.ts`.
+ * `close-loop.ts`, and the commit identity both share is `git.ts`.
  *
  * **Nothing here throws.** A handoff is memory for the *next* attempt, and a
  * failed write must never replace the failure that is actually worth reporting.
@@ -18,6 +18,7 @@ import * as path from 'node:path'
 import { spawn } from 'node:child_process'
 import type { TrajectoryFinding } from '../observability/trajectory'
 import type { FailedPhaseOutcome } from '../issue-state/transition'
+import type { RunUsage } from '../observability/usage'
 import { commitPaths, git } from './git'
 import {
   attemptFileName,
@@ -38,6 +39,11 @@ export interface WriteHandoffInput {
   failure: string
   /** The scorecard for this attempt, when the closure condition graded one. */
   scorecard?: readonly TrajectoryFinding[]
+  /**
+   * What the attempt spent, off the error it threw (shopfloor#50). Absent means
+   * it never spawned — see {@link HandoffInput.usage}.
+   */
+  usage?: RunUsage
   /** Where the agent was told to write its claims (`{{HANDOFF_CLAIMS_FILE}}`). */
   claimsFile?: string
   /**
@@ -85,6 +91,7 @@ export async function writeHandoff(
     failure: input.failure,
     ciFailure: await gatherCiFailure(input),
     scorecard: input.scorecard,
+    usage: input.usage,
     ...(await probeDiffStat(input.cwd)),
     claims: await readClaims(input.claimsFile),
     claimsUnavailable: claimsUnavailableReason(input.claimsFile)
