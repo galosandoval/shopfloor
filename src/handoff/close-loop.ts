@@ -30,7 +30,12 @@ export interface CloseLoopResult {
    * ordinary agent commit, so a CI failure on it will read as another attempt.
    */
   closed: boolean
-  /** How many attempt files were removed — zero on a first-attempt success. */
+  /**
+   * How many attempt files the closing commit removed — zero on a
+   * first-attempt success, and zero when the commit did not land, since a
+   * deletion that was staged and never committed removes nothing from the
+   * branch anyone else will see.
+   */
   removed: number
   detail?: string
 }
@@ -49,8 +54,12 @@ export async function closeLoop(
   input: AttemptsTrailLocation
 ): Promise<CloseLoopResult> {
   const tracked = await trackedAttempts(input)
+  // Named once. The same question decides three things — whether to `git rm`,
+  // whether the commit is path-limited, and what the message says — and three
+  // copies of it are three places for them to stop agreeing.
+  const hasTrail = tracked.length > 0
 
-  if (tracked.length > 0) {
+  if (hasTrail) {
     try {
       await git(input.cwd, ['rm', '-r', '--quiet', '--', input.attemptsDir])
     } catch (error) {
@@ -63,9 +72,9 @@ export async function closeLoop(
     // Path-limited when there is a trail; empty when there is not, which is
     // what makes `commitPaths` allow an empty commit rather than fail on a
     // pathspec matching nothing.
-    tracked.length > 0 ? [input.attemptsDir] : [],
+    hasTrail ? [input.attemptsDir] : [],
     `chore(shopfloor): close the loop on this branch${
-      tracked.length > 0 ? ' — the run succeeded, trail stripped' : ''
+      hasTrail ? ' — the run succeeded, trail stripped' : ''
     }\n\n${LOOP_CLOSED_TRAILER}\n`
   )
 

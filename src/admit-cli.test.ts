@@ -14,6 +14,7 @@ import {
   resetExecStub,
   routeExecStub
 } from './process/exec-stub.test-helper'
+import { REQUIRED_LABELS } from './issue-state/vocabulary'
 import issuesLabeled from './trigger/fixtures/issues-labeled.json'
 
 vi.mock('node:child_process', () => execStubModule())
@@ -158,7 +159,14 @@ describe('shopfloor-admit', () => {
     routeExecStub([
       { match: /collaborators/, response: { stdout: 'admin' } },
       { match: /timeline/, response: { stdout: 'agent:in-progress' } },
-      { match: /gh issue view/, response: { stdout: '' } }
+      { match: /gh issue view/, response: { stdout: '' } },
+      // The report checks the vocabulary before it comments: a repository that
+      // cannot carry `agent:exhausted` would post the trail again on every
+      // later event, since the label is what says it already happened.
+      {
+        match: /gh label list/,
+        response: { stdout: `${REQUIRED_LABELS.join('\n')}\n` }
+      }
     ])
     process.argv = ['node', 'admit-cli', '--max-attempts', '1']
 

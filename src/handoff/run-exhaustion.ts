@@ -33,7 +33,7 @@ import {
   type IssueRef
 } from '../issue-state/issue-comment'
 import { resolveAttemptsDir } from '../orchestration/config'
-import { describeExecFailure } from '../process/exec-failure'
+import { asExecFailure, describeExecFailure } from '../process/exec-failure'
 import type { SpentCeiling } from '../trigger/admission'
 import { buildExhaustionReport, type TrailDocument } from './exhaustion'
 
@@ -105,11 +105,7 @@ export async function reportExhaustion(
   })
 
   const report = buildExhaustionReport({
-    issueNumber: ceiling.issueNumber,
-    branch: ceiling.branch,
-    attempts: ceiling.attempts,
-    maxAttempts: ceiling.maxAttempts,
-    currentLabels: ceiling.currentLabels,
+    ...ceiling,
     trail: trail.documents,
     ...(trail.detail ? { trailUnavailable: trail.detail } : {})
   })
@@ -125,21 +121,41 @@ export async function reportExhaustion(
   }
 
   const issue = { issueNumber: String(ceiling.issueNumber), repo: ceiling.repo }
+  // **The vocabulary is checked before the comment, not after.** Reporting once
+  // is enforced by the `agent:exhausted` label being there next time, so a
+  // repository that cannot carry the label is a repository where every later
+  // event on the branch trips the same ceiling and posts the whole trail again
+  // — the comment generator this module exists to avoid, reached by the one
+  // failure that is both permanent and knowable in advance. So a *refused*
+  // vocabulary writes nothing and says why. An unreadable one is a different
+  // answer and keeps the old behaviour: not knowing is not the same as knowing
+  // the label is missing, and a terminal state nobody reported is worse than a
+  // comment that might repeat.
+  const vocabulary = await checkVocabulary(issue, input.cwd)
+
+  if (vocabulary.refused) {
+    return {
+      reported: false,
+      transitioned: false,
+      attemptsRead: trail.documents.length,
+      attemptsPosted: 0,
+      detail: vocabulary.reason
+    }
+  }
+
   const reported = await commentOnIssueBestEffort(
     issue,
     report.comment,
     'the spent attempt ceiling'
   )
 
-  const transitioned = await applyExhaustedRow(
-    issue,
-    ceiling.currentLabels,
-    input.cwd
-  )
-  // Both halves can fail on their own, and either one alone is worth printing —
-  // a detail that overwrote the other would report the last thing to go wrong
+  const transitioned = await applyExhaustedRow(issue, ceiling.currentLabels)
+  // Every half can fail on its own, and each one alone is worth printing — a
+  // detail that overwrote another would report the last thing to go wrong
   // rather than what went wrong.
-  const detail = [trail.detail, transitioned.detail].filter(Boolean).join('; ')
+  const detail = [trail.detail, vocabulary.reason, transitioned.detail]
+    .filter(Boolean)
+    .join('; ')
 
   return {
     reported,
@@ -151,28 +167,39 @@ export async function reportExhaustion(
 }
 
 /**
- * Apply the `exhausted` row, with the vocabulary check in front of it that
- * every caller of {@link applyLabelTransition} in this package makes — a
- * transition written against labels a repository does not carry is the rotted
- * binding shopfloor#45 exists to eliminate. Unlike a run, this one **reports**
- * a missing vocabulary rather than throwing on it: the run it would have failed
- * is already over.
+ * The vocabulary check every caller of {@link applyLabelTransition} in this
+ * package makes — a transition written against labels a repository does not
+ * carry is the rotted binding shopfloor#45 exists to eliminate. Unlike a run,
+ * this one **reports** a missing vocabulary rather than throwing on it: the run
+ * it would have failed is already over.
+ *
+ * A check that could not run is deliberately not a refusal. See the call site
+ * for why the two answers part company here and nowhere else.
  */
-async function applyExhaustedRow(
+async function checkVocabulary(
   issue: IssueRef,
-  currentLabels: readonly string[],
   cwd: string | undefined
-): Promise<{ transitioned: boolean; detail?: string }> {
+): Promise<{ refused: boolean; reason: string }> {
   try {
     const vocabulary = await runLabelVocabularyCheck({
       repo: issue.repo,
       cwd: cwd ?? process.cwd()
     })
 
-    if (vocabulary.refused) {
-      return { transitioned: false, detail: vocabulary.reason }
-    }
+    return vocabulary.refused
+      ? { refused: true, reason: vocabulary.reason }
+      : { refused: false, reason: '' }
+  } catch (error) {
+    return { refused: false, reason: String(error) }
+  }
+}
 
+/** Apply the `exhausted` row, the vocabulary already checked. */
+async function applyExhaustedRow(
+  issue: IssueRef,
+  currentLabels: readonly string[]
+): Promise<{ transitioned: boolean; detail?: string }> {
+  try {
     // The labels the refusal was made against, rather than a second read: the
     // report and the state it lands are then about one snapshot of the issue,
     // and an edit made between the two cannot make them disagree.
@@ -205,16 +232,22 @@ async function readTrail(
   try {
     paths = await listTrail(input)
   } catch (error) {
-    // An empty directory is a 404 here, and so is a branch that never carried
-    // one — indistinguishable, and both mean "no trail", which the comment
-    // states rather than treating as a fault.
-    return {
-      documents: [],
-      detail: describeExecFailure(
-        error,
-        `could not list ${input.attemptsDir} on ${input.branch}`
-      )
-    }
+    // **A 404 is not a fault, and everything else is.** An empty directory is a
+    // 404 here, and so is a branch that never carried one — indistinguishable,
+    // and both mean "no trail", which the comment already states plainly. Only
+    // the ordinary first-attempt-exhausted case reaches this at all, so
+    // reporting it as evidence lost would put "part of the trail could not be
+    // read" on the most-read comment the loop writes, for a trail that never
+    // existed. A broken token or an unreadable repository still says so.
+    return isNotFound(error)
+      ? { documents: [] }
+      : {
+          documents: [],
+          detail: describeExecFailure(
+            error,
+            `could not list ${input.attemptsDir} on ${input.branch}`
+          )
+        }
   }
 
   const documents: TrailDocument[] = []
@@ -231,6 +264,17 @@ async function readTrail(
   return failures.length > 0
     ? { documents, detail: `could not read ${failures.join(', ')}` }
     : { documents }
+}
+
+/**
+ * Whether `gh api` failed because the path is not there, rather than because
+ * something is wrong. Matched on what `gh` prints — `gh: Not Found (HTTP 404)`
+ * — because the exit code is 1 for every API failure it has, so the code alone
+ * cannot tell an absent directory from a revoked token.
+ */
+function isNotFound(error: unknown): boolean {
+  const { stderr } = asExecFailure(error)
+  return /\b404\b/.test(stderr) || /not found/i.test(stderr)
 }
 
 async function listTrail(input: TrailLocation): Promise<string[]> {

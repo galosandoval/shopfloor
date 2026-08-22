@@ -18,6 +18,7 @@
  */
 
 import { ENTRY_LABEL } from '../issue-state/vocabulary'
+import { AGENT_BRANCH_PREFIX } from '../trigger/branch'
 import {
   ENVIRONMENT_BLOCK_END,
   ENVIRONMENT_BLOCK_START,
@@ -255,10 +256,19 @@ on:
     workflows: ['${ENVIRONMENT_UNFILLED_SENTINEL}: name the CI workflow whose completion retriggers the loop']
     types: [completed]
 
-# One run per issue: a second label event while a run is in flight would put
-# two agents on one branch.
+# One run per branch: a second event while a run is in flight would put two
+# agents on one branch.
+#
+# Keyed on the branch rather than the issue number, because the issue number is
+# only on one of the two edges — \`github.event.issue\` is null on a
+# \`workflow_run\` event, so an issue-keyed group degrades to \`run_id\`, which is
+# unique per run and excludes nothing. That would leave the retrigger edge, the
+# one that can fire without a human, with no mutual exclusion at all. The
+# triggering CI run's \`head_branch\` is the agent branch, and the label event's
+# issue number names the same branch by construction, so both edges land in one
+# group.
 concurrency:
-  group: agent-implement-\${{ github.event.issue.number || github.run_id }}
+  group: agent-implement-\${{ github.event.workflow_run.head_branch || format('${AGENT_BRANCH_PREFIX}{0}', github.event.issue.number) || github.run_id }}
   cancel-in-progress: false
 
 jobs:

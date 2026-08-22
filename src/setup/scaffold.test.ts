@@ -181,6 +181,23 @@ describe('buildWorkflowScaffold', () => {
     expect(condition).toContain("github.event.label.name == 'ready-for-agent'")
   })
 
+  it('excludes concurrent runs on both edges, not just the human one', () => {
+    // `github.event.issue` is null on a workflow_run event, so an issue-keyed
+    // group degrades to `run_id` — unique per run, excluding nothing. That
+    // would leave the retrigger edge, the one that fires with no human on it,
+    // with no mutual exclusion at all. Both edges key on the agent branch.
+    const group = workflow.slice(
+      workflow.indexOf('concurrency:'),
+      workflow.indexOf('jobs:')
+    )
+
+    expect(group).toContain('github.event.workflow_run.head_branch')
+    expect(group).toContain(
+      "format('agent/issue-{0}', github.event.issue.number)"
+    )
+    expect(group).toContain('cancel-in-progress: false')
+  })
+
   it('gates the expensive job on a setup-free admission job', () => {
     // The whole reason the collapse to one verb did not swallow admission: a
     // spend gate that runs after `npm install` has already let the spend

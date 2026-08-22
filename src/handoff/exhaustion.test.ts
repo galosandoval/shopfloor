@@ -18,6 +18,7 @@ const attempt = (n: number, body = `attempt ${n} said this`) => ({
 
 const baseInput: ExhaustionReportInput = {
   issueNumber: 50,
+  repo: 'acme/widgets',
   branch: 'agent/issue-50',
   attempts: 3,
   maxAttempts: 3,

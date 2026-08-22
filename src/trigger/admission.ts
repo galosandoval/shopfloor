@@ -48,9 +48,10 @@
  * `agent:in-progress` by hand silently unlocks concurrent spending, and two
  * events landing together can both read it absent. This closes the window
  * without closing it entirely. GitHub's real mutual exclusion is a
- * `concurrency:` group in the consumer's workflow — the scaffolded one already
- * carries it — and that is where it stays. What changed is only that the
- * cheap narrowing in front of it now reads a signal that exists.
+ * `concurrency:` group in the consumer's workflow — the scaffolded one carries
+ * it, keyed on the agent branch so that it covers the machine edge too — and
+ * that is where it stays. What changed is only that the cheap narrowing in
+ * front of it now reads a signal that exists.
  */
 
 import type {

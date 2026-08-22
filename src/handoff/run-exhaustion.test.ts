@@ -146,9 +146,36 @@ describe('reportExhaustion', () => {
     )
   })
 
-  it('still reports when the trail cannot be read, saying so', async () => {
+  it('reports a branch that never carried a trail as empty, not as evidence lost', async () => {
+    // A 404 is what an absent directory *and* an empty one both look like
+    // here, so it is the ordinary first-attempt-exhausted case rather than a
+    // fault. Claiming part of the trail could not be read would put a lost
+    // evidence warning on the most-read comment the loop writes.
     routeExecStub([
-      { match: /contents/, response: { fails: 1, stderr: 'Not Found' } },
+      {
+        match: /contents/,
+        response: { fails: 1, stderr: 'gh: Not Found (HTTP 404)' }
+      },
+      {
+        match: /gh label list/,
+        response: { stdout: `${REQUIRED_LABELS.join('\n')}\n` }
+      }
+    ])
+
+    const result = await reportExhaustion({ ceiling, cwd: '/repo' })
+
+    expect(result).toMatchObject({ reported: true, attemptsRead: 0 })
+    expect(result.detail).toBeUndefined()
+    expect(commentBody()).toContain('No handoff documents were found')
+    expect(commentBody()).not.toContain('could not be read')
+  })
+
+  it('still reports when the trail cannot be read for a real reason, saying so', async () => {
+    routeExecStub([
+      {
+        match: /contents/,
+        response: { fails: 1, stderr: 'gh: Bad credentials (HTTP 401)' }
+      },
       {
         match: /gh label list/,
         response: { stdout: `${REQUIRED_LABELS.join('\n')}\n` }
@@ -158,13 +185,17 @@ describe('reportExhaustion', () => {
     const result = await reportExhaustion({ ceiling, cwd: '/repo' })
 
     // The ceiling is a fact whether or not the evidence for it survived, and
-    // an issue left unlabelled because a fetch 404'd is an issue the loop
+    // an issue left unlabelled because a fetch failed is an issue the loop
     // silently abandoned.
     expect(result).toMatchObject({ reported: true, attemptsRead: 0 })
-    expect(commentBody()).toContain('No handoff documents were found')
+    expect(commentBody()).toContain('could not be read')
+    expect(commentBody()).toContain('401')
   })
 
-  it('reports a repository missing the vocabulary rather than throwing at it', async () => {
+  it('writes nothing when the repository cannot carry the terminal label', async () => {
+    // Reporting once is enforced by the label being there next time, so a
+    // comment posted without one is posted again on every later event — a
+    // comment generator, reached by the one failure that is knowable up front.
     routeExecStub([
       { match: /contents/, response: { stdout: '' } },
       { match: /gh label list/, response: { stdout: '' } }
@@ -172,7 +203,10 @@ describe('reportExhaustion', () => {
 
     const result = await reportExhaustion({ ceiling, cwd: '/repo' })
 
-    expect(result).toMatchObject({ reported: true, transitioned: false })
+    expect(result).toMatchObject({ reported: false, transitioned: false })
     expect(result.detail).toContain('agent:exhausted')
+    expect(commands().some((command) => command.includes('comment'))).toBe(
+      false
+    )
   })
 })

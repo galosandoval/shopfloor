@@ -28,6 +28,7 @@
  */
 
 import { EXHAUSTED_LABEL } from '../issue-state/vocabulary'
+import type { SpentCeiling } from '../trigger/admission'
 
 /** One attempt's committed handoff, as read back off the branch. */
 export interface TrailDocument {
@@ -36,13 +37,16 @@ export interface TrailDocument {
   document: string
 }
 
-export interface ExhaustionReportInput {
-  issueNumber: number
-  branch: string
-  attempts: number
-  maxAttempts: number
-  /** The issue's labels now — where "already reported" is read. */
-  currentLabels: readonly string[]
+/**
+ * The refusal's own facts, plus the evidence read off the branch.
+ *
+ * It **extends** {@link SpentCeiling} rather than restating its fields: the two
+ * were the same clump copied across a module boundary, so a new ceiling fact
+ * meant editing the refusal, this input, and the shell that unpacked one into
+ * the other. Extending costs a type-only import from a module that is pure
+ * either way.
+ */
+export interface ExhaustionReportInput extends SpentCeiling {
   /** The trail, oldest attempt first. Empty is a fact the comment states. */
   trail: readonly TrailDocument[]
   /**
@@ -105,7 +109,14 @@ function renderExhaustionComment(
   const head = renderHead(input)
   const { kept, dropped } = fitTrail(
     input.trail,
-    EXHAUSTION_COMMENT_LIMIT - head.join('\n').length - TRAIL_SECTION_FRAME
+    // Floored at zero rather than trusted to be positive: the head is prose
+    // this file writes and is nowhere near the limit today, but a budget that
+    // went negative would reach `cutToFit` and post a comment whose entire
+    // trail section was the note saying it had been cut.
+    Math.max(
+      0,
+      EXHAUSTION_COMMENT_LIMIT - head.join('\n').length - TRAIL_SECTION_FRAME
+    )
   )
 
   return {
@@ -213,6 +224,7 @@ function fitTrail(
       // The newest attempt is never dropped for being long — it is the one the
       // ceiling was reached on. It is cut instead, keeping its head, where the
       // harness-authored facts are, and saying that it was cut.
+      //
       if (kept.length === 0) kept.unshift(cutToFit(attempt, budget))
       break
     }

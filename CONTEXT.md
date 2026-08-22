@@ -610,6 +610,16 @@ it, and what happens when the ceiling trips.
   mutual exclusion is a `concurrency:` group, which lives in consumer YAML and
   stays there; the scaffolded workflow already carries one. Reading the label
   is a cheap check in front of that lock, never a replacement for it.
+- **The scaffolded group is keyed on the branch, not the issue number**, and
+  that is what makes the previous point true on both edges. `github.event.issue`
+  is null on a `workflow_run` event, so an issue-keyed group falls through to
+  `github.run_id` — unique per run, excluding nothing — and the retrigger edge,
+  the one edge that fires with no human on it, would have had no lock at all
+  behind a narrowing that is explicitly not one. The triggering CI run's
+  `head_branch` is the agent branch, and the label event's issue number names
+  the same branch by construction (`AGENT_BRANCH_PREFIX`, interpolated into the
+  scaffold from the one place the convention is written down), so both edges
+  land in one group.
 - **The attempt ceiling lives on admission, not in `runPolicy`.** Design §4
   puts it "beside `idleMinutes` and `wallClockMinutes`"; it is not there,
   because admission runs before a run exists and never constructs a run policy.
