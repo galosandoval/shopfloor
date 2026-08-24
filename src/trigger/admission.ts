@@ -313,7 +313,74 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
 
   if (classification.ciFailure) verdict.ciFailure = classification.ciFailure
 
-  return verdict
+  return withRemovedPermissionFieldRefused(verdict)
+}
+
+/**
+ * The refusal shim for the one **result** field this sequence removed
+ * (shopfloor#51): `0.17.0`'s admitted verdict carried a top-level `permission`,
+ * and shopfloor#46 replaced it with {@link AdmissionAuthority}.
+ *
+ * A removed input can be refused by reading it; a removed output can only be
+ * refused by being read, so this is a throwing getter rather than a check. The
+ * failure it prevents is the same one every other shim here prevents, in the
+ * opposite direction: a consumer's glue asking for `verdict.permission` gets
+ * `undefined` from a plain deletion, and `undefined` in a `permission ===`
+ * comparison is a gate that quietly stops matching rather than a caller who
+ * finds out.
+ *
+ * **Non-enumerable, so nothing that walks the verdict trips it.** A spread and
+ * `util.inspect` skip it; only naming the field reaches the throw, which is
+ * exactly the caller this is for. The serialized edge is not covered by this
+ * and is refused separately — see {@link serializeAdmissionVerdict}.
+ */
+function withRemovedPermissionFieldRefused(
+  verdict: AdmissionVerdict
+): AdmissionVerdict {
+  return Object.defineProperty(verdict, 'permission', {
+    enumerable: false,
+    configurable: true,
+    get(): never {
+      throw new Error(
+        '`permission` was removed from the admitted verdict — read `authorizedBy` ' +
+          "instead: `{ via: 'permission', permission }` on the human edge, and " +
+          "`{ via: 'continuation' }` on the machine edge, which has no login to " +
+          'probe and so never had a permission to report.'
+      )
+    }
+  })
+}
+
+/**
+ * What a serialized `permission` says now. A sentence rather than `null`,
+ * because this value is read by the consumer least able to ask a type system
+ * anything.
+ */
+export const REMOVED_PERMISSION_FIELD =
+  'REMOVED in 1.0.0 — read `authorizedBy` instead: ' +
+  '`.authorizedBy.via` is "permission" or "continuation", and the human edge ' +
+  'carries `.authorizedBy.permission`.'
+
+/**
+ * The verdict as the one line of JSON `shopfloor-admit` prints — **carrying the
+ * removed `permission` field as a sentence saying so**, rather than omitting it.
+ *
+ * The throwing getter above reaches a JavaScript caller and nobody else, and
+ * the field's likeliest reader was never one: a workflow writing
+ * `fromJSON(steps.admit.outputs.verdict).permission` crosses a process boundary
+ * that leaves the getter behind, and would get `null` — the silent stop this
+ * package refuses everywhere else. A gate comparing that against `'write'` still
+ * fails closed, and a maintainer who prints it is told what to read instead.
+ *
+ * Only an admitted verdict gets it. A refusal never carried a `permission`, so
+ * stating one there would invent a removal that never happened.
+ */
+export function serializeAdmissionVerdict(verdict: AdmissionVerdict): string {
+  return JSON.stringify(
+    verdict.admitted
+      ? { ...verdict, permission: REMOVED_PERMISSION_FIELD }
+      : verdict
+  )
 }
 
 /**

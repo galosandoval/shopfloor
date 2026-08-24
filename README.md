@@ -312,37 +312,39 @@ Every optional input resolves the same way: **explicit input → environment
 variable → probe (`git`, `gh`) → package default**. Probes are lazy — a field
 you state, or one the environment already carries, never spawns a subprocess.
 
-| Field                            | Environment                 | Probe           | Default                                               |
-| -------------------------------- | --------------------------- | --------------- | ----------------------------------------------------- |
-| `issueNumber`                    | `ISSUE_NUMBER`              | —               | _required_                                            |
-| `claudeCodeOAuthToken`           | `CLAUDE_CODE_OAUTH_TOKEN`   | —               | _required_                                            |
-| `promptTemplate`                 | — (CLI only: `PROMPT_FILE`) | —               | _required_                                            |
-| `issueTitle`                     | `ISSUE_TITLE`               | `gh issue view` | —                                                     |
-| `branch`                         | `BRANCH`, `GITHUB_REF_NAME` | `git rev-parse` | —                                                     |
-| `repo`                           | `GITHUB_REPOSITORY`         | —               | unset; `gh` then infers it from the checkout          |
-| `pluginDirs`                     | `PLUGIN_DIRS` (comma-sep.)  | —               | the bundled skills plugin; stating a list replaces it |
-| `outputDir`                      | `OUTPUT_DIR`                | —               | OS tmpdir                                             |
-| `prDescriptionFile`              | —                           | —               | `pr_description.txt` under `outputDir`                |
-| `verifyReportFile`               | —                           | —               | `verify_report.md` under `outputDir`                  |
-| `transcriptFile`                 | —                           | —               | `transcript.jsonl` under `outputDir`                  |
-| `failureReasonFile`              | —                           | —               | `failure_reason.txt` under `outputDir`                |
-| `screenshotsDir`                 | `SCREENSHOTS_DIR`           | —               | `.agent/verify/issue-<N>`                             |
-| `attemptsDir`                    | `ATTEMPTS_DIR`              | —               | `.agent/attempts`                                     |
-| `handoffClaimsFile`              | —                           | —               | `handoff_claims.md` under `outputDir`                 |
-| `projectsDir`                    | `PROJECTS_DIR`              | —               | `~/.claude/projects`                                  |
-| `runPolicy.model`                | `MODEL`                     | —               | none — the Claude CLI's own default                   |
-| `runPolicy.maxTurns`             | `MAX_TURNS`                 | —               | `150`                                                 |
-| `runPolicy.idleMinutes`          | `IDLE_MINUTES`              | —               | `15`                                                  |
-| `runPolicy.wallClockMinutes`     | `WALL_CLOCK_MINUTES`        | —               | none — the run has no wall-clock ceiling              |
-| `runPolicy.gateCommand`          | `GATE_COMMAND`              | —               | none — the run is single-shot                         |
-| `runPolicy.maxIterations`        | `MAX_ITERATIONS`            | —               | `3` — reachable only with a gate stated               |
-| `runPolicy.cliVersion`           | `CLI_VERSION`               | —               | none — the running version is recorded, not compared  |
-| `runPolicy.cliVersionStrictness` | `CLI_VERSION_STRICTNESS`    | —               | `'warn'`                                              |
-| `runPolicy.requiredEnvVars`      | `REQUIRED_ENV_VARS`         | —               | `[]`                                                  |
+| Field                            | Environment                  | Probe | Default                                               |
+| -------------------------------- | ---------------------------- | ----- | ----------------------------------------------------- |
+| `claudeCodeOAuthToken`           | `CLAUDE_CODE_OAUTH_TOKEN`    | —     | _required_                                            |
+| `prompts`                        | — (path only: `PROMPT_FILE`) | —     | the per-phase shim this package ships                 |
+| `maxAttempts`                    | —                            | —     | `3`                                                   |
+| `pluginDirs`                     | `PLUGIN_DIRS` (comma-sep.)   | —     | the bundled skills plugin; stating a list replaces it |
+| `outputDir`                      | `OUTPUT_DIR`                 | —     | OS tmpdir                                             |
+| `prDescriptionFile`              | —                            | —     | `pr_description.txt` under `outputDir`                |
+| `verifyReportFile`               | —                            | —     | `verify_report.md` under `outputDir`                  |
+| `transcriptFile`                 | —                            | —     | `transcript.jsonl` under `outputDir`                  |
+| `failureReasonFile`              | —                            | —     | `failure_reason.txt` under `outputDir`                |
+| `screenshotsDir`                 | `SCREENSHOTS_DIR`            | —     | `.agent/verify/issue-<N>`                             |
+| `attemptsDir`                    | `ATTEMPTS_DIR`               | —     | `.agent/attempts`                                     |
+| `handoffClaimsFile`              | —                            | —     | `handoff_claims.md` under `outputDir`                 |
+| `projectsDir`                    | `PROJECTS_DIR`               | —     | `~/.claude/projects`                                  |
+| `runPolicy.model`                | `MODEL`                      | —     | none — the Claude CLI's own default                   |
+| `runPolicy.maxTurns`             | `MAX_TURNS`                  | —     | `150`                                                 |
+| `runPolicy.idleMinutes`          | `IDLE_MINUTES`               | —     | `15`                                                  |
+| `runPolicy.wallClockMinutes`     | `WALL_CLOCK_MINUTES`         | —     | none — the run has no wall-clock ceiling              |
+| `runPolicy.gateCommand`          | `GATE_COMMAND`               | —     | none — the run is single-shot                         |
+| `runPolicy.maxIterations`        | `MAX_ITERATIONS`             | —     | `3` — reachable only with a gate stated               |
+| `runPolicy.cliVersion`           | `CLI_VERSION`                | —     | none — the running version is recorded, not compared  |
+| `runPolicy.cliVersionStrictness` | `CLI_VERSION_STRICTNESS`     | —     | `'warn'`                                              |
+| `runPolicy.requiredEnvVars`      | `REQUIRED_ENV_VARS`          | —     | `[]`                                                  |
 
 `prompts` holds raw template **contents** keyed by phase, not paths.
 `PROMPT_FILE` is the one variable read off disk: `runPhase` reads that path and
 applies it to whichever phase the payload discovered.
+
+**The issue, its title, the branch, and the repository are not in the table**,
+and neither are their environment variables: the payload decides all four, and
+stating one now refuses the run by name. See
+[Removed inputs and what replaced them](#removed-inputs-and-what-replaced-them).
 
 The four output files take no environment variable either: state one to move it,
 or leave it and it lands under `outputDir`. That is where `OUTPUT_DIR` earns its
@@ -455,6 +457,9 @@ refusal is the migration: dropping the field quietly would leave a CI-set
 variable meaning nothing at all — no type error, no runtime error, just a run
 with less context than its operator believes it has. An empty value from either
 source still means "deliberately skip" and does not refuse, exactly as before.
+It is one row of the shim table —
+[Removed inputs and what replaced them](#removed-inputs-and-what-replaced-them)
+lists the rest, and they refuse the same way.
 
 A prompt template that still contains `{{STANDARDS_DIR}}` is refused by the next
 check rather than rendered — see below.
@@ -636,6 +641,57 @@ zero, because it is the outcome for the large majority of events that reach the
 loop and painting the repository red for those is how a check gets deleted.
 Every other refusal, and every failed run, exits non-zero. A failed run writes
 its reason to `failure_reason.txt` under `OUTPUT_DIR`.
+
+`shopfloor-implement <issue>` was the bin before `1.0.0`. It still ships, and it
+does one thing: prints what replaced it and exits non-zero. It is kept rather
+than deleted because `npx` answers a bin a package no longer declares by
+fetching whatever the registry has published under that name.
+
+### Removed inputs and what replaced them
+
+Nothing this package stops accepting is merely deleted. Every removed field,
+environment variable, result field, export, and bin **refuses by name and says
+what replaced it** — because a type removal only reaches a caller who typechecks
+against this package, while the binding that actually breaks is CI still
+exporting a variable, where a silent deletion leaves a run doing something its
+operator did not ask for.
+
+| Removed                                                                        | Refuses where                | What to do instead                                                                                                    |
+| ------------------------------------------------------------------------------ | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `issueNumber` / `ISSUE_NUMBER`                                                 | `runPhase`, before admission | Nothing — the payload names the issue                                                                                 |
+| `issueTitle` / `ISSUE_TITLE`                                                   | `runPhase`, before admission | Nothing — read from the issue once, so the prompt and the PR cannot disagree                                          |
+| `branch` / `BRANCH`                                                            | `runPhase`, before admission | Nothing — the branch is `agent/issue-<n>`; use `agentBranchForIssue` if your glue needs the name                      |
+| `repo`                                                                         | `runPhase`, before admission | Nothing — the payload's repository is the run's                                                                       |
+| `promptTemplate`                                                               | `runPhase`, before admission | `prompts: { implement }`, or `PROMPT_FILE`; unstated, the shipped shim runs                                           |
+| `standardsDir` / `STANDARDS_DIR`                                               | config resolution            | `pluginDirs` / `PLUGIN_DIRS`; coding standards live in the repository being worked on                                 |
+| `PermissionProbe.read`                                                         | `evaluateAuthorization`      | `answered` — renamed because `read` is also one of the permission levels being judged                                 |
+| `permission` on an admitted verdict                                            | reading the field            | `authorizedBy` — `{ via: 'permission', permission }` on the human edge, `{ via: 'continuation' }` on the machine edge |
+| `shopfloor-implement`                                                          | the bin itself               | `shopfloor-run-phase`, which takes no arguments                                                                       |
+| `runImplementAgent`, `runPreflight`, `postVerifyComment`, `runPluginDirsCheck` | calling the export           | `runPhase`; each shim names the pure half that still ships                                                            |
+
+Four things to know about the shape of these refusals:
+
+- **An empty variable never refuses, and an empty field does.** `ISSUE_NUMBER=`
+  is a line left behind while deleting the variable, and refusing there would
+  punish the fix. `{ issueNumber: '' }` is a key someone typed, so it refuses —
+  otherwise you meet a generic "no issue number" error instead of the migration.
+  A key carrying `undefined` is a spread, not a caller, and never refuses.
+- **A stated field and a set variable each refuse on their own.** A stated value
+  is not a way to mask a variable your workflow still exports.
+- **`GITHUB_REPOSITORY` and `GITHUB_REF_NAME` are not refused**, even though
+  `repo` and `branch` once resolved from them: the runner sets both on every
+  job, so refusing on their presence would refuse every run in GitHub Actions.
+- **A value that leaves the process is refused as a value.** `permission` is a
+  throwing getter, which reaches a JavaScript caller and stops at the process
+  boundary — so `shopfloor-admit`'s JSON carries the field with a sentence in it
+  instead, and a workflow reading `fromJSON(...).permission` sees what replaced
+  it rather than `null`. A gate comparing it against `'write'` still fails
+  closed.
+
+The four verbs above were removed from the public surface in the same sequence.
+They are internals `runPhase` composes; the pure halves they were paired with
+(`evaluatePreflight`, `buildVerifyComment`, `evaluatePluginDirs`) all still
+ship, and each shim names its own. They throw when called, not when imported.
 
 ### Trigger classification and admission
 
@@ -1502,7 +1558,9 @@ or `review` module has an obvious home:
   `evaluateIteration` / `runGate` (the inner loop's decision and the gate it
   decides on), and
   `resolveBundledPluginDir` (where the bundled plugin landed — filesystem work,
-  so it sits in the shell rather than in the configuration resolver).
+  so it sits in the shell rather than in the configuration resolver), and
+  `evaluateRemovedInputs` with the tables listing every input this package has
+  stopped accepting (internal — the refusals are the interface, not the table).
 - `src/guardrails/` — the run-policy contract (idle/wall-clock/max-turns
   resolvers), the pure CLI-version comparison, preflight refusal, authorization
   (`evaluateAuthorization` / `runAuthorization` — the spend gate, and the one
@@ -1586,11 +1644,25 @@ functions is covered; judgment-quality of what the agent produces is not.
 
 ## Versioning
 
-This package is pre-`1.0.0`, and `0.x` minors may carry behavior changes — the
-configuration surface (`RunPolicyConfig` in particular) is still moving.
-Semver's "minor is additive" guarantee does not apply below `1.0.0`, so
-**consumers should exact-pin** the version they tested — no `^`, no `~` —
-until `1.0.0`, and upgrade deliberately.
+This package is `1.0.0`, and semver applies from here: a breaking change is a
+major, and a minor is additive. That is the whole of what the number means —
+`1.0.0` is not a claim that the surface has stopped moving, it is the point at
+which moving it costs a major.
+
+The bump was taken for two reasons rather than because a milestone was reached.
+The loop now **writes to your repository during a run** — the branch, the draft
+PR, the issue's labels, and its own handoff commits — which is a capability the
+`0.x` releases did not have; and the surface change that came with it (four
+verbs collapsed into one) is the largest this package has made. Calling that a
+minor would have been the wrong signal in the one release where it mattered.
+
+**Consumers should still exact-pin** the version they tested — no `^`, no `~` —
+and upgrade deliberately, as the scaffolded workflow does for both `npx`
+invocations and the CLI install.
+
+Inputs removed by a major do not silently stop meaning anything: each one
+refuses by name and says what replaced it. See
+[Removed inputs and what replaced them](#removed-inputs-and-what-replaced-them).
 
 `CHANGELOG.md` is authoritative for what changed in a release, including
 behavior changes. Read it before every bump; the version number alone won't

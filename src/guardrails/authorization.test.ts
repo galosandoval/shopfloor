@@ -85,6 +85,24 @@ describe('evaluateAuthorization', () => {
       expect(verdict.reason).toContain('galosandoval')
     })
 
+    /**
+     * The refusal shim for the renamed discriminant (shopfloor#51). Both
+     * spellings of the old shape are checked, because the `false` one is the
+     * whole reason the shim reads presence rather than truth: it would
+     * otherwise refuse with "the probe answered nothing", which is a true
+     * sentence about a token that is working fine.
+     */
+    it.each([
+      ['read: true', { read: true, permission: 'admin' }],
+      ['read: false', { read: false, detail: 'HTTP 404' }]
+    ])('names the renamed `read` discriminant (%s)', (_name, probe) => {
+      const verdict = evaluateAuthorization(input({ probe: probe as never }))
+
+      if (verdict.authorized) throw new Error('expected a refusal')
+      expect(verdict.refusal).toBe('undetermined')
+      expect(verdict.reason).toContain('`answered`')
+    })
+
     it('refuses when no probe was taken at all', () => {
       const verdict = evaluateAuthorization(input({ probe: undefined }))
 

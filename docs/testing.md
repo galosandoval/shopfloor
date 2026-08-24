@@ -54,6 +54,15 @@ tests exist to prove the shell hands the right things across that boundary, so
 the boundary is what they stub. The orchestrator's are the model; `probeSetup`'s
 are the same shape one module over — a shell is a shell.
 
+**A bin's boundary is `process`.** A `*-cli.ts` file's exit code and its stderr
+are the whole of what it produces, so its test stubs `process.exit` and
+`console.error` — the same allowance one level out, since for a bin those _are_
+the process boundary. `implement-cli.test.ts` is the shape: it imports the
+module for its side effect and asserts the code it exited with and the name it
+printed. A stub of `exit` does not stop execution the way the real one does, so
+anything after it must still be safe to run (`readMaxAttempts` returns
+explicitly for exactly that reason).
+
 Prefer the real thing where the layout _is_ the thing under test:
 `run-plugin-dirs.test.ts` and `probe-setup.test.ts` both write fixture files
 into a temp directory rather than stubbing `fs`, because a stubbed filesystem

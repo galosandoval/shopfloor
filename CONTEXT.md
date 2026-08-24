@@ -22,7 +22,7 @@ harness concern rather than as a flat file list.
 | Directory              | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/phase/`           | **The verb** (shopfloor#47): the `runPhase` shell and every decision behind it — `resolvePhasePrompt` and the shipped per-phase shims (`DEFAULT_PHASE_PROMPTS`), `buildPullRequestFields`, `evaluatePhaseOutcome` — plus the two shells it owns that nothing else did: `ensureAgentBranch` / `pushAgentBranch` and `ensurePullRequest`, each locate-or-create                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `src/orchestration/`   | `runImplementAgent` (the phase's run, internal since shopfloor#47), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `ImplementAgentError`                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `src/orchestration/`   | `runImplementAgent` (the phase's run, internal since shopfloor#47), `resolveImplementConfig` (pure config resolution), `prepareClaudeInvocation` (pure CLI-argument assembly), `spawnClaude` (the subprocess with both runaway guards armed), `evaluateIteration` (pure inner-loop decision) and `runGate` (the shell that runs the consumer's quality gate), `resolveBundledPluginDir` (where the bundled skills plugin landed), `evaluateRemovedInputs` and the two shim tables every removed input is listed in (`removed-inputs.ts`, shopfloor#51), `ImplementAgentError`                                                                                                                                                                                                                                                                                                           |
 | `src/guardrails/`      | The run-policy contract and its resolvers (idle and wall-clock budgets, required env vars), the pure CLI-version comparison, preflight refusal, authorization (`evaluateAuthorization` / `runAuthorization` — the spend gate), plugin-directory validation (`evaluatePluginDirs` / `runPluginDirsCheck`), the unfilled-prompt refusal (`evaluatePromptReadiness`), the label-vocabulary refusal (`evaluateLabelVocabulary` / `runLabelVocabularyCheck`), the trajectory closure condition (`evaluateClosure` — the gate on the success path, shopfloor#48), the command policy and its `PreToolUse` hook script, verify-comment posting                                                                                                                                                                                                                                                 |
 | `src/observability/`   | Session transcript capture (for CI-artifact upload), the trajectory checker that grades a finished run over that transcript — the pure `checkTrajectory` / `formatScorecard`, the `resolveGatePatterns` that decides what counts as a gate run for a repository, and the `runTrajectoryCheck` shell; it still only _grades_, and what a run does about the grade is `guardrails/closure.ts` — and usage metering (`parseUsageEvent` / `accumulateUsage` / `summarizeUsage`, plus the `createStreamUsageReader` line adapter the spawn feeds bytes to). Advisory: it reports, it never fails a run                                                                                                                                                                                                                                                                                       |
 | `src/setup/`           | The setup doctor (`shopfloor-doctor`): the pure `evaluateSetup` / `formatSetupReport`, the pure `resolveDoctorConfig`, and the `probeSetup` shell. It judges the consumer's _configuration_ rather than a run, and writes nothing — read-only, idempotent, safe in CI. And over it the scaffolder (`shopfloor-init`): the pure `planInit` and the scaffold builders, and the `runInit` shell — the one thing in this package that writes to a consumer's repository                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -57,6 +57,16 @@ that decides nothing and only locates something — `resolveBundledPluginDir`,
 and the private `resolveCommandGuardHookPath` beside it — keeps `resolve*`,
 because the alternative is a `run*` name promising a verdict it does not
 produce. Anything that judges is either pure or does not belong here.
+
+**One pure verdict is not a plain value, and it is deliberate.**
+`evaluateAdmission` returns an admitted verdict carrying a non-enumerable
+throwing getter for the removed `permission` field
+(`withRemovedPermissionFieldRefused`). It is still pure — same input, same
+object, no IO, and the throw only fires on a read that no longer exists — but a
+caller destructuring it blindly is the one case where a verdict can raise. The
+refusal has to sit on the value because reading the field _is_ the call there is
+to intercept; the alternative is the silent `undefined` the whole rule exists to
+prevent.
 
 The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `command-guard-hook`, `buildVerifyComment` / `postVerifyComment`,
@@ -521,6 +531,36 @@ it, and what happens when the ceiling trips.
 - **Refuse early, cheaply.** A misconfigured run should fail before the spawn,
   naming the offending value. Preflight refusal exists for the same reason one
   level up: a PRD, a sub-issue, or an already-PR'd issue never starts.
+- **A removed input is refused, never ignored** (shopfloor#27, generalized by
+  shopfloor#51). Deleting a field from a type reaches only a caller who
+  typechecks against this package; the binding that actually breaks is a
+  consumer's CI still exporting the environment variable, and a plain deletion
+  there produces no type error, no runtime error, and a run doing something its
+  operator did not ask for. So every field and variable this package stops
+  accepting is listed in `orchestration/removed-inputs.ts`, read at the seam that
+  used to consume it, and refused by name with what replaced it. **Do not tidy
+  those reads away as dead code.**
+
+  The table holds the two shapes it can hold — a **config field** and an
+  **environment variable**, the two things a caller states as data. Everything
+  else this package stops accepting is refused **where it is read**, because
+  there is no call to intercept: a removed _result_ field is a throwing getter
+  (`permission` on the admitted verdict), and, since a getter does not survive
+  `JSON.stringify`, the serialized edge carries the same refusal as a value
+  (`serializeAdmissionVerdict`); a removed _probe discriminant_ is a presence
+  check on the old key (`PermissionProbe.read`, in `evaluateAuthorization`); a
+  removed _export_ is a function that throws (`removed-exports.ts`), since a
+  deleted one is `undefined is not a function` to a JavaScript caller; and a
+  removed _bin_ keeps a stub that exits non-zero (`shopfloor-implement`),
+  because `npx` answers a missing bin by fetching whatever the registry has
+  under that name. A new shape is refused somewhere; it is not exempt because
+  the table cannot hold it.
+
+  An empty _variable_ never refuses — `FOO=` is a consumer who has already
+  migrated. An empty _field_ does: `{ issueNumber: '' }` is a caller who still
+  believes the field is theirs, and dropping it means they meet a generic error
+  instead of the migration.
+
 - **Guardrails fail in the direction that costs least.** A missing command-guard
   hook script refuses the run — an unarmed guard on an autonomous run is worse
   than no run. The hook itself fails the other way: input it can't classify

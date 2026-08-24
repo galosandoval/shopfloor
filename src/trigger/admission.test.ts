@@ -3,6 +3,7 @@ import { IN_PROGRESS_LABEL } from '../issue-state/vocabulary'
 import {
   DEFAULT_MAX_ATTEMPTS,
   evaluateAdmission,
+  serializeAdmissionVerdict,
   type AdmissionInput
 } from './admission'
 import { agentBranchForIssue } from './branch'
@@ -56,6 +57,21 @@ describe('evaluateAdmission', () => {
       maxAttempts: DEFAULT_MAX_ATTEMPTS,
       authorizedBy: { via: 'permission', permission: 'admin' }
     })
+  })
+
+  /**
+   * The result-field shim (shopfloor#51). Asserted from both sides: reading the
+   * removed name has to say what replaced it, and every way of *copying* the
+   * verdict — which is what `shopfloor-admit` does on its way to stdout — has to
+   * stay unaffected by the shim.
+   */
+  it('refuses the removed `permission` field, naming what replaced it', () => {
+    const verdict = admission() as Record<string, unknown>
+
+    expect(() => verdict.permission).toThrow(/authorizedBy/)
+    expect(JSON.parse(JSON.stringify(verdict))).not.toHaveProperty('permission')
+    expect(Object.keys(verdict)).not.toContain('permission')
+    expect(() => ({ ...verdict })).not.toThrow()
   })
 
   it('admits the machine edge as a continuation, with no probe at all', () => {
@@ -334,5 +350,48 @@ describe('evaluateAdmission — the failed run it continues', () => {
     })
 
     expect(verdict).not.toHaveProperty('ciFailure')
+  })
+})
+
+/**
+ * The other half of the result-field shim. The throwing getter reaches a
+ * JavaScript caller and stops at the process boundary; a workflow reading
+ * `fromJSON(steps.admit.outputs.verdict).permission` is on the far side of it,
+ * and is the reader most likely to have written that line in the first place.
+ */
+describe('serializeAdmissionVerdict', () => {
+  it('carries the removed `permission` field as a sentence, not as nothing', () => {
+    const line = JSON.parse(serializeAdmissionVerdict(admission())) as Record<
+      string,
+      unknown
+    >
+
+    expect(line.permission).toContain('REMOVED in 1.0.0')
+    expect(line.permission).toContain('authorizedBy')
+  })
+
+  it('leaves the verdict itself unchanged around it', () => {
+    const line = JSON.parse(serializeAdmissionVerdict(admission())) as Record<
+      string,
+      unknown
+    >
+
+    expect(line.admitted).toBe(true)
+    expect(line.issueNumber).toBe(46)
+    expect(line.authorizedBy).toEqual({
+      via: 'permission',
+      permission: 'admin'
+    })
+  })
+
+  it('never gives a refusal a permission it never had', () => {
+    const refusal = evaluateAdmission({
+      classification: { triggered: false, reason: 'not a trigger' },
+      history: history()
+    })
+
+    expect(
+      JSON.parse(serializeAdmissionVerdict(refusal)) as Record<string, unknown>
+    ).not.toHaveProperty('permission')
   })
 })

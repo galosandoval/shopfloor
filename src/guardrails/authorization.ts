@@ -160,6 +160,16 @@ export function evaluateAuthorization(
     return undetermined(actor, repo, 'the permission was never probed')
   }
 
+  if (checkRemovedDiscriminant(input.probe)) {
+    return undetermined(
+      actor,
+      repo,
+      'the probe states `read` rather than `answered` — that discriminant was ' +
+        'renamed, because `read` is also one of the permission levels being ' +
+        'judged. Rename the field; the payload is otherwise unchanged'
+    )
+  }
+
   if (!input.probe.answered) {
     return undetermined(actor, repo, input.probe.detail)
   }
@@ -191,6 +201,22 @@ export function evaluateAuthorization(
       `${SPENDING_PERMISSIONS.join(', ')}. Ask a maintainer to grant ` +
       `@${actor} write access, or to trigger the run themselves.`
   }
+}
+
+/**
+ * The refusal shim for {@link PermissionProbe}'s old discriminant — `read`
+ * before it was renamed to `answered` (shopfloor#51 lists the rest of the
+ * removals in `orchestration/removed-inputs.ts`; this one is not a config field,
+ * so it is refused where it is read).
+ *
+ * **Presence, not truth.** A probe still shaped the old way is detected by the
+ * key being there at all: `{ read: false, detail }` is the very case that would
+ * otherwise pass unnoticed, since it lands in the un-answered branch and refuses
+ * with "the probe answered nothing" — a true sentence about the wrong problem,
+ * pointing a maintainer at a token that is working fine.
+ */
+function checkRemovedDiscriminant(probe: PermissionProbe): boolean {
+  return 'read' in probe
 }
 
 /**

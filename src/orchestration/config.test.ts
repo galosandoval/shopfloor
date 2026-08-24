@@ -33,19 +33,25 @@ describe('resolveImplementConfig', () => {
       expect(config.claudeCodeOAuthToken).toBe(TOKEN)
     })
 
-    it('takes the issue number from the environment when the input omits it', () => {
-      const config = resolveImplementConfig(
-        baseInput({ issueNumber: undefined }),
-        baseEnv({ ISSUE_NUMBER: '77' })
-      )
-
-      expect(config.issueNumber).toBe('77')
+    /**
+     * The three the payload owns take no environment fallback since
+     * shopfloor#51: the variables that used to state them are refused by
+     * `runPhase`, and a fallback still reading them here would be a second,
+     * quieter answer to a settled question.
+     */
+    it('does not resolve the issue number from ISSUE_NUMBER', () => {
+      expect(() =>
+        resolveImplementConfig(
+          baseInput({ issueNumber: undefined }),
+          baseEnv({ ISSUE_NUMBER: '77' })
+        )
+      ).toThrow(/webhook payload/)
     })
 
-    it('names the issue number when it is nowhere to be found', () => {
+    it('names where the issue number comes from when there is none', () => {
       expect(() =>
         resolveImplementConfig(baseInput({ issueNumber: undefined }), baseEnv())
-      ).toThrow(/ISSUE_NUMBER/)
+      ).toThrow(/GITHUB_EVENT_PATH/)
     })
 
     it('names the OAuth token when it is nowhere to be found', () => {
@@ -83,13 +89,17 @@ describe('resolveImplementConfig', () => {
       expect(config.branch).toBe('explicit-branch')
     })
 
-    it('prefers BRANCH over GITHUB_REF_NAME', () => {
+    // BRANCH is refused at `runPhase`, the only public entrance, so a config
+    // resolved here can never have carried one. Named for the branch that
+    // results rather than for the variable that did not: this asserts the
+    // resolved value, and the refusal is `run-phase.test.ts`'s to prove.
+    it('resolves the branch to GITHUB_REF_NAME whatever else the environment carries', () => {
       const config = resolveImplementConfig(
         baseInput(),
         baseEnv({ BRANCH: 'env-branch', GITHUB_REF_NAME: 'ref-branch' })
       )
 
-      expect(config.branch).toBe('env-branch')
+      expect(config.branch).toBe('ref-branch')
     })
 
     it('leaves the branch unresolved for the git probe when nothing states one', () => {
@@ -113,13 +123,13 @@ describe('resolveImplementConfig', () => {
       expect(config.issueTitle).toBeUndefined()
     })
 
-    it('takes the issue title from ISSUE_TITLE when set', () => {
+    it('leaves the issue title for the gh probe even when ISSUE_TITLE is set', () => {
       const config = resolveImplementConfig(
         baseInput(),
         baseEnv({ ISSUE_TITLE: 'Add pantry filter' })
       )
 
-      expect(config.issueTitle).toBe('Add pantry filter')
+      expect(config.issueTitle).toBeUndefined()
     })
   })
 
@@ -149,16 +159,24 @@ describe('resolveImplementConfig', () => {
       ).toThrow(/STANDARDS_DIR.*PLUGIN_DIRS/s)
     })
 
+    /**
+     * The two halves are not symmetrical, and the asymmetry is the rule. A
+     * variable emptied to `STANDARDS_DIR=` is a workflow mid-deletion; a field
+     * still spelled out in a config object is a caller who has not deleted
+     * anything, whatever they left in it.
+     */
+    it('refuses a field stated empty — the key is the statement, not its value', () => {
+      expect(() =>
+        resolveImplementConfig(statingStandardsDir(''), baseEnv())
+      ).toThrow(/standardsDir.*pluginDirs/s)
+    })
+
     it.each([
-      ['a stated empty string', statingStandardsDir(''), baseEnv()],
       ['no field at all', baseInput(), baseEnv()],
       ['an empty STANDARDS_DIR', baseInput(), baseEnv({ STANDARDS_DIR: '' })]
-    ])(
-      'resolves a run with %s — empty still means "deliberately skip"',
-      (_name, input, env) => {
-        expect(resolveImplementConfig(input, env).issueNumber).toBe('123')
-      }
-    )
+    ])('resolves a run with %s', (_name, input, env) => {
+      expect(resolveImplementConfig(input, env).issueNumber).toBe('123')
+    })
   })
 
   describe('plugin directories', () => {

@@ -1,6 +1,6 @@
 {
   "name": "@galosandoval/shopfloor",
-  "version": "0.18.0",
+  "version": "1.0.0",
   "description": "Harness for a GitHub-issue-driven SDLC agent loop: spawn Claude Code headlessly to implement an issue as a draft PR, with runaway guards, preflight refusal, and verify-comment posting.",
   "type": "module",
   "license": "MIT",
@@ -40,7 +40,8 @@
     "shopfloor-doctor": "./dist/doctor-cli.js",
     "shopfloor-init": "./dist/init-cli.js",
     "shopfloor-authorize": "./dist/authorize-cli.js",
-    "shopfloor-admit": "./dist/admit-cli.js"
+    "shopfloor-admit": "./dist/admit-cli.js",
+    "shopfloor-implement": "./dist/implement-cli.js"
   },
   "files": [
     "dist",

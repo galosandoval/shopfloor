@@ -42,6 +42,10 @@ import {
   type RunImplementAgentConfig
 } from '../orchestration/config'
 import { ImplementAgentError } from '../orchestration/implement-error'
+import {
+  requireNoRemovedInputs,
+  PAYLOAD_OWNED_INPUTS
+} from '../orchestration/removed-inputs'
 import type { ClosureBlock } from '../guardrails/closure'
 import {
   runImplementAgent,
@@ -67,6 +71,10 @@ const execFileAsync = promisify(execFile)
  * issue, its title, the branch, and the repository. Passing them would be
  * stating what the event already says, which is the two-components-one-identity
  * shape this verb exists to collapse.
+ *
+ * Removed from the type **and refused at runtime**, along with the environment
+ * variables that used to state them: see `removed-inputs.ts` for why a removal
+ * that only reaches the type checker is not a removal.
  */
 export interface RunPhaseInput extends Omit<
   RunImplementAgentConfig,
@@ -142,6 +150,13 @@ export async function runPhase(
 ): Promise<RunPhaseResult> {
   const env = input.env ?? process.env
   const cwd = input.cwd ?? process.cwd()
+
+  // First, before admission has judged anything and before a token is spent
+  // (shopfloor#51): a halfway-migrated caller states exactly the values this
+  // verb is about to decide for itself. `input.env` rather than `process.env`,
+  // for the reason every decision here takes its environment as a parameter —
+  // a caller who states one is stating the whole of the run's environment.
+  requireNoRemovedInputs(input, env, PAYLOAD_OWNED_INPUTS)
 
   const admission = await runAdmission({
     payload: input.payload,

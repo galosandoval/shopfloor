@@ -23,9 +23,13 @@ reading at the first sentence.
 `npx changeset` — CI fails a PR that has none. A PR that deliberately ships
 nothing — docs, CI config, tests — records an explicit empty one,
 `npx changeset --empty`, so "this doesn't release" is on the record rather than
-inferred from silence. Pre-`1.0.0`: write the body for a consumer deciding
-whether the bump is safe, naming new failure modes and what breaks, not just
-what was added.
+inferred from silence. Write the body for a consumer deciding whether the bump
+is safe, naming new failure modes and what breaks, not just what was added.
+
+Since `1.0.0`, semver means what it says: a breaking change is a major, and
+"minor is additive" is a promise rather than the caveat it was pre-`1.0.0`.
+Consumers still exact-pin, and that is their call, not a licence to break a
+minor.
 
 **One merge releases.** Before merging to `main`, run `npm run version:packages`
 and commit what it writes — the version bump and the `CHANGELOG.md` entry ride
@@ -77,7 +81,21 @@ outside `attemptsDir`, and always path-limited so nothing else in the working
 tree is swept into a bookkeeping commit.
 
 **Refusals write nothing** — except preflight's, whose refusal _is_ a judgement
-about the issue. A run creates no labels, ever.
+about the issue, and a spent attempt ceiling's, which is the loop's terminal
+state. A run creates no labels, ever.
+
+**What it stops accepting, it refuses by name.** A field, an environment
+variable, a result field, an export, or a bin that is removed ships a shim that
+names it and says what replaced it. Fields and variables — the two things a
+caller states as data — are listed in `orchestration/removed-inputs.ts`;
+everything else is refused where it is read, because there is no call to
+intercept. A removed result field is a throwing getter, plus a spelled-out value
+on the serialized edge a getter cannot cross; a removed export is a function
+that throws; a removed bin is a stub that exits non-zero. A shape the table
+cannot hold is not exempt — it is refused somewhere else.
+[`CONTEXT.md`](./CONTEXT.md#invariants-worth-knowing-before-you-change-something)
+has why a type-only removal is not one. Deleting the read is a regression, not
+cleanup.
 
 ## What it deliberately does not own
 
@@ -97,18 +115,25 @@ Each was decided against; don't add them.
 - **Opinionated coding standards for consumers.** `standardsDir` was removed
   rather than repointed (#27).
 - **Consumer env-var names and scripts** — `requiredEnvVars` and the doctor's
-  `requiredSecrets` are caller-stated. The six label names are the one
-  exception, and they are package-owned outright: fixed names can be guaranteed,
+  `requiredSecrets` are caller-stated. **The class is broken, not intact with an
+  exception**: the six label names are package-owned outright, and two of them —
+  `ready-for-agent` and `ready-for-human` — name states in the consumer's own
+  process rather than anything this package runs. Fixed names can be guaranteed;
   configurable ones could only be validated against bindings this package does
-  not own. That is a vocabulary the package owns, verifies, and refuses on — not
-  licence to start naming anything else of the consumer's.
-- **CI glue** — the caller keeps the checkout, the exit code, and the setup-free
-  admission job in front of `runPhase`. `init` scaffolds a workflow template as a
-  starting point the consumer then owns; nothing reads it back or keeps it in
-  sync. The public surface is one verb: `runImplementAgent`, `runPreflight`,
-  `postVerifyComment`, and `runPluginDirsCheck` are internals it composes, and
-  the sequencing between them — the thing that was actually the interface — is
-  now typed and tested rather than written in consumer bash.
+  not own, and one consumer spelling a label differently would silently undo the
+  state machine. So the rule is narrower than "never name the consumer's
+  things": a vocabulary this package owns, verifies, and refuses on, and no
+  second one without the same argument being made again.
+- **CI glue** — the caller keeps the checkout and the exit code, plus the
+  setup-free admission job in front of `runPhase`. **Everything else moved
+  in**: the harness owns the branch, the pull request, and the issue's state
+  during a run, and `init` scaffolds the workflow template that wires the two
+  jobs together — a starting point the consumer then owns, since nothing reads
+  it back or keeps it in sync. The public surface is one verb:
+  `runImplementAgent`, `runPreflight`, `postVerifyComment`, and
+  `runPluginDirsCheck` are internals it composes, and the sequencing between
+  them — the thing that was actually the interface — is now typed and tested
+  rather than written in consumer bash.
 - **The content of the agent's half of a handoff** — read back from a file the
   agent wrote, quoted verbatim, and marked as claims rather than restated as
   fact.

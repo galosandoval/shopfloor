@@ -54,6 +54,7 @@ import { runPluginDirsCheck } from '../guardrails/run-plugin-dirs'
 import { runLabelVocabularyCheck } from '../guardrails/run-label-vocabulary'
 import { resolveBundledPluginDir } from './bundled-plugin'
 import { ImplementAgentError } from './implement-error'
+import { nameRemovedInput } from './removed-inputs'
 import {
   resolveImplementConfig,
   type ResolvedImplementConfig,
@@ -681,7 +682,9 @@ function probeBranch(cwd: string): string {
   // A detached HEAD names no branch, and the agent's commits need one.
   if (!branch || branch === 'HEAD') {
     throw new ImplementAgentError(
-      'No branch to implement on — pass `branch`, set BRANCH, or check out a branch.'
+      'No branch to implement on — check out a branch. (A run reached through ' +
+        `\`runPhase\` is already on \`agent/issue-<n>\`; stating ${nameRemovedInput('branch')} ` +
+        'now refuses, so this is the local-run path.)'
     )
   }
   return branch
@@ -713,8 +716,11 @@ function probeIssueTitle(
   )
   if (!title) {
     throw new ImplementAgentError(
-      `Could not read the title of issue #${issueNumber} via gh — pass ` +
-        '`issueTitle` or set ISSUE_TITLE.'
+      `Could not read the title of issue #${issueNumber} via gh — the run ` +
+        'needs it for the prompt. Give `gh` a token that can read the ' +
+        "repository's issues. (Reached only by a caller driving this internal " +
+        'run directly: `runPhase` reads the title itself and hands it in, and ' +
+        `stating ${nameRemovedInput('issueTitle')} now refuses.)`
     )
   }
   return title
