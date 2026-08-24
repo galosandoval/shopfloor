@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { reportExhaustion } from './handoff/run-exhaustion'
+import { EXHAUSTED_LABEL } from './issue-state/vocabulary'
+import type { SpentCeiling } from './trigger/admission'
 import { runAdmission } from './trigger/run-admission'
 
 /**
@@ -31,6 +34,14 @@ import { runAdmission } from './trigger/run-admission'
  * zero; every other refusal — a stranger, an unreadable token, a run already in
  * flight, a spent ceiling — exits non-zero, because those are judgements about
  * a real trigger and a caller who ignores stdout must still be stopped by them.
+ *
+ * **One refusal writes, and only one** (shopfloor#50). `runAdmission` still
+ * writes nothing on any verdict; this bin acts on the `exhausted` one, because
+ * the ceiling is the outer loop's **terminal state** and this job is the last
+ * place it is observed — the expensive job is gated on the verdict, so nothing
+ * downstream exists to land `agent:exhausted` or post the attempt trail. Why
+ * that is not the drive-by write the no-write rule protects against is on
+ * `reportExhaustion`.
  */
 main().catch((error: unknown) => {
   // Admission failing is itself an undetermined verdict, and it is printed in
@@ -63,9 +74,33 @@ async function main() {
 
   console.error(`REFUSED (${verdict.refusal}): ${verdict.reason}`)
 
+  // **The one write this job makes** (shopfloor#50). A spent ceiling is the
+  // loop's terminal state, and this job is where it is observed: the expensive
+  // job is gated on the verdict above, so nothing downstream ever runs to land
+  // `agent:exhausted` or post the trail. Reported after the verdict is printed,
+  // so a caller's glue gets its answer whatever the report does, and the
+  // report itself is idempotent — the label is what says it already happened.
+  if (verdict.refusal === 'exhausted' && verdict.ceiling) {
+    await report(verdict.ceiling)
+  }
+
   if (verdict.refusal !== 'not-a-trigger') {
     process.exit(1)
   }
+}
+
+/** Land the terminal state, saying what of it reached the issue. */
+async function report(ceiling: SpentCeiling): Promise<void> {
+  const result = await reportExhaustion({ ceiling })
+
+  console.error(
+    result.reported
+      ? `Posted ${result.attemptsPosted} of ${result.attemptsRead} attempt ` +
+          `handoff(s) on #${ceiling.issueNumber} ` +
+          `and ${result.transitioned ? 'labeled it' : 'could not label it'} ` +
+          `${EXHAUSTED_LABEL}${result.detail ? ` (${result.detail})` : ''}.`
+      : `Left #${ceiling.issueNumber} as it is: ${result.detail ?? 'no reason given'}`
+  )
 }
 
 /**

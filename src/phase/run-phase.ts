@@ -52,7 +52,8 @@ import type { Phase, TriggerEdge } from '../trigger/classify'
 import { runAdmission } from '../trigger/run-admission'
 import { writeHandoff, type WriteHandoffInput } from '../handoff/run-handoff'
 import type { AttemptsTrailLocation } from '../handoff/git'
-import { stripAttempts } from '../handoff/strip-attempts'
+import { closeLoop } from '../handoff/close-loop'
+import { reportExhaustion } from '../handoff/run-exhaustion'
 import { evaluatePhaseOutcome } from './outcome'
 import { resolvePhasePrompt } from './prompts'
 import { ensureAgentBranch, headSha, pushAgentBranch } from './run-branch'
@@ -118,14 +119,17 @@ export type RunPhaseResult =
 /**
  * Run whatever phase this event starts.
  *
- * **Refusals write nothing, except the one that already did.** An admission
- * refusal — a stranger, an unreadable probe, a run already in flight, a spent
- * ceiling — leaves the issue exactly as it found it, the same rule
- * `runAdmission` follows: a refusal that labelled would hand any drive-by
- * triager a way to make the harness write to the repository, and the in-flight
- * case would have this run edit an issue another run owns. Preflight is the
- * exception because its refusal *is* a judgement about the issue, and it has
- * applied the table's `refused` row and commented before returning.
+ * **Refusals write nothing, with two exceptions, and both are judgements about
+ * the issue rather than about whoever tripped them.** An admission refusal — a
+ * stranger, an unreadable probe, a run already in flight — leaves the issue
+ * exactly as it found it, the same rule `runAdmission` follows: a refusal that
+ * labelled would hand any drive-by triager a way to make the harness write to
+ * the repository, and the in-flight case would have this run edit an issue
+ * another run owns. Preflight is the first exception, because its refusal *is*
+ * a judgement about the issue, and it has applied the table's `refused` row and
+ * commented before returning. A **spent ceiling** is the second (shopfloor#50):
+ * it is the outer loop's terminal state, derived from history this package
+ * wrote, and it lands `agent:exhausted` with the attempt trail as the comment.
  *
  * **A failed run still transitions.** The outcome is applied and the error
  * rethrown, so a caller's CI glue keeps its non-zero exit while the issue
@@ -146,6 +150,24 @@ export async function runPhase(
   })
 
   if (!admission.admitted) {
+    // **The spent ceiling is the one refusal that leaves a state behind**
+    // (shopfloor#50). It is normally observed by the `shopfloor-admit` job,
+    // which gates this one out of existence — this is the same call for a
+    // caller that reached the verb by another path, and it is idempotent, so
+    // the two can never both post. Every other refusal still writes nothing.
+    if (admission.refusal === 'exhausted' && admission.ceiling) {
+      await reportExhaustion({
+        ceiling: admission.ceiling,
+        // Stated here rather than left to the shell's own env fallback: a
+        // caller who moved the trail told *this* verb where it is, and a
+        // report that looked in the default directory would post an empty
+        // trail for an issue that has one.
+        ...(input.attemptsDir ? { attemptsDir: input.attemptsDir } : {}),
+        env,
+        cwd
+      })
+    }
+
     return { ran: false, refusal: admission.refusal, reason: admission.reason }
   }
 
@@ -232,7 +254,7 @@ export async function runPhase(
   // point as "where the screenshots are stripped", and that place does not
   // exist. When it does, it belongs on this line, for the same reason: a
   // deletion that misses the pushed commit leaves the branch carrying it.
-  await stripAttemptsBestEffort({ attemptsDir: config.attemptsDir, cwd })
+  await closeLoopBestEffort({ attemptsDir: config.attemptsDir, cwd })
 
   const { pullRequest, verifyCommentPosted } = await handOver({
     issue,
@@ -412,7 +434,12 @@ async function writeHandoffBestEffort(
       failure: error instanceof Error ? error.message : String(error),
       ...(implementError?.findings
         ? { scorecard: implementError.findings }
-        : {})
+        : {}),
+      // **What it cost rides out with what it did** (shopfloor#50). The ceiling
+      // bounds attempts; the argument for raising or lowering it is in tokens,
+      // and the exhausted state posts this trail at exactly the moment somebody
+      // is making that call. Absent means the run never spawned.
+      ...(implementError?.usage ? { usage: implementError.usage } : {})
     })
 
     // **Said as a consequence, not as a step that did not happen.** A handoff
@@ -435,16 +462,25 @@ async function writeHandoffBestEffort(
   }
 }
 
-/** The success path's strip, whose own failure is reported and then dropped. */
-async function stripAttemptsBestEffort(
+/**
+ * The success path's closing commit, whose own failure is reported and then
+ * dropped — and said as a consequence rather than as a step that did not
+ * happen: a branch whose head is not marked closed answers its next CI failure
+ * with another attempt (shopfloor#50).
+ */
+async function closeLoopBestEffort(
   input: AttemptsTrailLocation
 ): Promise<void> {
   try {
-    const result = await stripAttempts(input)
-    if (result.detail)
-      console.warn(`Could not strip the trail: ${result.detail}`)
+    const result = await closeLoop(input)
+    if (!result.closed) {
+      console.warn(
+        `Could not close the loop on this branch (${result.detail ?? 'no reason given'}) ` +
+          '— a CI failure on top of this run will read as another attempt.'
+      )
+    }
   } catch (error) {
-    console.warn(`Could not strip the trail: ${String(error)}`)
+    console.warn(`Could not close the loop on this branch: ${String(error)}`)
   }
 }
 

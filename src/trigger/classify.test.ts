@@ -10,12 +10,18 @@
  */
 
 import { REQUIRED_LABELS } from '../issue-state/vocabulary'
-import { classifyTrigger, PHASE_LABELS, PHASES } from './classify'
+import {
+  classifyTrigger,
+  LOOP_CLOSED_TRAILER,
+  PHASE_LABELS,
+  PHASES
+} from './classify'
 import issuesLabeled from './fixtures/issues-labeled.json'
 import issuesLabeledInProgress from './fixtures/issues-labeled-in-progress.json'
 import issuesOpened from './fixtures/issues-opened.json'
 import workflowRunFailed from './fixtures/workflow-run-failed.json'
 import workflowRunFailedFork from './fixtures/workflow-run-failed-fork.json'
+import workflowRunFailedHousekeeping from './fixtures/workflow-run-failed-housekeeping.json'
 import workflowRunFailedHumanBranch from './fixtures/workflow-run-failed-human-branch.json'
 import workflowRunFailedHumanCommit from './fixtures/workflow-run-failed-human-commit.json'
 import workflowRunSucceeded from './fixtures/workflow-run-succeeded.json'
@@ -125,6 +131,48 @@ describe('classifyTrigger — the machine edge', () => {
 
     expect(verdict.triggered).toBe(true)
     expect(verdict).not.toHaveProperty('ciFailure')
+  })
+
+  it("refuses the harness's own loop-closing commit", () => {
+    // shopfloor#50: the strip commit carries the same bot authorship as the
+    // work beneath it, so without the trailer a failure on top of a *finished*
+    // run would read as another failed attempt and spend one answering it.
+    const verdict = classifyTrigger(workflowRunFailedHousekeeping)
+
+    expect(verdict.triggered).toBe(false)
+    expect(verdict).toMatchObject({
+      reason: expect.stringContaining(LOOP_CLOSED_TRAILER)
+    })
+  })
+
+  it('still admits a failure on top of a handoff commit, which carries no trailer', () => {
+    // The other half of the same decision: a failed attempt's push is exactly
+    // what the loop iterates on, and it is committed by the same identity.
+    const run = {
+      ...workflowRunFailed.workflow_run,
+      head_commit: {
+        ...workflowRunFailed.workflow_run.head_commit,
+        message: 'chore(shopfloor): handoff for attempt 1 on issue #46'
+      }
+    }
+
+    expect(
+      classifyTrigger({ ...workflowRunFailed, workflow_run: run }).triggered
+    ).toBe(true)
+  })
+
+  it('reads the trailer on its own line, so a commit merely quoting it still triggers', () => {
+    const run = {
+      ...workflowRunFailed.workflow_run,
+      head_commit: {
+        ...workflowRunFailed.workflow_run.head_commit,
+        message: `feat: explain why "${LOOP_CLOSED_TRAILER}" ends the loop`
+      }
+    }
+
+    expect(
+      classifyTrigger({ ...workflowRunFailed, workflow_run: run }).triggered
+    ).toBe(true)
   })
 
   it('refuses a fork whose branch is named like the harness’s', () => {

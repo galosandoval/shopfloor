@@ -302,6 +302,10 @@ real tokens, and those are the runs whose cost is least visible. It is
 `undefined` only for a failure that refused before the spawn, where the answer
 is genuinely nothing.
 
+That number is also what every failed attempt's handoff states, so the trail a
+spent ceiling posts says what the loop cost as well as what it tried — see
+[the handoff trail](#the-handoff-trail).
+
 ### Resolution order
 
 Every optional input resolves the same way: **explicit input → environment
@@ -685,6 +689,14 @@ machine edge, and both are load-bearing rather than tidy:
   must not answer — you are already at the keyboard. The author is fixed, not
   configurable, for the reason the label vocabulary is: a consumer naming their
   own identity here turns every push they make into a retrigger.
+- The head commit must not be this package's own **loop-closing** commit. The
+  strip that ends a successful run is authored as the agent like the work under
+  it, and it carries a `Shopfloor-Loop: closed` trailer (`LOOP_CLOSED_TRAILER`,
+  exported) on its own line. The asymmetry is the loop: a failed attempt's
+  handoff commit **must** retrigger, since that is how the loop iterates, while
+  a finished run's must not — that branch has an open pull request and a human
+  on it, and answering CI red there would spend an attempt on work nobody asked
+  the agent to keep, starting cold, since the strip is what removed the trail.
 
 #### The admission callable
 
@@ -742,13 +754,13 @@ it refuses on an unstated head repository too.
 
 A refusal carries a `reason` and one of five kinds:
 
-| `refusal`       | Means                                                             |
-| --------------- | ----------------------------------------------------------------- |
-| `not-a-trigger` | Nothing happened — not an event the loop runs on                  |
-| `not-permitted` | The actor may not spend on this repository                        |
-| `undetermined`  | A probe answered nothing usable — refused, not assumed            |
-| `in-flight`     | The issue is labeled `agent:in-progress` — a run is already going |
-| `exhausted`     | The issue has already had its attempts                            |
+| `refusal`       | Means                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------- |
+| `not-a-trigger` | Nothing happened — not an event the loop runs on                                       |
+| `not-permitted` | The actor may not spend on this repository                                             |
+| `undetermined`  | A probe answered nothing usable — refused, not assumed                                 |
+| `in-flight`     | The issue is labeled `agent:in-progress` — a run is already going                      |
+| `exhausted`     | The issue has already had its attempts — see [the terminal state](#the-terminal-state) |
 
 **The exit code splits, and the split is deliberate.** `not-a-trigger` exits
 zero: it is by far the most common outcome, and painting the repository red for
@@ -763,7 +775,9 @@ runs the permission probe, because there is no login on it to ask about.
 
 **It writes nothing**, on any verdict — the same rule the spend gate follows,
 and for the same reason: a refusal that labelled or commented would hand any
-drive-by triager a way to make the harness write to your repository.
+drive-by triager a way to make the harness write to your repository. The
+`shopfloor-admit` **bin** makes exactly one write, on the `exhausted` verdict;
+see [the terminal state](#the-terminal-state) below.
 
 **It refuses on uncertainty**, like the spend gate it wraps and unlike every
 other guard here. An unreadable issue is not "probably no attempts" — it is not
@@ -1187,6 +1201,12 @@ between two wrong approaches.
   empty: a kill and an agent that skipped it look identical from here, and how
   the attempt ended is already stated from the error the run threw.
 
+Each document also states **what that attempt spent** — the four token buckets
+and the cost, off `usage` (below), with `source` saying whether the CLI reported
+the total or the harness observed part of it. The ceiling bounds attempts; the
+argument for raising or lowering it is in tokens, and the trail is where a human
+reads both at once.
+
 Everything is bounded and the bounds are stated: `HANDOFF_LOG_TAIL_LIMIT`,
 `HANDOFF_DIFF_LIMIT`, and `HANDOFF_CLAIMS_LIMIT` are exported constants, and a
 truncated section says it was truncated. Unbounded logs are how a handoff
@@ -1194,7 +1214,10 @@ becomes context rot one iteration at a time. A log fetch that fails degrades the
 document to URL-only rather than blocking the loop.
 
 **The trail is stripped on success**, in the commit the successful run is about
-to push — the lifecycle the verify screenshots follow. It is **kept** on the
+to push — the lifecycle the verify screenshots follow. That commit is also what
+marks the loop closed on the branch, so it is made even when there was no trail
+to strip (empty, in that case): the mark has to be on the head commit, and a
+first-attempt success has nothing to delete. It is **kept** on the
 exhausted terminal state — the PR stays open and the trail is the best account
 anyone has of what went wrong — and kept on an ordinary failure, because the
 next attempt is the reason it was written.
@@ -1207,6 +1230,40 @@ failing is not a reason to lose the only record of why the attempt failed.
 
 `renderHandoff` is the pure document (facts in, markdown out) and is exported,
 along with `DEFAULT_ATTEMPTS_DIR`, for glue that reads or reproduces the trail.
+
+### The terminal state
+
+When the attempt ceiling is spent, the issue gets `agent:exhausted` — never
+`agent:blocked` — and the accumulated handoff trail as a comment. The two are
+the failures with the most different human responses in the system: _fix the
+issue's shape_ versus _the work is harder than specified, or the spec is wrong_.
+The trail is posted because it is already written and is already the best
+account of what went wrong; the alternative is opening N commits to reconstruct
+it. **The pull request stays open and the trail is not stripped** — closing the
+PR discards partial work, and the trail is the evidence the comment is made of.
+
+It is written by the **admission job**, because that job is the last place the
+ceiling is observed: the expensive job is gated on the verdict, so nothing
+downstream survives to apply a row. `shopfloor-admit` does it for you; a caller
+driving the callables themselves does it with `reportExhaustion`, off the
+`ceiling` the `exhausted` verdict carries:
+
+```ts
+const verdict = await runAdmission()
+
+if (!verdict.admitted && verdict.refusal === 'exhausted' && verdict.ceiling) {
+  await reportExhaustion({ ceiling: verdict.ceiling })
+}
+```
+
+It reads the trail off the branch through `gh api` (that job has no checkout),
+posts the comment, then applies the row — the comment first, because the label
+without it says a human is needed and not what for. **It reports once**: a
+stateless edge trips the same ceiling on every later event, and
+`agent:exhausted` already on the issue is what says the report happened.
+Nothing here throws; the loop has already ended, and what it could not do comes
+back on the result. `buildExhaustionReport` is the pure decision underneath,
+and `EXHAUSTION_COMMENT_LIMIT` is how much of the trail one comment carries.
 
 ### Setup doctor
 
@@ -1478,7 +1535,7 @@ or `review` module has an obvious home:
   judges and configures a consumer's setup rather than a run.
 - `src/handoff/` — memory: the pure `renderHandoff` (two authorship halves, one
   file per attempt, every section bounded) and the `writeHandoff` /
-  `stripAttempts` shell that commits the trail to the branch and removes it on
+  `closeLoop` shell that commits the trail to the branch and removes it on
   success. The one module whose output is written for an _agent_ to read.
 - `src/process/` — what every shell that shells out needs and none of them own:
   the one narrowing of a rejected `execFile` (`asExecFailure`) and the

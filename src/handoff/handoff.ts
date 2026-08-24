@@ -33,6 +33,7 @@ import type {
   TrajectoryFinding,
   TrajectoryStatus
 } from '../observability/trajectory'
+import type { RunUsage } from '../observability/usage'
 
 /**
  * Where the trail lives, repo-relative and **committed** — which deliberately
@@ -136,6 +137,16 @@ export interface HandoffInput extends HandoffDiff {
    * already refuses one level down.
    */
   scorecard?: readonly TrajectoryFinding[]
+  /**
+   * What the attempt spent, when it got far enough to spawn anything
+   * (shopfloor#50). The ceiling bounds attempts and the cost argument is in
+   * tokens, so the trail is where the two meet: a maintainer deciding whether
+   * to raise the ceiling is deciding whether to pay for another attempt this
+   * size, and the exhausted terminal state posts these documents at exactly
+   * that moment. Absent means nothing spawned — a precondition refusal — which
+   * is a spend of nothing rather than an unknown.
+   */
+  usage?: RunUsage
   /** The agent's own account, verbatim. */
   claims?: string
   /**
@@ -174,6 +185,7 @@ export function renderHandoff(input: HandoffInput): string {
     `**How it ended.** ${input.failure}`,
     '',
     ...ciFailureSection(input.ciFailure),
+    ...spendSection(input.usage),
     ...scorecardSection(input.scorecard),
     ...diffSection(input),
     AGENT_SECTION_HEADING,
@@ -234,6 +246,48 @@ function ciLogTail(logTail: string, logTotalChars: number | undefined): string {
   return droppedAtFetch
     ? `[truncated while fetching: kept the last ${logTail.length} of ${logTotalChars} characters]\n${tail}`
     : tail
+}
+
+/**
+ * What the attempt cost, and how well the number is known.
+ *
+ * **`source` is stated rather than smoothed over** (shopfloor#42): an
+ * `observed` total is not a total, and the one reading it exists to prevent is
+ * a killed run's partial count taken as its price. The line the ceiling's
+ * argument rests on has to say which of the two it is, or the argument rests on
+ * a number nobody can size.
+ */
+function spendSection(usage: RunUsage | undefined): string[] {
+  const heading = ['### What the attempt spent', '']
+
+  if (!usage) {
+    return [
+      ...heading,
+      'Nothing — the attempt failed before it spawned anything.',
+      ''
+    ]
+  }
+
+  const cost =
+    usage.costUsd === undefined ? '' : `, $${usage.costUsd.toFixed(2)}`
+
+  return [
+    ...heading,
+    `${tokens(usage.inputTokens)} in · ${tokens(usage.outputTokens)} out · ` +
+      `${tokens(usage.cacheCreationInputTokens)} cache-write · ` +
+      `${tokens(usage.cacheReadInputTokens)} cache-read${cost}`,
+    '',
+    usage.source === 'reported'
+      ? "Reported by the CLI itself — this is the attempt's whole spend."
+      : 'Observed by the harness rather than reported by the CLI, because the ' +
+        'attempt never reached its final tally. Output is a floor; input and ' +
+        'cache-read overcount, since every turn restates the conversation.',
+    ''
+  ]
+}
+
+function tokens(count: number): string {
+  return count.toLocaleString('en-US')
 }
 
 function scorecardSection(

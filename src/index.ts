@@ -118,6 +118,11 @@ export {
 export {
   classifyTrigger,
   AGENT_COMMIT_AUTHOR,
+  // API for the reason the commit author is (shopfloor#50): a consumer's own
+  // tooling committing to an agent branch has to be able to say "this one ends
+  // it" in the same words the machine edge reads, and a second spelling of the
+  // trailer is a retrigger that fires when nobody meant it to.
+  LOOP_CLOSED_TRAILER,
   PHASES,
   type Phase,
   type TriggerClassification,
@@ -131,7 +136,8 @@ export {
   type AdmissionInput,
   type AdmissionRefusal,
   type AdmissionVerdict,
-  type IssueHistoryProbe
+  type IssueHistoryProbe,
+  type SpentCeiling
 } from './trigger/admission'
 
 export { runAdmission, type RunAdmissionInput } from './trigger/run-admission'
@@ -164,14 +170,15 @@ export {
 /**
  * The issue state machine (shopfloor#45). The vocabulary is API because it is
  * package-owned and a consumer has to be able to name the labels their own
- * glue reads; the table and its pure evaluator are API because the outcomes
- * this package does not yet apply itself — a finished run, an exhausted one —
- * are applied by that glue, and it should apply the same transition the
- * harness does rather than a second guess at it. `applyLabelTransition` is the
- * `gh` shell behind them.
+ * glue reads; the table and its pure evaluator are API because a consumer's own
+ * glue reporting on a run should apply *the* transition rather than a second
+ * guess at it. This package now applies every row itself — `runPhase` the four
+ * a run produces, `reportExhaustion` the one a spent ceiling does.
+ * `applyLabelTransition` is the `gh` shell behind them.
  */
 export {
   ENTRY_LABEL,
+  EXHAUSTED_LABEL,
   IN_PROGRESS_LABEL,
   LABEL_VOCABULARY,
   REQUIRED_LABELS,
@@ -272,6 +279,31 @@ export {
   type HandoffCiFailure,
   type HandoffInput
 } from './handoff/handoff'
+
+/**
+ * The outer loop's terminal state (shopfloor#50). `buildExhaustionReport` is
+ * pure like its sibling escape hatches; `reportExhaustion` is the shell the
+ * `shopfloor-admit` bin runs on the `exhausted` verdict, and it is API because
+ * a consumer driving `runAdmission` themselves gets that verdict too and would
+ * otherwise have to re-invent the one write the loop's last act makes.
+ *
+ * It is the only refusal in this package that writes anything, and the reason
+ * it is not the drive-by write the no-write rule protects against is on the
+ * shell.
+ */
+export {
+  buildExhaustionReport,
+  EXHAUSTION_COMMENT_LIMIT,
+  type ExhaustionReport,
+  type ExhaustionReportInput,
+  type TrailDocument
+} from './handoff/exhaustion'
+
+export {
+  reportExhaustion,
+  type ReportExhaustionInput,
+  type ReportExhaustionResult
+} from './handoff/run-exhaustion'
 
 export {
   runTrajectoryCheck,
