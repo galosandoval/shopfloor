@@ -1,5 +1,398 @@
 # @galosandoval/shopfloor
 
+## 1.0.0
+
+### Major Changes
+
+- [`2cd867a`](https://github.com/galosandoval/shopfloor/commit/2cd867a94b7fb4aba1e227b5f8207ebb9f44be13) Thanks [@galosandoval](https://github.com/galosandoval)! - `1.0.0` — the loop is closed, and every input it stopped accepting now refuses
+  by name (shopfloor#51).
+
+  **Why a major rather than another `0.x`.** This release is several times larger
+  than the one that last raised the question, and it is the first in which the
+  package **writes to your repository during a run**: the branch, the draft pull
+  request, the issue's labels, and its own handoff commits under `attemptsDir`.
+  The surface change beside it is the largest this package has made — four verbs
+  collapsed into one. Since consumers exact-pin (and the scaffolded workflow pins
+  both `npx` invocations and the CLI install), the bump costs nothing
+  operationally; it is a truthful signal, not a claim that the surface has stopped
+  moving. From here semver applies: breaking is a major, a minor is additive.
+
+  **Nothing removed is silently ignored.** Every field, environment variable,
+  result field, export, and bin removed across the loop sequence is refused by name, with
+  what replaced it. `standardsDir` set the precedent (shopfloor#27) and this
+  generalizes it, for the same reason: a type removal only reaches a caller who
+  typechecks against this package, while the binding that actually breaks is CI
+  still exporting a variable — where a plain deletion produces no type error, no
+  runtime error, and a run doing something its operator did not ask for.
+
+  | Removed                                                                        | Refuses where                | What to do instead                                                                                                    |
+  | ------------------------------------------------------------------------------ | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+  | `issueNumber` / `ISSUE_NUMBER`                                                 | `runPhase`, before admission | Nothing — the payload names the issue                                                                                 |
+  | `issueTitle` / `ISSUE_TITLE`                                                   | `runPhase`, before admission | Nothing — read from the issue once, so the prompt and the PR cannot disagree                                          |
+  | `branch` / `BRANCH`                                                            | `runPhase`, before admission | Nothing — the branch is `agent/issue-<n>`; `agentBranchForIssue` names it if your glue needs to                       |
+  | `repo`                                                                         | `runPhase`, before admission | Nothing — the payload's repository is the run's                                                                       |
+  | `promptTemplate`                                                               | `runPhase`, before admission | `prompts: { implement }`, or `PROMPT_FILE`; unstated, the shipped per-phase shim runs                                 |
+  | `standardsDir` / `STANDARDS_DIR`                                               | configuration resolution     | `pluginDirs` / `PLUGIN_DIRS`; coding standards belong in the repository being worked on                               |
+  | `PermissionProbe.read`                                                         | `evaluateAuthorization`      | `answered` — the discriminant was renamed because `read` is also a permission level being judged                      |
+  | `permission` on an admitted verdict                                            | reading the field            | `authorizedBy` — `{ via: 'permission', permission }` on the human edge, `{ via: 'continuation' }` on the machine edge |
+  | `shopfloor-implement <issue>`                                                  | the bin itself               | `shopfloor-run-phase`, which takes no arguments                                                                       |
+  | `runImplementAgent`, `runPreflight`, `postVerifyComment`, `runPluginDirsCheck` | calling the export           | `runPhase`; each shim also names the pure half that still ships                                                       |
+
+  **New failure modes, by name.**
+
+  - **A halfway-migrated call or workflow now fails before admission runs.** If
+    your glue still passes `issueNumber` / `branch` / `repo` / `issueTitle` /
+    `promptTemplate`, or still exports `ISSUE_NUMBER`, `ISSUE_TITLE`, or `BRANCH`
+    in the step that runs `shopfloor-run-phase`, the run throws
+    `ImplementAgentError` naming every one it found — before the spend gate,
+    before a label moves, before a token is spent. Nothing is written. The fix is
+    in the message; deleting the variable is the whole of it.
+  - **`GITHUB_REPOSITORY` and `GITHUB_REF_NAME` are deliberately not refused**,
+    even though `repo` and `branch` once resolved from them. The runner sets both
+    on every job, so refusing on their presence would refuse every run in GitHub
+    Actions. Only names this package asked you to set are checked.
+  - **An empty _variable_ never refuses; an empty _field_ does.** `ISSUE_NUMBER=`
+    is a line left behind while deleting the variable, and refusing there would
+    punish the fix. `{ issueNumber: '' }` is a key someone typed, so it refuses —
+    otherwise that caller meets a generic "no issue number to implement" error
+    instead of the migration. A key carrying `undefined` is a spread, not a
+    statement, and never refuses. A stated field and a set variable each refuse on
+    their own, so a stated value is not a way to mask a variable your workflow
+    still exports.
+  - **`verdict.permission` on an admitted admission now throws** instead of
+    reading `undefined`. It is a non-enumerable getter, so a spread,
+    `util.inspect`, and `JSON.stringify` are all unaffected. **The serialized edge
+    is refused separately, as a value:** `shopfloor-admit`'s JSON line carries
+    `permission` set to a sentence beginning `REMOVED in 1.0.0`, so a workflow
+    doing `fromJSON(steps.admit.outputs.verdict).permission` sees what to read
+    instead of `null`. A gate comparing it against `'write'` still fails closed —
+    but if your YAML _prints_ or forwards that value, it now carries a sentence
+    rather than a permission level.
+  - **The four verbs removed from the public surface throw when called.**
+    `runImplementAgent`, `runPreflight`, `postVerifyComment`, and
+    `runPluginDirsCheck` are still exported as shims: importing them is fine,
+    calling one throws an `Error` naming `runPhase` and the pure half that still
+    ships. A TypeScript caller sees a signature returning `never`; a JavaScript
+    caller gets the sentence instead of `undefined is not a function`.
+  - **`PermissionProbe`'s old `read` discriminant now refuses.** A probe still
+    shaped `{ read: … }` returns `undetermined` naming the rename, where it
+    previously fell into the un-answered branch and reported "the probe answered
+    nothing" — a true sentence about a token that was working fine. Detected by
+    the key being present, so `read: false` refuses too.
+  - **`ISSUE_NUMBER`, `ISSUE_TITLE`, and `BRANCH` are no longer read anywhere**,
+    not even by the internal config resolver, which kept them as fallbacks. A
+    fallback that still read a variable the verb refuses would be a second,
+    quieter answer to a question the payload settles. `GITHUB_REF_NAME` and
+    `GITHUB_REPOSITORY` are untouched.
+  - **Not shimmed, and named here instead** (a moved verdict spelling cannot be):
+    since `0.17.0` a `[bot]` actor on the human edge refuses as `not-permitted`
+    rather than `undetermined`. If your glue branches on that spelling, it moved.
+  - **`shopfloor-implement` exits non-zero with a migration message.** It ships
+    rather than being deleted because `npx` answers a bin a package no longer
+    declares by fetching whatever the registry has published under that name,
+    which is not a thing to leave pointing at an unclaimed name inside a
+    fully-permissioned run.
+
+  **Also in this release:** `CLAUDE.md`'s scope boundary is restated as a set of
+  decisions rather than left to be inferred — the two capability classes that did
+  not exist before (the package **writes to** your repository during a run, and
+  **configures** it when a human runs `init`), the prompt-content line amended for
+  the per-phase shim, the consumer-env-var line recording that the class is broken
+  by six package-owned label names, and the CI-glue line amended for the branch,
+  the pull request, the issue state, and the scaffolded workflow template. The
+  `README.md` is accurate against the final surface.
+
+### Minor Changes
+
+- [#77](https://github.com/galosandoval/shopfloor/pull/77) [`1af525e`](https://github.com/galosandoval/shopfloor/commit/1af525e5b7c8458a4830a5755d8869a307f70116) Thanks [@galosandoval](https://github.com/galosandoval)! - Attempts now leave memory for the next one: the handoff artifact (shopfloor#49).
+
+  Every run that does **not** succeed writes `.agent/attempts/<run-id>.md` and
+  commits it to the branch. The next attempt reads the whole trail through a new
+  `{{ATTEMPTS_DIR}}` prompt token — all of it, not just the last file. Without
+  this, iteration N+1 started cold, re-derived the same wrong approach, and spent
+  the ceiling doing it.
+
+  The document has two labeled halves and never blends them. The
+  **harness-authored** half is observed fact — a bounded tail of the failing CI
+  run's logs plus its URL, the trajectory scorecard, the run id, the diff — and is
+  written **unconditionally**, including after a runaway kill or a crash inside
+  the run. The **agent-authored** half is marked as unverified claims, read back
+  from a file the agent wrote at a new `{{HANDOFF_CLAIMS_FILE}}` token and quoted
+  verbatim; when the agent wrote none, the document says so rather than omitting
+  the section. Every section is bounded by an exported constant
+  (`HANDOFF_LOG_TAIL_LIMIT`, `HANDOFF_DIFF_LIMIT`, `HANDOFF_CLAIMS_LIMIT`) and a
+  truncated one says it was truncated.
+
+  The CI log bound is enforced **while fetching**, not only while rendering: the
+  fetch streams a rolling tail rather than buffering the whole log and cutting it
+  afterwards. This matters for exactly the runs it is for — a job log large enough
+  to exhaust a read buffer belongs to a run that failed loudly, and buffering
+  degraded those to URL-only. Memory stays flat however verbose the run, and the
+  document states the true length whenever what it shows is a tail.
+
+  **What breaks.** Two things, both in prompts:
+
+  - **`shopfloor-doctor`'s `prompt-tokens` check now fails on a prompt written
+    before this release**, because `{{ATTEMPTS_DIR}}` and
+    `{{HANDOFF_CLAIMS_FILE}}` are missing from it. A run does **not** refuse over
+    a missing token — that rule is unchanged — but a prompt that never names them
+    gets an agent that reads no trail and writes no claims, so the loop keeps its
+    ceiling and loses its memory. Re-run `shopfloor init`, or add both tokens by
+    hand; the shipped per-phase shim already carries them.
+  - The shipped `DEFAULT_PHASE_PROMPTS.implement` and the `shopfloor init` prompt
+    skeleton both gained a section for each half. A consumer who copied either one
+    should re-copy it.
+
+  **New failure modes.** The harness now commits files of its own to the branch it
+  owns — the handoff on a failure, and a strip commit on a success. Both are
+  authored as `claude-code[bot]` and use `--no-verify`: the machine edge is keyed
+  on the head commit's author, so an ambient identity here would silently stop the
+  retrigger, and a pre-commit hook failing is not a reason to lose the record. The
+  writes are path-limited to `attemptsDir` and are best-effort throughout — a
+  handoff that cannot be written or committed warns and never fails a run, and a
+  CI log fetch that fails degrades the document to URL-only. A repository whose
+  branch protection rejects those commits will see warnings on the failure path,
+  not new failures.
+
+  The diff summary is taken against the base branch `origin/HEAD` names, falling
+  back to `main`, and a diff that cannot be taken is reported as undetermined
+  rather than rendered as "nothing was committed".
+
+  Also new: `RunImplementAgentResult.findings` and `ImplementAgentError.findings`
+  carry the trajectory scorecard for the attempt, and every finished attempt is
+  now graded rather than only the ones that reached a green gate. `renderHandoff`,
+  `DEFAULT_ATTEMPTS_DIR`, `FailedPhaseOutcome`, and the three bounds are exported;
+  `classifyTrigger` and `evaluateAdmission` carry a `ciFailure` reference on the
+  machine edge; `attemptsDir` (env `ATTEMPTS_DIR`) and `handoffClaimsFile` are new
+  configuration fields.
+
+- Gate and authorize the machine edge on three facts, and replace the admitted
+  verdict's `permission` field with `authorizedBy` (shopfloor#46).
+
+  0.17.0 admitted a `workflow_run.completed` failure on any `agent/issue-<n>`
+  branch and then probed the triggering actor's collaborator permission. Both
+  halves were wrong: the branch prefix alone is a name a stranger can pick, and
+  `workflow_run.triggering_actor` is frequently `github-actions[bot]`, whose
+  permission is `none` — so the probe refused the loop's own retrigger every time.
+
+  **The machine edge now requires three facts, not one.** The `agent/issue-<n>`
+  prefix is a pre-filter. The failure must also come from **your** repository
+  (`head_repository.full_name` equal to `repository.full_name` — a fork PR carries
+  the fork's ref with your repository in `repository`) and from a commit authored
+  by `claude-code[bot]`. An unstated head repository refuses like a mismatched one.
+
+  Those fences then **replace** the permission probe on that edge. What authorizes
+  a continuation is that pushing to `agent/issue-<n>` on your repository already
+  requires write access; the fork fence is what keeps that true, which is why it
+  is not optional.
+
+  **Breaking for anyone reading the admitted verdict.** The top-level `permission`
+  field is gone, replaced by `authorizedBy`: `{ via: 'permission', permission }`
+  on the human edge, `{ via: 'continuation' }` on the machine edge.
+
+  **New:** `AGENT_COMMIT_AUTHOR` — the commit identity the machine edge attributes
+  to the agent, `claude-code[bot]`. Fixed, not configurable, for the reason the
+  label vocabulary is fixed: a consumer naming their own identity here would turn
+  every push they make onto an agent branch into a retrigger.
+
+  **Two consequences worth checking before you wire this up.** Your agent's
+  commits must be authored as `claude-code[bot]` or the machine edge never fires;
+  and a maintainer pushing a fix onto the agent's own branch now correctly does
+  **not** retrigger the loop.
+
+- [#75](https://github.com/galosandoval/shopfloor/pull/75) [`d0148f2`](https://github.com/galosandoval/shopfloor/commit/d0148f215bd4024b77dde1cc48c89dc8ae0e35ea) Thanks [@galosandoval](https://github.com/galosandoval)! - Collapse the loop to one verb, `runPhase(rawEvent)`, which now owns the branch,
+  the pull request, and the issue's state (shopfloor#47).
+
+  **This is a breaking surface change.** Four verbs are gone from the public
+  surface, and each maps to the same work happening inside `runPhase`:
+
+  | Removed              | Now                                                                                                                           |
+  | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+  | `runImplementAgent`  | the phase's run, reached through `runPhase`; its config fields and `RunImplementAgentResult` are unchanged and still exported |
+  | `runPreflight`       | step 3 of `runPhase`, on the human edge; the pure `evaluatePreflight` still ships                                             |
+  | `postVerifyComment`  | step 9 of `runPhase`, best-effort as ever; the pure `buildVerifyComment` still ships                                          |
+  | `runPluginDirsCheck` | a pre-spawn precondition, as it already was; the pure `evaluatePluginDirs` still ships                                        |
+
+  The bin changes with it: **`shopfloor-implement <issue>` is replaced by
+  `shopfloor-run-phase`, which takes no arguments.** The issue, the phase, and the
+  actor come off `$GITHUB_EVENT_PATH`; the branch is `agent/issue-<n>`, computed
+  in the one place that name is written down. Its exit code splits the way
+  `shopfloor-admit`'s does — `not-a-trigger` exits zero, every other refusal and
+  every failed run exits non-zero.
+
+  **What the harness now writes to your repository during a run**, which it did
+  not before: it creates and pushes the branch, opens the draft PR, and moves the
+  issue's labels. Bounded three ways — only the branch it owns by name, only the
+  issue the payload named, and only after admission and preflight admitted the
+  run. Refusals still write nothing, except preflight's, whose refusal _is_ a
+  judgement about the issue. A run still creates no labels; that stays `init`'s.
+
+  **New failure modes, named:**
+
+  - A phase with no prompt **refuses at startup naming the phase**, before the
+    branch, the transition, or a token. Prompts are keyed by phase now
+    (`prompts: { implement }`); `PROMPT_FILE` still works and applies to whichever
+    phase the payload discovered. Unstated, a phase runs on a shipped shim —
+    `DEFAULT_PHASE_PROMPTS` — that defers to the bundled skills plugin and carries
+    no procedure and no environment content of its own.
+  - An unreadable issue title now refuses the run: the prompt and the PR are named
+    from one read so they cannot disagree.
+  - The run needs `git push` to succeed and permission to open a PR. A workflow
+    checked out with `GITHUB_TOKEN` rather than a PAT will now fail where it
+    previously handed the push back to your own YAML — and a push made with the
+    built-in token fires no downstream events, so the machine edge stays dead.
+  - A failed run **pushes what it committed and then transitions before it
+    throws**: `exhausted` when the inner loop spent its ceiling with the gate
+    still red, `failed` otherwise. Both set `ready-for-human` — the transition
+    this design exists because of, and the one that had never once fired. The
+    push is best-effort and opens no PR; it exists so an ephemeral runner does not
+    take the work with it. **Note what it can retrigger:** a pushed branch runs
+    your CI, and CI going red on an agent branch is the machine edge. That loop is
+    bounded by the attempt ceiling today, and is shopfloor#50's to settle
+    properly.
+
+  **Migrating a workflow.** Delete the slug pipeline, the `gh pr create` step, and
+  every `gh issue edit` label swap; keep the checkout (with your PAT), the exit
+  code, and a setup-free `shopfloor-admit` job in front. `shopfloor init`
+  scaffolds exactly that shape. `runPhase` re-checks admission itself rather than
+  trusting the upstream job.
+
+- [#78](https://github.com/galosandoval/shopfloor/pull/78) [`27c7d7b`](https://github.com/galosandoval/shopfloor/commit/27c7d7bf1c8f0cfcd6cef2cf50a5062b3c95de12) Thanks [@galosandoval](https://github.com/galosandoval)! - The outer loop closes: runs can now trigger other runs, and the attempt ceiling
+  is what stops it (shopfloor#50).
+
+  **The new failure mode, plainly.** A failed attempt pushes its handoff commit,
+  CI goes red on the agent's branch, and that failure starts another run — without
+  a human. The bound on that is the attempt ceiling (`DEFAULT_MAX_ATTEMPTS`, 3;
+  `shopfloor-admit --max-attempts <n>` or `runPhase({ maxAttempts })` to change
+  it), derived from how many times `agent:in-progress` was ever added to the
+  issue. Three guards now exist and each is blind to the others' failure: idle
+  catches a stalled agent, wall-clock catches one looping within a run, and the
+  ceiling catches one looping across runs.
+
+  **A finished run's CI failure no longer retriggers, and this is a behaviour
+  change.** A successful run now always ends with a commit carrying a
+  `Shopfloor-Loop: closed` trailer — the one that strips the attempt trail, or an
+  empty one when there was no trail to strip — and the machine edge refuses a head
+  commit that has it. Expect one such commit on every agent branch that finished. Previously that commit's bot authorship made CI red on
+  top of a _finished_ run look like another failed attempt, which would spend an
+  attempt on work already handed to a human, starting cold, since the strip is
+  what removed the trail. A failed attempt's handoff commit carries no trailer and
+  still retriggers — that asymmetry is the loop. If you commit to an agent branch
+  from your own tooling and do not want it answered, write the trailer
+  (`LOOP_CLOSED_TRAILER`, exported) on its own line.
+
+  **A spent ceiling now lands a terminal state, where it previously landed
+  nothing.** The issue gets `agent:exhausted` — never `agent:blocked`; the two
+  mean _the work is harder than specified_ and _something is broken_, and they are
+  answered differently — plus the accumulated handoff trail as a comment. The
+  pull request stays open and the trail is not stripped. It reports once: the
+  label itself is what says the report already happened.
+
+  **One consequence for anyone wrapping the callables.** `shopfloor-admit` now
+  makes exactly one write, on the `exhausted` verdict. `runAdmission` still writes
+  nothing on any verdict — the write is a separate callable, `reportExhaustion`,
+  that the bin runs, and the `exhausted` refusal carries a new `ceiling` field
+  (`SpentCeiling`) with the facts it needs. It has to happen there because the
+  expensive job is gated on the verdict, so nothing downstream survives to apply a
+  row. It is reachable only after classification admitted a real trigger and, on
+  the human edge, the spend gate admitted the actor.
+
+  **Each attempt's handoff now states what it spent** — the four token buckets and
+  the cost from `usage` (shopfloor#42), with `source` saying whether that is the
+  CLI's own tally or a partial count the harness observed. The ceiling bounds
+  attempts; the argument for raising it is in tokens, and the trail a spent
+  ceiling posts is where a human reads both.
+
+  New exports: `reportExhaustion`, `buildExhaustionReport`,
+  `EXHAUSTION_COMMENT_LIMIT`, `LOOP_CLOSED_TRAILER`, `EXHAUSTED_LABEL`, and the
+  types `SpentCeiling`, `ExhaustionReport`, `ExhaustionReportInput`,
+  `TrailDocument`, `ReportExhaustionInput`, `ReportExhaustionResult`.
+
+  Two things design §4 asked for are deliberately **not** here, and the reasoning
+  is in `CONTEXT.md`: the ceiling is not a `runPolicy` field (admission runs
+  before a run policy exists), and the count is not a filtered `gh run list`
+  (that mechanism cannot fire — an `issues`- or `workflow_run`-triggered run
+  reports `head_branch: main`).
+
+- [#76](https://github.com/galosandoval/shopfloor/pull/76) [`ad0bb2f`](https://github.com/galosandoval/shopfloor/commit/ad0bb2fdb4e662b03432f81646a11c5ecf59bc61) Thanks [@galosandoval](https://github.com/galosandoval)! - Trajectory becomes a closure condition on the success path ([#48](https://github.com/galosandoval/shopfloor/issues/48))
+
+  A green quality gate is no longer sufficient for a run to succeed. Every
+  attempt is now graded against the trajectory checker before `runPhase` may
+  finish, so an agent that reached green by deleting a failing test does not exit
+  as a success.
+
+  Two of the four invariants gate — `gate-before-commit` and `red-before-green`.
+  `no-forbidden-git-ops` and `turn-budget-headroom` stay advisory (the first is
+  already refused at spawn time by the command guard; the second is a capacity
+  signal, not a process violation). The list is exported as
+  `GATING_TRAJECTORY_INVARIANTS`.
+
+  **New failure modes — read this before upgrading.** Runs that previously
+  reached `ready-for-human` may now block:
+
+  - A run whose trajectory violates a gating invariant re-enters the loop with
+    the violation appended to the prompt, spending from the same `maxIterations`
+    and wall-clock budget a red gate does. With the budget spent it **fails**:
+    `agent:blocked` + `ready-for-human`, the branch pushed, no PR, and a comment
+    on the issue naming the invariants. Deliberately not `agent:exhausted`.
+  - **An attempt whose session transcript was not captured, or is unreadable,
+    blocks the run.** This is the one guardrail here that refuses on an
+    unreadable signal without being about spend: a definition of done that an
+    absent file satisfies is not one. If your transcript capture does not work —
+    a `projectsDir` pointing somewhere the CLI does not write, a sandbox that
+    discards it — every run will now block rather than succeed. **Check
+    `transcriptCaptured` on a run result before upgrading.**
+  - **A run with no `runPolicy.gateCommand` can now iterate.** Previously such a
+    run was always single-shot. It still is unless its trajectory fails to close;
+    the trajectory is a second signal and needs no configuration. A gateless run
+    can therefore now spawn up to `maxIterations` times and cost proportionally
+    more.
+
+  Grading uses the package's default gate-command patterns _plus_ your own
+  `runPolicy.gateCommand` matched literally, so a repository whose gate is not a
+  bare test command (`make check`, a bespoke script) is graded on the command the
+  harness actually runs rather than falsely flagged.
+
+  New API: `evaluateClosure` (pure — scorecard and remaining budget in,
+  `pass` / `re-enter` / `block` out), `GATING_TRAJECTORY_INVARIANTS`, and the
+  `ClosureInput` / `ClosureVerdict` / `GatingTrajectoryInvariantId` /
+  `ClosureBlock` types. `ImplementAgentError` gains an optional `closure` field
+  carrying the block, so a caller can tell a violated invariant apart from an
+  unreadable transcript without matching on the message.
+
+### Patch Changes
+
+- [#78](https://github.com/galosandoval/shopfloor/pull/78) [`316c8c9`](https://github.com/galosandoval/shopfloor/commit/316c8c92e056513e3b92c43e9be200480d63b678) Thanks [@galosandoval](https://github.com/galosandoval)! - Four corrections to the outer loop's terminal state and the lock in front of it.
+
+  **The scaffolded `concurrency:` group now keys on the agent branch, not the
+  issue number.** `github.event.issue` is null on a `workflow_run` event, so the
+  previous group fell through to `github.run_id` — unique per run, excluding
+  nothing. The retrigger edge, the one edge that fires with no human on it, had no
+  mutual exclusion at all, behind a label narrowing that is explicitly not a lock:
+  two CI failures landing together on one agent branch could each start a run.
+  Both edges now resolve to the same `agent/issue-<n>` group. **This is a change to
+  the workflow template `init` scaffolds; an already-scaffolded workflow keeps the
+  old group until its `concurrency:` block is updated by hand.**
+
+  **`agent:exhausted` no longer posts without checking that the label exists.** The
+  report is made idempotent by the label being on the issue next time, so a
+  repository missing it re-posted the entire accumulated attempt trail on every
+  subsequent event on the branch — the comment generator the terminal state is
+  built to avoid, reached by the one failure that is both permanent and knowable
+  before writing anything. A refused vocabulary now writes nothing and says why; a
+  vocabulary check that could not run still reports, since not knowing is not the
+  same as knowing the label is missing.
+
+  **A branch that never carried a trail is reported as empty, not as evidence
+  lost.** An absent attempts directory and an empty one are both a 404 from the
+  contents API, and that is the ordinary first-attempt-exhausted case. It was being
+  reported as a failed read, so the loop's most-read comment claimed part of the
+  trail could not be retrieved for a trail that never existed. A real failure — a
+  broken token, an unreadable repository — still says so.
+
+  **`ExhaustionReportInput` extends `SpentCeiling`** rather than restating its five
+  fields. Callers that built the input by hand now also pass `repo`.
+
 ## 0.17.0
 
 ### Minor Changes
