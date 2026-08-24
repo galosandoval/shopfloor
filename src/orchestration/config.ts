@@ -180,9 +180,20 @@ export function resolveImplementConfig(
   input: RunImplementAgentConfig,
   env: Record<string, string | undefined>
 ): ResolvedImplementConfig {
-  // First, so a caller carrying a removed field hears about the removal
-  // rather than about whatever it made them get wrong downstream.
-  requireNoRemovedConfigInputs(input, env)
+  // First, so a caller carrying a removed field hears about the removal rather
+  // than about whatever it made them get wrong downstream. `standardsDir` /
+  // STANDARDS_DIR today (shopfloor#27), through the shim table every removal in
+  // this package is listed in.
+  //
+  // **The fields are gone from `RunImplementAgentConfig` and still read here,
+  // deliberately.** Do not tidy this away as dead code; the reasoning is on the
+  // table.
+  //
+  // The inputs the *payload* took over — the issue, its title, the branch, the
+  // repository, the prompt — are not checked here, because this function's own
+  // caller states every one of them: `runPhase` refuses those at its entrance,
+  // against the config the caller actually wrote.
+  requireNoRemovedInputs(input, env, REMOVED_RUN_CONFIG_INPUTS)
 
   const issueNumber = input.issueNumber
   if (!issueNumber) {
@@ -240,27 +251,6 @@ export function resolveImplementConfig(
   if (pluginDirs !== undefined) resolved.pluginDirs = pluginDirs
 
   return resolved
-}
-
-/**
- * Refuse a run still configured for an input no run resolves any more —
- * `standardsDir` / `STANDARDS_DIR` today (shopfloor#27), through the shim table
- * every removal in this package is listed in (`removed-inputs.ts`).
- *
- * **The fields are gone from {@link RunImplementAgentConfig} and still read
- * here, deliberately.** Do not tidy this away as dead code; the reasoning is on
- * the table.
- *
- * The inputs the *payload* took over — the issue, its title, the branch, the
- * repository, the prompt — are not checked here, because this function's own
- * caller states every one of them: `runPhase` refuses those at its entrance,
- * against the config the caller actually wrote.
- */
-function requireNoRemovedConfigInputs(
-  input: RunImplementAgentConfig,
-  env: Record<string, string | undefined>
-): void {
-  requireNoRemovedInputs(input, env, REMOVED_RUN_CONFIG_INPUTS)
 }
 
 /** Name of the file a failed run's reason is written to, beneath the output dir. */

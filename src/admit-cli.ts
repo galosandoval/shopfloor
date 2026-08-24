@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { reportExhaustion } from './handoff/run-exhaustion'
 import { EXHAUSTED_LABEL } from './issue-state/vocabulary'
-import type { SpentCeiling } from './trigger/admission'
+import {
+  serializeAdmissionVerdict,
+  type SpentCeiling
+} from './trigger/admission'
 import { runAdmission } from './trigger/run-admission'
 
 /**
@@ -23,7 +26,9 @@ import { runAdmission } from './trigger/run-admission'
  * gate the expensive job on it. The human sentence goes to stderr, which keeps
  * stdout machine-readable without a flag deciding which mode this is in. What
  * to do with either is the caller's: this package owns the verdict, not the CI
- * glue around it.
+ * glue around it. An admitted verdict's removed `permission` field is spelled
+ * out in that line rather than left absent — the reasoning is on
+ * {@link serializeAdmissionVerdict}.
  *
  * **The exit code splits where `shopfloor-authorize`'s does not, deliberately.**
  * That command is the last word on a spend, so every refusal leaves non-zero.
@@ -62,7 +67,7 @@ main().catch((error: unknown) => {
 async function main() {
   const verdict = await runAdmission({ maxAttempts: readMaxAttempts() })
 
-  console.log(JSON.stringify(verdict))
+  console.log(serializeAdmissionVerdict(verdict))
 
   if (verdict.admitted) {
     console.error(

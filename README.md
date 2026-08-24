@@ -650,43 +650,48 @@ fetching whatever the registry has published under that name.
 ### Removed inputs and what replaced them
 
 Nothing this package stops accepting is merely deleted. Every removed field,
-environment variable, result field, and bin **refuses by name and says what
-replaced it** — because a type removal only reaches a caller who typechecks
+environment variable, result field, export, and bin **refuses by name and says
+what replaced it** — because a type removal only reaches a caller who typechecks
 against this package, while the binding that actually breaks is CI still
 exporting a variable, where a silent deletion leaves a run doing something its
 operator did not ask for.
 
-| Removed                             | Refuses where                | What to do instead                                                                                                    |
-| ----------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `issueNumber` / `ISSUE_NUMBER`      | `runPhase`, before admission | Nothing — the payload names the issue                                                                                 |
-| `issueTitle` / `ISSUE_TITLE`        | `runPhase`, before admission | Nothing — read from the issue once, so the prompt and the PR cannot disagree                                          |
-| `branch` / `BRANCH`                 | `runPhase`, before admission | Nothing — the branch is `agent/issue-<n>`; use `agentBranchForIssue` if your glue needs the name                      |
-| `repo`                              | `runPhase`, before admission | Nothing — the payload's repository is the run's                                                                       |
-| `promptTemplate`                    | `runPhase`, before admission | `prompts: { implement }`, or `PROMPT_FILE`; unstated, the shipped shim runs                                           |
-| `standardsDir` / `STANDARDS_DIR`    | config resolution            | `pluginDirs` / `PLUGIN_DIRS`; coding standards live in the repository being worked on                                 |
-| `PermissionProbe.read`              | `evaluateAuthorization`      | `answered` — renamed because `read` is also one of the permission levels being judged                                 |
-| `permission` on an admitted verdict | reading the field            | `authorizedBy` — `{ via: 'permission', permission }` on the human edge, `{ via: 'continuation' }` on the machine edge |
-| `shopfloor-implement`               | the bin itself               | `shopfloor-run-phase`, which takes no arguments                                                                       |
+| Removed                                                                        | Refuses where                | What to do instead                                                                                                    |
+| ------------------------------------------------------------------------------ | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `issueNumber` / `ISSUE_NUMBER`                                                 | `runPhase`, before admission | Nothing — the payload names the issue                                                                                 |
+| `issueTitle` / `ISSUE_TITLE`                                                   | `runPhase`, before admission | Nothing — read from the issue once, so the prompt and the PR cannot disagree                                          |
+| `branch` / `BRANCH`                                                            | `runPhase`, before admission | Nothing — the branch is `agent/issue-<n>`; use `agentBranchForIssue` if your glue needs the name                      |
+| `repo`                                                                         | `runPhase`, before admission | Nothing — the payload's repository is the run's                                                                       |
+| `promptTemplate`                                                               | `runPhase`, before admission | `prompts: { implement }`, or `PROMPT_FILE`; unstated, the shipped shim runs                                           |
+| `standardsDir` / `STANDARDS_DIR`                                               | config resolution            | `pluginDirs` / `PLUGIN_DIRS`; coding standards live in the repository being worked on                                 |
+| `PermissionProbe.read`                                                         | `evaluateAuthorization`      | `answered` — renamed because `read` is also one of the permission levels being judged                                 |
+| `permission` on an admitted verdict                                            | reading the field            | `authorizedBy` — `{ via: 'permission', permission }` on the human edge, `{ via: 'continuation' }` on the machine edge |
+| `shopfloor-implement`                                                          | the bin itself               | `shopfloor-run-phase`, which takes no arguments                                                                       |
+| `runImplementAgent`, `runPreflight`, `postVerifyComment`, `runPluginDirsCheck` | calling the export           | `runPhase`; each shim names the pure half that still ships                                                            |
 
-Three things to know about the shape of these refusals:
+Four things to know about the shape of these refusals:
 
-- **An empty value never refuses.** `ISSUE_NUMBER=` is a consumer who has
-  already migrated, and refusing there would punish the fix.
+- **An empty variable never refuses, and an empty field does.** `ISSUE_NUMBER=`
+  is a line left behind while deleting the variable, and refusing there would
+  punish the fix. `{ issueNumber: '' }` is a key someone typed, so it refuses —
+  otherwise you meet a generic "no issue number" error instead of the migration.
+  A key carrying `undefined` is a spread, not a caller, and never refuses.
 - **A stated field and a set variable each refuse on their own.** A stated value
   is not a way to mask a variable your workflow still exports.
 - **`GITHUB_REPOSITORY` and `GITHUB_REF_NAME` are not refused**, even though
   `repo` and `branch` once resolved from them: the runner sets both on every
   job, so refusing on their presence would refuse every run in GitHub Actions.
-- **A value that has left the process cannot refuse.** `permission` is a
-  throwing getter, which reaches a JavaScript caller; a workflow reading
-  `fromJSON(...).permission` out of `shopfloor-admit`'s JSON gets `null`
-  silently. That serialized read is why the field is in this table.
+- **A value that leaves the process is refused as a value.** `permission` is a
+  throwing getter, which reaches a JavaScript caller and stops at the process
+  boundary — so `shopfloor-admit`'s JSON carries the field with a sentence in it
+  instead, and a workflow reading `fromJSON(...).permission` sees what replaced
+  it rather than `null`. A gate comparing it against `'write'` still fails
+  closed.
 
-Four verbs were removed from the public surface in the same sequence —
-`runImplementAgent`, `runPreflight`, `postVerifyComment`, and
-`runPluginDirsCheck`. They are internals `runPhase` composes; the pure halves
-they were paired with (`evaluatePreflight`, `buildVerifyComment`,
-`evaluatePluginDirs`) all still ship.
+The four verbs above were removed from the public surface in the same sequence.
+They are internals `runPhase` composes; the pure halves they were paired with
+(`evaluatePreflight`, `buildVerifyComment`, `evaluatePluginDirs`) all still
+ship, and each shim names its own. They throw when called, not when imported.
 
 ### Trigger classification and admission
 

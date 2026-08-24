@@ -17,22 +17,37 @@
  * `runPhase` calls *with* those very values — can only refuse the ones no caller
  * of it ever legitimately states.
  *
- * **An empty value never refuses**, as it never did for `standardsDir`: unsetting
- * a variable by writing `FOO=` is a caller who has already migrated, and a
- * refusal there would punish the fix.
+ * **An empty variable never refuses**, as it never did for `standardsDir`:
+ * unsetting one by writing `FOO=` is a caller who has already migrated, and a
+ * refusal there would punish the fix. **A stated field refuses on presence**,
+ * empty string included — the two are not the same act. `FOO=` is a line a
+ * consumer leaves behind while deleting the variable; `{ issueNumber: '' }` is
+ * a caller who still believes the field is theirs to fill, and letting it
+ * through means they meet the generic "no issue number" error instead of the
+ * refusal that names the migration.
  */
 
 import { ImplementAgentError } from './implement-error'
 
-/** One removed input, and the sentence that tells a caller what to do instead. */
-export interface RemovedInput {
-  /** The config field, when the input had one. */
-  field?: string
-  /** The environment variable that stated it, when one did. */
-  envVar?: string
+/**
+ * One removed input, and the sentence that tells a caller what to do instead.
+ *
+ * Every input had at least one of the two halves — the union is what says so,
+ * rather than two optional fields whose both-absent case would be an entry that
+ * can never match and would name nothing if it did.
+ */
+export type RemovedInput = {
   /** What replaced it — written for a consumer mid-upgrade, not as a changelog line. */
   replacement: string
-}
+} & (
+  | {
+      /** The config field, when the input had one. */
+      field: string
+      /** The environment variable that stated it, when one did. */
+      envVar?: string
+    }
+  | { field?: string; envVar: string }
+)
 
 export type RemovedInputsVerdict =
   { refused: false } | { refused: true; reason: string }
@@ -121,9 +136,7 @@ export function evaluateRemovedInputs(input: {
   removed: readonly RemovedInput[]
 }): RemovedInputsVerdict {
   const found = input.removed.filter(
-    (entry) =>
-      (entry.field !== undefined && Boolean(input.stated?.[entry.field])) ||
-      (entry.envVar !== undefined && Boolean(input.env[entry.envVar]))
+    (entry) => statesField(input.stated, entry) || setsVar(input.env, entry)
   )
 
   if (found.length === 0) return { refused: false }
@@ -165,6 +178,53 @@ export function requireNoRemovedInputs(
   })
 
   if (verdict.refused) throw new ImplementAgentError(verdict.reason)
+}
+
+/**
+ * `` `branch` / BRANCH ``, for the probes that used to consume a removed value
+ * and now say so in passing. Built from the table rather than written out at
+ * each of them: the pair a message names is the pair a consumer greps their
+ * workflow for, and one that drifted from what is actually refused would send
+ * them to the wrong line.
+ *
+ * Unknown names throw, because the only way to reach one is a message naming an
+ * input that is not removed — a sentence that would be wrong wherever it printed.
+ */
+export function nameRemovedInput(field: string): string {
+  const entry = [...PAYLOAD_OWNED_INPUTS, ...REMOVED_RUN_CONFIG_INPUTS].find(
+    (candidate) => candidate.field === field
+  )
+
+  if (!entry) {
+    throw new Error(
+      `\`${field}\` is not a removed input — nothing in removed-inputs.ts lists it.`
+    )
+  }
+
+  return nameOf(entry)
+}
+
+/**
+ * Whether the caller's own config object carries the removed field — **present
+ * with any defined value**, not truthy. A field is only in that object because
+ * someone typed it; `undefined` is the one exception, since spreading an
+ * optional property that was never set leaves the key behind with no value in
+ * it, and refusing there would refuse a caller who states nothing.
+ */
+function statesField(
+  stated: Record<string, unknown> | undefined,
+  entry: RemovedInput
+): boolean {
+  if (entry.field === undefined || stated === undefined) return false
+  return entry.field in stated && stated[entry.field] !== undefined
+}
+
+/** Whether the environment sets the removed variable to something. */
+function setsVar(
+  env: Record<string, string | undefined>,
+  entry: RemovedInput
+): boolean {
+  return entry.envVar !== undefined && Boolean(env[entry.envVar])
 }
 
 /** `` `field` / ENV_VAR ``, with whichever half the input had. */

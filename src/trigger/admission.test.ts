@@ -3,6 +3,7 @@ import { IN_PROGRESS_LABEL } from '../issue-state/vocabulary'
 import {
   DEFAULT_MAX_ATTEMPTS,
   evaluateAdmission,
+  serializeAdmissionVerdict,
   type AdmissionInput
 } from './admission'
 import { agentBranchForIssue } from './branch'
@@ -349,5 +350,48 @@ describe('evaluateAdmission — the failed run it continues', () => {
     })
 
     expect(verdict).not.toHaveProperty('ciFailure')
+  })
+})
+
+/**
+ * The other half of the result-field shim. The throwing getter reaches a
+ * JavaScript caller and stops at the process boundary; a workflow reading
+ * `fromJSON(steps.admit.outputs.verdict).permission` is on the far side of it,
+ * and is the reader most likely to have written that line in the first place.
+ */
+describe('serializeAdmissionVerdict', () => {
+  it('carries the removed `permission` field as a sentence, not as nothing', () => {
+    const line = JSON.parse(serializeAdmissionVerdict(admission())) as Record<
+      string,
+      unknown
+    >
+
+    expect(line.permission).toContain('REMOVED in 1.0.0')
+    expect(line.permission).toContain('authorizedBy')
+  })
+
+  it('leaves the verdict itself unchanged around it', () => {
+    const line = JSON.parse(serializeAdmissionVerdict(admission())) as Record<
+      string,
+      unknown
+    >
+
+    expect(line.admitted).toBe(true)
+    expect(line.issueNumber).toBe(46)
+    expect(line.authorizedBy).toEqual({
+      via: 'permission',
+      permission: 'admin'
+    })
+  })
+
+  it('never gives a refusal a permission it never had', () => {
+    const refusal = evaluateAdmission({
+      classification: { triggered: false, reason: 'not a trigger' },
+      history: history()
+    })
+
+    expect(
+      JSON.parse(serializeAdmissionVerdict(refusal)) as Record<string, unknown>
+    ).not.toHaveProperty('permission')
   })
 })

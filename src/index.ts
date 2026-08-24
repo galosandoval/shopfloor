@@ -21,7 +21,8 @@
  * replaced — `runImplementAgent`, `runPreflight`, `postVerifyComment`,
  * `runPluginDirsCheck` — are internals now: the sequencing between them was
  * the interface, and it used to live in consumer YAML where it could be
- * neither typed nor tested.
+ * neither typed nor tested. All four are still exported, as shims that throw
+ * what a migration note would have said; see `removed-exports.ts`.
  *
  * `DEFAULT_PHASE_PROMPTS` is API because a consumer replacing a phase's prompt
  * should be able to read the shim they are replacing, rather than guess at
@@ -34,6 +35,19 @@ export {
 } from './phase/run-phase'
 
 export { DEFAULT_PHASE_PROMPTS } from './phase/prompts'
+
+/**
+ * The four verbs above, as refusals rather than absences — a JavaScript caller
+ * of a deleted export gets `undefined is not a function`, which names neither
+ * what replaced it nor that anything was decided. Same rule as a removed field,
+ * one direction over.
+ */
+export {
+  runImplementAgent,
+  runPreflight,
+  postVerifyComment,
+  runPluginDirsCheck
+} from './removed-exports'
 
 /** The shape of what a phase's run produces and what it accepts, both reached through `runPhase`. */
 export { type RunImplementAgentResult } from './orchestration/implement'
@@ -343,8 +357,7 @@ export { type DoctorConfig } from './setup/setup-config'
  * probe stay internal — what they emit is checked by the doctor a caller
  * already has, and every export is a compatibility commitment — one that costs
  * a major to take back, since `1.0.0`. The types below are here because
- * `RunInitResult` is
- * made of them, not as a second entry point.
+ * `RunInitResult` is made of them, not as a second entry point.
  */
 export {
   runInit,

@@ -16,7 +16,7 @@ operationally; it is a truthful signal, not a claim that the surface has stopped
 moving. From here semver applies: breaking is a major, a minor is additive.
 
 **Nothing removed is silently ignored.** Every field, environment variable,
-result field, and bin removed across the loop sequence is refused by name, with
+result field, export, and bin removed across the loop sequence is refused by name, with
 what replaced it. `standardsDir` set the precedent (shopfloor#27) and this
 generalizes it, for the same reason: a type removal only reaches a caller who
 typechecks against this package, while the binding that actually breaks is CI
@@ -34,6 +34,7 @@ runtime error, and a run doing something its operator did not ask for.
 | `PermissionProbe.read`              | `evaluateAuthorization`      | `answered` — the discriminant was renamed because `read` is also a permission level being judged                      |
 | `permission` on an admitted verdict | reading the field            | `authorizedBy` — `{ via: 'permission', permission }` on the human edge, `{ via: 'continuation' }` on the machine edge |
 | `shopfloor-implement <issue>`       | the bin itself               | `shopfloor-run-phase`, which takes no arguments                                                                       |
+| `runImplementAgent`, `runPreflight`, `postVerifyComment`, `runPluginDirsCheck` | calling the export | `runPhase`; each shim also names the pure half that still ships       |
 
 **New failure modes, by name.**
 
@@ -48,18 +49,29 @@ runtime error, and a run doing something its operator did not ask for.
   even though `repo` and `branch` once resolved from them. The runner sets both
   on every job, so refusing on their presence would refuse every run in GitHub
   Actions. Only names this package asked you to set are checked.
-- **An empty value never refuses.** `ISSUE_NUMBER=` is a consumer who has
-  already migrated. A stated field and a set variable each refuse on their own,
-  so a stated value is not a way to mask a variable your workflow still exports.
+- **An empty _variable_ never refuses; an empty _field_ does.** `ISSUE_NUMBER=`
+  is a line left behind while deleting the variable, and refusing there would
+  punish the fix. `{ issueNumber: '' }` is a key someone typed, so it refuses —
+  otherwise that caller meets a generic "no issue number to implement" error
+  instead of the migration. A key carrying `undefined` is a spread, not a
+  statement, and never refuses. A stated field and a set variable each refuse on
+  their own, so a stated value is not a way to mask a variable your workflow
+  still exports.
 - **`verdict.permission` on an admitted admission now throws** instead of
   reading `undefined`. It is a non-enumerable getter, so a spread,
-  `util.inspect`, and `JSON.stringify` — how `shopfloor-admit` hands the verdict
-  to a workflow — are all unaffected. **Read the limit of that plainly:** a
-  JavaScript caller gets the sentence, and a workflow doing
-  `fromJSON(steps.admit.outputs.verdict).permission` gets `null` with no
-  refusal, because a value that has left the process cannot refuse. That
-  serialized read is why the field is named in this table rather than only in
-  the diff — check your YAML for it.
+  `util.inspect`, and `JSON.stringify` are all unaffected. **The serialized edge
+  is refused separately, as a value:** `shopfloor-admit`'s JSON line carries
+  `permission` set to a sentence beginning `REMOVED in 1.0.0`, so a workflow
+  doing `fromJSON(steps.admit.outputs.verdict).permission` sees what to read
+  instead of `null`. A gate comparing it against `'write'` still fails closed —
+  but if your YAML *prints* or forwards that value, it now carries a sentence
+  rather than a permission level.
+- **The four verbs removed from the public surface throw when called.**
+  `runImplementAgent`, `runPreflight`, `postVerifyComment`, and
+  `runPluginDirsCheck` are still exported as shims: importing them is fine,
+  calling one throws an `Error` naming `runPhase` and the pure half that still
+  ships. A TypeScript caller sees a signature returning `never`; a JavaScript
+  caller gets the sentence instead of `undefined is not a function`.
 - **`PermissionProbe`'s old `read` discriminant now refuses.** A probe still
   shaped `{ read: … }` returns `undetermined` naming the rename, where it
   previously fell into the un-answered branch and reported "the probe answered

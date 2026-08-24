@@ -160,7 +160,7 @@ export function evaluateAuthorization(
     return undetermined(actor, repo, 'the permission was never probed')
   }
 
-  if (statesRemovedDiscriminant(input.probe)) {
+  if (checkRemovedDiscriminant(input.probe)) {
     return undetermined(
       actor,
       repo,
@@ -215,7 +215,7 @@ export function evaluateAuthorization(
  * with "the probe answered nothing" — a true sentence about the wrong problem,
  * pointing a maintainer at a token that is working fine.
  */
-function statesRemovedDiscriminant(probe: PermissionProbe): boolean {
+function checkRemovedDiscriminant(probe: PermissionProbe): boolean {
   return 'read' in probe
 }
 

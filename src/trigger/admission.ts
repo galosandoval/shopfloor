@@ -313,7 +313,7 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
 
   if (classification.ciFailure) verdict.ciFailure = classification.ciFailure
 
-  return refuseRemovedPermissionField(verdict)
+  return withRemovedPermissionFieldRefused(verdict)
 }
 
 /**
@@ -329,12 +329,12 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
  * comparison is a gate that quietly stops matching rather than a caller who
  * finds out.
  *
- * **Non-enumerable, so nothing that walks the verdict trips it.**
- * `JSON.stringify` — which is how `shopfloor-admit` hands the verdict to a
- * workflow — a spread, and `util.inspect` all skip it; only naming the field
- * reaches the throw, which is exactly the caller this is for.
+ * **Non-enumerable, so nothing that walks the verdict trips it.** A spread and
+ * `util.inspect` skip it; only naming the field reaches the throw, which is
+ * exactly the caller this is for. The serialized edge is not covered by this
+ * and is refused separately — see {@link serializeAdmissionVerdict}.
  */
-function refuseRemovedPermissionField(
+function withRemovedPermissionFieldRefused(
   verdict: AdmissionVerdict
 ): AdmissionVerdict {
   return Object.defineProperty(verdict, 'permission', {
@@ -349,6 +349,38 @@ function refuseRemovedPermissionField(
       )
     }
   })
+}
+
+/**
+ * What a serialized `permission` says now. A sentence rather than `null`,
+ * because this value is read by the consumer least able to ask a type system
+ * anything.
+ */
+export const REMOVED_PERMISSION_FIELD =
+  'REMOVED in 1.0.0 — read `authorizedBy` instead: ' +
+  '`.authorizedBy.via` is "permission" or "continuation", and the human edge ' +
+  'carries `.authorizedBy.permission`.'
+
+/**
+ * The verdict as the one line of JSON `shopfloor-admit` prints — **carrying the
+ * removed `permission` field as a sentence saying so**, rather than omitting it.
+ *
+ * The throwing getter above reaches a JavaScript caller and nobody else, and
+ * the field's likeliest reader was never one: a workflow writing
+ * `fromJSON(steps.admit.outputs.verdict).permission` crosses a process boundary
+ * that leaves the getter behind, and would get `null` — the silent stop this
+ * package refuses everywhere else. A gate comparing that against `'write'` still
+ * fails closed, and a maintainer who prints it is told what to read instead.
+ *
+ * Only an admitted verdict gets it. A refusal never carried a `permission`, so
+ * stating one there would invent a removal that never happened.
+ */
+export function serializeAdmissionVerdict(verdict: AdmissionVerdict): string {
+  return JSON.stringify(
+    verdict.admitted
+      ? { ...verdict, permission: REMOVED_PERMISSION_FIELD }
+      : verdict
+  )
 }
 
 /**

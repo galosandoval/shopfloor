@@ -58,6 +58,16 @@ and the private `resolveCommandGuardHookPath` beside it — keeps `resolve*`,
 because the alternative is a `run*` name promising a verdict it does not
 produce. Anything that judges is either pure or does not belong here.
 
+**One pure verdict is not a plain value, and it is deliberate.**
+`evaluateAdmission` returns an admitted verdict carrying a non-enumerable
+throwing getter for the removed `permission` field
+(`withRemovedPermissionFieldRefused`). It is still pure — same input, same
+object, no IO, and the throw only fires on a read that no longer exists — but a
+caller destructuring it blindly is the one case where a verdict can raise. The
+refusal has to sit on the value because reading the field _is_ the call there is
+to intercept; the alternative is the silent `undefined` the whole rule exists to
+prevent.
+
 The pairs: `evaluatePreflight` / `runPreflight`, `classifyCommand` /
 `command-guard-hook`, `buildVerifyComment` / `postVerifyComment`,
 `evaluateAuthorization` / `runAuthorization`,
@@ -529,12 +539,28 @@ it, and what happens when the ceiling trips.
   operator did not ask for. So every field and variable this package stops
   accepting is listed in `orchestration/removed-inputs.ts`, read at the seam that
   used to consume it, and refused by name with what replaced it. **Do not tidy
-  those reads away as dead code.** Two consequences of the same rule: a removed
-  _result_ field is a throwing getter instead (`permission` on the admitted
-  verdict), because an output can only be refused by being read; and a removed
-  _bin_ keeps a stub that exits non-zero (`shopfloor-implement`), because `npx`
-  answers a missing bin by fetching whatever the registry has under that name.
-  An empty value never refuses — `FOO=` is a consumer who has already migrated.
+  those reads away as dead code.**
+
+  The table holds the two shapes it can hold — a **config field** and an
+  **environment variable**, the two things a caller states as data. Everything
+  else this package stops accepting is refused **where it is read**, because
+  there is no call to intercept: a removed _result_ field is a throwing getter
+  (`permission` on the admitted verdict), and, since a getter does not survive
+  `JSON.stringify`, the serialized edge carries the same refusal as a value
+  (`serializeAdmissionVerdict`); a removed _probe discriminant_ is a presence
+  check on the old key (`PermissionProbe.read`, in `evaluateAuthorization`); a
+  removed _export_ is a function that throws (`removed-exports.ts`), since a
+  deleted one is `undefined is not a function` to a JavaScript caller; and a
+  removed _bin_ keeps a stub that exits non-zero (`shopfloor-implement`),
+  because `npx` answers a missing bin by fetching whatever the registry has
+  under that name. A new shape is refused somewhere; it is not exempt because
+  the table cannot hold it.
+
+  An empty _variable_ never refuses — `FOO=` is a consumer who has already
+  migrated. An empty _field_ does: `{ issueNumber: '' }` is a caller who still
+  believes the field is theirs, and dropping it means they meet a generic error
+  instead of the migration.
+
 - **Guardrails fail in the direction that costs least.** A missing command-guard
   hook script refuses the run — an unarmed guard on an autonomous run is worse
   than no run. The hook itself fails the other way: input it can't classify

@@ -89,7 +89,11 @@ describe('resolveImplementConfig', () => {
       expect(config.branch).toBe('explicit-branch')
     })
 
-    it('ignores BRANCH, which the harness refuses upstream, and takes GITHUB_REF_NAME', () => {
+    // BRANCH is refused at `runPhase`, the only public entrance, so a config
+    // resolved here can never have carried one. Named for the branch that
+    // results rather than for the variable that did not: this asserts the
+    // resolved value, and the refusal is `run-phase.test.ts`'s to prove.
+    it('resolves the branch to GITHUB_REF_NAME whatever else the environment carries', () => {
       const config = resolveImplementConfig(
         baseInput(),
         baseEnv({ BRANCH: 'env-branch', GITHUB_REF_NAME: 'ref-branch' })
@@ -155,16 +159,24 @@ describe('resolveImplementConfig', () => {
       ).toThrow(/STANDARDS_DIR.*PLUGIN_DIRS/s)
     })
 
+    /**
+     * The two halves are not symmetrical, and the asymmetry is the rule. A
+     * variable emptied to `STANDARDS_DIR=` is a workflow mid-deletion; a field
+     * still spelled out in a config object is a caller who has not deleted
+     * anything, whatever they left in it.
+     */
+    it('refuses a field stated empty — the key is the statement, not its value', () => {
+      expect(() =>
+        resolveImplementConfig(statingStandardsDir(''), baseEnv())
+      ).toThrow(/standardsDir.*pluginDirs/s)
+    })
+
     it.each([
-      ['a stated empty string', statingStandardsDir(''), baseEnv()],
       ['no field at all', baseInput(), baseEnv()],
       ['an empty STANDARDS_DIR', baseInput(), baseEnv({ STANDARDS_DIR: '' })]
-    ])(
-      'resolves a run with %s — empty still means "deliberately skip"',
-      (_name, input, env) => {
-        expect(resolveImplementConfig(input, env).issueNumber).toBe('123')
-      }
-    )
+    ])('resolves a run with %s', (_name, input, env) => {
+      expect(resolveImplementConfig(input, env).issueNumber).toBe('123')
+    })
   })
 
   describe('plugin directories', () => {

@@ -54,6 +54,7 @@ import { runPluginDirsCheck } from '../guardrails/run-plugin-dirs'
 import { runLabelVocabularyCheck } from '../guardrails/run-label-vocabulary'
 import { resolveBundledPluginDir } from './bundled-plugin'
 import { ImplementAgentError } from './implement-error'
+import { nameRemovedInput } from './removed-inputs'
 import {
   resolveImplementConfig,
   type ResolvedImplementConfig,
@@ -682,7 +683,7 @@ function probeBranch(cwd: string): string {
   if (!branch || branch === 'HEAD') {
     throw new ImplementAgentError(
       'No branch to implement on — check out a branch. (A run reached through ' +
-        '`runPhase` is already on `agent/issue-<n>`; stating `branch` / BRANCH ' +
+        `\`runPhase\` is already on \`agent/issue-<n>\`; stating ${nameRemovedInput('branch')} ` +
         'now refuses, so this is the local-run path.)'
     )
   }
@@ -719,7 +720,7 @@ function probeIssueTitle(
         'needs it for the prompt. Give `gh` a token that can read the ' +
         "repository's issues. (Reached only by a caller driving this internal " +
         'run directly: `runPhase` reads the title itself and hands it in, and ' +
-        'stating `issueTitle` / ISSUE_TITLE now refuses.)'
+        `stating ${nameRemovedInput('issueTitle')} now refuses.)`
     )
   }
   return title

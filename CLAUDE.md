@@ -85,10 +85,14 @@ about the issue, and a spent attempt ceiling's, which is the loop's terminal
 state. A run creates no labels, ever.
 
 **What it stops accepting, it refuses by name.** A field, an environment
-variable, a result field, or a bin that is removed ships a shim that names it
-and says what replaced it. Fields and variables are listed in
-`orchestration/removed-inputs.ts`; a removed result field is a throwing getter
-where it used to be read, and a removed bin is a stub that exits non-zero.
+variable, a result field, an export, or a bin that is removed ships a shim that
+names it and says what replaced it. Fields and variables — the two things a
+caller states as data — are listed in `orchestration/removed-inputs.ts`;
+everything else is refused where it is read, because there is no call to
+intercept. A removed result field is a throwing getter, plus a spelled-out value
+on the serialized edge a getter cannot cross; a removed export is a function
+that throws; a removed bin is a stub that exits non-zero. A shape the table
+cannot hold is not exempt — it is refused somewhere else.
 [`CONTEXT.md`](./CONTEXT.md#invariants-worth-knowing-before-you-change-something)
 has why a type-only removal is not one. Deleting the read is a regression, not
 cleanup.
