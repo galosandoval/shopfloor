@@ -58,6 +58,21 @@ describe('evaluateAdmission', () => {
     })
   })
 
+  /**
+   * The result-field shim (shopfloor#51). Asserted from both sides: reading the
+   * removed name has to say what replaced it, and every way of *copying* the
+   * verdict — which is what `shopfloor-admit` does on its way to stdout — has to
+   * stay unaffected by the shim.
+   */
+  it('refuses the removed `permission` field, naming what replaced it', () => {
+    const verdict = admission() as Record<string, unknown>
+
+    expect(() => verdict.permission).toThrow(/authorizedBy/)
+    expect(JSON.parse(JSON.stringify(verdict))).not.toHaveProperty('permission')
+    expect(Object.keys(verdict)).not.toContain('permission')
+    expect(() => ({ ...verdict })).not.toThrow()
+  })
+
   it('admits the machine edge as a continuation, with no probe at all', () => {
     // There is no login to probe on this edge — `triggering_actor` is whatever
     // credential pushed, frequently a bot whose collaborator permission is

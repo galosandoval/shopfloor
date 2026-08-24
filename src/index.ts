@@ -341,8 +341,9 @@ export { type DoctorConfig } from './setup/setup-config'
  * `init` (shopfloor#43): the command, and the shape of what it reports having
  * done. Nothing else. The planner, the scaffold builders, and the project
  * probe stay internal — what they emit is checked by the doctor a caller
- * already has, and every export is a compatibility commitment on a package
- * still before `1.0.0`. The types below are here because `RunInitResult` is
+ * already has, and every export is a compatibility commitment — one that costs
+ * a major to take back, since `1.0.0`. The types below are here because
+ * `RunInitResult` is
  * made of them, not as a second entry point.
  */
 export {

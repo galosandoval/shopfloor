@@ -22,14 +22,25 @@ import {
   type RunPolicyConfig
 } from '../guardrails/run-policy'
 import { ImplementAgentError } from './implement-error'
+import {
+  requireNoRemovedInputs,
+  REMOVED_RUN_CONFIG_INPUTS
+} from './removed-inputs'
 
 /** Everything a caller may state about a run; see the module doc for how each field resolves. */
 export interface RunImplementAgentConfig {
-  /** Defaults to `ISSUE_NUMBER`; a run cannot resolve without one. */
+  /**
+   * Stated by `runPhase` off the webhook payload; a run cannot resolve without
+   * one. **No environment fallback**, unlike every other field here: the
+   * variables that used to state this one, its title, and the branch are
+   * refused now rather than read (`removed-inputs.ts`), and a fallback that
+   * still read them would be a second, quieter answer to a question the payload
+   * has already settled.
+   */
   issueNumber?: string
-  /** Defaults to `ISSUE_TITLE`, else fetched from the issue itself via `gh`. */
+  /** Stated by `runPhase`, which read it off the issue; else `gh` reads it here. */
   issueTitle?: string
-  /** Defaults to `BRANCH`, then `GITHUB_REF_NAME`, then the current git checkout. */
+  /** Stated by `runPhase` as `agent/issue-<n>`; else `GITHUB_REF_NAME`, then the checkout. */
   branch?: string
   /** `owner/repo` — defaults to `GITHUB_REPOSITORY`, else the current checkout's remote. */
   repo?: string
@@ -169,14 +180,18 @@ export function resolveImplementConfig(
   input: RunImplementAgentConfig,
   env: Record<string, string | undefined>
 ): ResolvedImplementConfig {
-  // First, so a caller carrying the removed field hears about the removal
+  // First, so a caller carrying a removed field hears about the removal
   // rather than about whatever it made them get wrong downstream.
-  requireNoStandardsDir(input, env)
+  requireNoRemovedConfigInputs(input, env)
 
-  const issueNumber = input.issueNumber ?? env.ISSUE_NUMBER
+  const issueNumber = input.issueNumber
   if (!issueNumber) {
     throw new ImplementAgentError(
-      'No issue number to implement — pass `issueNumber` or set ISSUE_NUMBER.'
+      'No issue number to implement — the webhook payload names the issue, ' +
+        'and `runPhase` hands it to this run. An event that carried none ' +
+        'should never have been admitted; check the payload at ' +
+        'GITHUB_EVENT_PATH. Stating `issueNumber` / ISSUE_NUMBER is not the ' +
+        'fix — it now refuses.'
     )
   }
 
@@ -193,8 +208,8 @@ export function resolveImplementConfig(
 
   const resolved: ResolvedImplementConfig = {
     issueNumber,
-    issueTitle: input.issueTitle ?? env.ISSUE_TITLE,
-    branch: input.branch ?? env.BRANCH ?? env.GITHUB_REF_NAME,
+    issueTitle: input.issueTitle,
+    branch: input.branch ?? env.GITHUB_REF_NAME,
     repo: input.repo ?? env.GITHUB_REPOSITORY,
     claudeCodeOAuthToken,
     promptTemplate: input.promptTemplate,
@@ -228,41 +243,24 @@ export function resolveImplementConfig(
 }
 
 /**
- * Refuse a run still configured for `standardsDir` / `STANDARDS_DIR`, removed
- * in shopfloor#27 — skills reach the agent through the CLI's own plugin
- * discovery now, so a directory path pasted into a prompt has nothing left to
- * mean.
+ * Refuse a run still configured for an input no run resolves any more —
+ * `standardsDir` / `STANDARDS_DIR` today (shopfloor#27), through the shim table
+ * every removal in this package is listed in (`removed-inputs.ts`).
  *
- * **The field is gone from {@link RunImplementAgentConfig} and still read
- * here, deliberately.** Do not tidy this away as dead code: the type removal
- * only reaches a caller who type-checks against this package, and the failure
- * this migration exists to prevent is a consumer's CI that sets the
- * environment variable — where a plain deletion produces no type error, no
- * runtime error, and a run that proceeds with less context than its operator
- * believes it has. That is the silent degradation the validation one release
- * ago was added to stop, and deleting the field carelessly would reintroduce
- * it in a form no one would notice.
+ * **The fields are gone from {@link RunImplementAgentConfig} and still read
+ * here, deliberately.** Do not tidy this away as dead code; the reasoning is on
+ * the table.
  *
- * Either source refuses on its own rather than one taking precedence over the
- * other: a stated value is not a way to mask a set variable, and precedence
- * logic whose only purpose is to be deleted later is what a deprecation window
- * would have cost. An empty value from either still means "deliberately skip",
- * as it always has, and does not refuse.
+ * The inputs the *payload* took over — the issue, its title, the branch, the
+ * repository, the prompt — are not checked here, because this function's own
+ * caller states every one of them: `runPhase` refuses those at its entrance,
+ * against the config the caller actually wrote.
  */
-function requireNoStandardsDir(
+function requireNoRemovedConfigInputs(
   input: RunImplementAgentConfig,
   env: Record<string, string | undefined>
 ): void {
-  const stated = (input as { standardsDir?: unknown }).standardsDir
-  if (!stated && !env.STANDARDS_DIR) return
-
-  throw new ImplementAgentError(
-    '`standardsDir` / STANDARDS_DIR has been removed — skills now reach the ' +
-      "agent through Claude Code's own plugin discovery, not through a path " +
-      'substituted into the prompt. Unset it; an unstated `pluginDirs` / ' +
-      'PLUGIN_DIRS loads the bundled skills plugin, and a stated one replaces ' +
-      'that. Coding standards belong in the repository being worked on.'
-  )
+  requireNoRemovedInputs(input, env, REMOVED_RUN_CONFIG_INPUTS)
 }
 
 /** Name of the file a failed run's reason is written to, beneath the output dir. */

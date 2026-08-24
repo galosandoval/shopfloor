@@ -137,6 +137,49 @@ describe('runPhase', () => {
     })
   })
 
+  /**
+   * The shims (shopfloor#51). Tested through the verb rather than only next
+   * door, because what makes them worth having is *where* they refuse: before
+   * admission, so a halfway-migrated workflow costs nothing and writes nothing.
+   */
+  it('refuses a stated input the payload now decides, before admission runs', async () => {
+    await expect(
+      runPhase({
+        payload: {},
+        env,
+        cwd: '/repo',
+        issueNumber: '9'
+      } as never)
+    ).rejects.toThrow(/`issueNumber`/)
+
+    expect(vi.mocked(runAdmission)).not.toHaveBeenCalled()
+    expect(vi.mocked(applyLabelTransition)).not.toHaveBeenCalled()
+  })
+
+  it('refuses an environment still stating one, and names the replacement', async () => {
+    await expect(
+      runPhase({
+        payload: {},
+        env: { ...env, BRANCH: 'feature/x' },
+        cwd: '/repo'
+      })
+    ).rejects.toThrow(/BRANCH.*agent\/issue-<n>/s)
+
+    expect(vi.mocked(runAdmission)).not.toHaveBeenCalled()
+  })
+
+  it('checks the environment it was handed, not the runner’s', async () => {
+    process.env.ISSUE_NUMBER = '9'
+
+    try {
+      await expect(
+        runPhase({ payload: {}, env, cwd: '/repo' })
+      ).resolves.toMatchObject({ ran: true })
+    } finally {
+      delete process.env.ISSUE_NUMBER
+    }
+  })
+
   it('runs the phase on the branch it located, then opens the PR and hands over', async () => {
     const result = await runPhase({ payload: {}, env, cwd: '/repo' })
 

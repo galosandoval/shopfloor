@@ -33,19 +33,25 @@ describe('resolveImplementConfig', () => {
       expect(config.claudeCodeOAuthToken).toBe(TOKEN)
     })
 
-    it('takes the issue number from the environment when the input omits it', () => {
-      const config = resolveImplementConfig(
-        baseInput({ issueNumber: undefined }),
-        baseEnv({ ISSUE_NUMBER: '77' })
-      )
-
-      expect(config.issueNumber).toBe('77')
+    /**
+     * The three the payload owns take no environment fallback since
+     * shopfloor#51: the variables that used to state them are refused by
+     * `runPhase`, and a fallback still reading them here would be a second,
+     * quieter answer to a settled question.
+     */
+    it('does not resolve the issue number from ISSUE_NUMBER', () => {
+      expect(() =>
+        resolveImplementConfig(
+          baseInput({ issueNumber: undefined }),
+          baseEnv({ ISSUE_NUMBER: '77' })
+        )
+      ).toThrow(/webhook payload/)
     })
 
-    it('names the issue number when it is nowhere to be found', () => {
+    it('names where the issue number comes from when there is none', () => {
       expect(() =>
         resolveImplementConfig(baseInput({ issueNumber: undefined }), baseEnv())
-      ).toThrow(/ISSUE_NUMBER/)
+      ).toThrow(/GITHUB_EVENT_PATH/)
     })
 
     it('names the OAuth token when it is nowhere to be found', () => {
@@ -83,13 +89,13 @@ describe('resolveImplementConfig', () => {
       expect(config.branch).toBe('explicit-branch')
     })
 
-    it('prefers BRANCH over GITHUB_REF_NAME', () => {
+    it('ignores BRANCH, which the harness refuses upstream, and takes GITHUB_REF_NAME', () => {
       const config = resolveImplementConfig(
         baseInput(),
         baseEnv({ BRANCH: 'env-branch', GITHUB_REF_NAME: 'ref-branch' })
       )
 
-      expect(config.branch).toBe('env-branch')
+      expect(config.branch).toBe('ref-branch')
     })
 
     it('leaves the branch unresolved for the git probe when nothing states one', () => {
@@ -113,13 +119,13 @@ describe('resolveImplementConfig', () => {
       expect(config.issueTitle).toBeUndefined()
     })
 
-    it('takes the issue title from ISSUE_TITLE when set', () => {
+    it('leaves the issue title for the gh probe even when ISSUE_TITLE is set', () => {
       const config = resolveImplementConfig(
         baseInput(),
         baseEnv({ ISSUE_TITLE: 'Add pantry filter' })
       )
 
-      expect(config.issueTitle).toBe('Add pantry filter')
+      expect(config.issueTitle).toBeUndefined()
     })
   })
 

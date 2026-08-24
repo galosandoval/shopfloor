@@ -313,7 +313,42 @@ export function evaluateAdmission(input: AdmissionInput): AdmissionVerdict {
 
   if (classification.ciFailure) verdict.ciFailure = classification.ciFailure
 
-  return verdict
+  return refuseRemovedPermissionField(verdict)
+}
+
+/**
+ * The refusal shim for the one **result** field this sequence removed
+ * (shopfloor#51): `0.17.0`'s admitted verdict carried a top-level `permission`,
+ * and shopfloor#46 replaced it with {@link AdmissionAuthority}.
+ *
+ * A removed input can be refused by reading it; a removed output can only be
+ * refused by being read, so this is a throwing getter rather than a check. The
+ * failure it prevents is the same one every other shim here prevents, in the
+ * opposite direction: a consumer's glue asking for `verdict.permission` gets
+ * `undefined` from a plain deletion, and `undefined` in a `permission ===`
+ * comparison is a gate that quietly stops matching rather than a caller who
+ * finds out.
+ *
+ * **Non-enumerable, so nothing that walks the verdict trips it.**
+ * `JSON.stringify` — which is how `shopfloor-admit` hands the verdict to a
+ * workflow — a spread, and `util.inspect` all skip it; only naming the field
+ * reaches the throw, which is exactly the caller this is for.
+ */
+function refuseRemovedPermissionField(
+  verdict: AdmissionVerdict
+): AdmissionVerdict {
+  return Object.defineProperty(verdict, 'permission', {
+    enumerable: false,
+    configurable: true,
+    get(): never {
+      throw new Error(
+        '`permission` was removed from the admitted verdict — read `authorizedBy` ' +
+          "instead: `{ via: 'permission', permission }` on the human edge, and " +
+          "`{ via: 'continuation' }` on the machine edge, which has no login to " +
+          'probe and so never had a permission to report.'
+      )
+    }
+  })
 }
 
 /**
