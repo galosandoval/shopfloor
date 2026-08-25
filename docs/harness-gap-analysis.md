@@ -7,25 +7,36 @@ Agentic Engineering_ (Google, May 2026) — specifically §5 "Harness Engineerin
 What Surrounds the Model", §3 "Context Engineering", and §2's tests-vs-evals
 distinction.
 
-Status: **resolved into issues.** A follow-up grilling session settled the open
-questions; every finding below is now tracked. Sections retain their original
-analysis, with decisions marked inline.
+Status: **the numbered findings are shipped; most of §3's backlog is too.** A
+follow-up grilling session turned every finding below into an issue, and those
+issues have since landed. Sections retain their original analysis — the
+present tense in them is 2026-07-28's, not today's — with what changed marked
+inline. **This is the standing record of which structural holes were found and
+how they were closed**, so read it for the argument rather than for the current
+behaviour; that is [`CONTEXT.md`](../CONTEXT.md).
 
-| Finding                                          | Issue                             |
-| ------------------------------------------------ | --------------------------------- |
-| §1 wall-clock guard                              | #4                                |
-| §2 CLI version pin (+ standards-path validation) | #5                                |
-| §4 release and versioning                        | #3                                |
-| §5 skills / context ownership                    | #8 (closed by #24, #25, #26, #27) |
-| CLAUDE.md for this repo                          | #6                                |
-| recipe-chat-v1 upgrade                           | #7                                |
+| Finding                                          | Issue                             | State                                                                                            |
+| ------------------------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| §1 wall-clock guard                              | #4                                | shipped                                                                                          |
+| §2 CLI version pin (+ standards-path validation) | #5                                | shipped                                                                                          |
+| §4 release and versioning                        | #3                                | shipped                                                                                          |
+| §5 skills / context ownership                    | #8 (closed by #24, #25, #26, #27) | shipped                                                                                          |
+| CLAUDE.md for this repo                          | #6                                | shipped                                                                                          |
+| recipe-chat-v1 upgrade                           | #7                                | shipped (to `0.2.0`); the consumer is on `0.16.0` and the `1.0.0` upgrade is its own issue there |
 
 Two issues predate this doc and were authored from it: **#1** (shrink the
 configuration surface) and **#2** (ship an agents directory). #1 is a prefactor
 for #4 and #5 — it makes `wallClockMinutes` and `cliVersion` optional and settles
 the config contract first. **#2 was closed** as superseded by the content-free
-decision in §5. §3's remaining backlog (observability, feedback loop, hooks,
-evals) is deliberately not yet filed.
+decision in §5.
+
+§3's backlog was "deliberately not yet filed" when this was written. Since
+then: **the feedback loop** (§3.1) was designed in
+[`docs/sdlc-loop-design.md`](./sdlc-loop-design.md) and shipped as both loops,
+**observability** (§3.3) is parsed and metered but acts on nothing,
+**hooks** (§3.2) are partly closed by the command guard, and **evals** (§3.4)
+remain at zero — the largest open gap in the package. §3.6's three smaller
+items are all still open.
 
 ---
 
@@ -250,6 +261,19 @@ Captured at lower resolution. Each needs its own drill-down before filing.
 
 ### 3.1 No feedback loop (highest value)
 
+**Closed, and it took the whole of
+[`docs/sdlc-loop-design.md`](./sdlc-loop-design.md) to close.** There are two
+loops now, split by whether the harness can generate the signal before it
+exits. The **inner** loop (shopfloor#40) runs the caller's `gateCommand` after
+each spawn and respawns with the failure fed back in, bounded by
+`maxIterations` and one shared wall clock. The **outer** loop (shopfloor#46,
+#49, #50) is a `workflow_run.completed` edge that retriggers the agent on the
+branch it pushed, carrying a written handoff from the previous attempt, bounded
+by an attempt ceiling read off the issue's own label history. And the run's
+definition of done is no longer `commitsAhead !== 0`: a green gate is necessary
+and, since shopfloor#48's closure condition, no longer sufficient. The
+paragraphs below are the record of what was missing.
+
 The paper (§5.3) puts this at the center of what a harness _is_: "orchestration
 logic captures failures and routes them back to the model for retry — this is
 what creates the automated think → act → observe loop."
@@ -264,6 +288,29 @@ that commits a broken build is indistinguishable from a green one.
 `maxTurns` is Claude's inner loop. There is no outer loop.
 
 ### 3.2 No hooks / in-run guardrails
+
+**Partly closed by shopfloor#2 — the command guard.** Every spawn now arms a
+`PreToolUse` hook through an inline `--settings` payload the harness assembles
+itself, so the "shopfloor ships none and never writes a settings file" below is
+no longer true. What it blocks is three operations, not a whitelist: pushing a
+schema straight at the database instead of writing a migration, force-pushing,
+and amending. `classifyCommand` is the pure half — a quote-aware token scan, so
+a forbidden flag quoted inside a commit message is data and passes — and
+`command-guard-hook.ts` is the adapter that reads the CLI's hook JSON off
+stdin. A blocked call gets the alternative alongside the refusal, because a
+blocked agent needs a next move. A **missing hook script refuses the run**: an
+unarmed guard on an autonomous run is worse than no run. The hook itself fails
+the other way and exits 0 on input it cannot classify, so it never takes a run
+down over a command it has no opinion about.
+
+The rest of this section stands. There is still no pre-commit secret scan and
+no post-edit format, still no `--allowedTools` / `--disallowedTools` beside
+`--dangerously-skip-permissions`, and the guard **matches shell commands only**
+— which is why a plugin that ships hooks or MCP servers is refused outright
+(#25): those are tools the command guard cannot see. Containment is still
+mostly delegated to "the caller runs this in a disposable runner"; what changed
+is that the three operations most likely to be irreversible are no longer prose
+obligations in a prompt.
 
 The paper calls hooks "the place for things the agent should never forget but
 often does" — deterministic code at lifecycle points (before a tool call, after
@@ -315,6 +362,16 @@ argues matters more than output evaluation ("a fluent output that skipped
 verification steps is more dangerous than one with a visible error") — and the
 trajectory data that would enable it is currently discarded (see 3.3).
 
+**One sentence of that is no longer true, and the section is otherwise
+unchanged.** Trajectory evaluation exists: the checker grades a finished
+attempt over its captured transcript, and since shopfloor#48 two of its
+invariants **gate the success path** rather than merely reporting. So the
+harness does score _how_ a run got there, deterministically. What is still at
+zero is everything the paper means by evals — a labelled dataset, rubrics, an
+LM judge, a regression suite, any measure of whether the work is _good_ rather
+than whether the process was followed. This remains the largest open gap in the
+package, named in `CLAUDE.md` as one.
+
 ### 3.5 No memory, no context ownership
 
 The paper's six context types map onto this harness as: guardrails partially,
@@ -332,8 +389,20 @@ _process supervision_ than to the "Agent = Model + Harness" claim at
 this package doesn't ship.
 
 **Partially addressed by §5 / #8** (shipped as #24–#27), which took on the
-instructions layer and moved knowledge to partial. Memory, examples, and tools
-remain at zero.
+instructions layer and moved knowledge to partial.
+
+**Memory closed in shopfloor#49.** "Every run starts cold; a failed run teaches
+the next one nothing" was tolerable while the harness was single-shot and fatal
+once there was an outer loop — a bounded loop over identical attempts is a
+token incinerator with a stop button. Each failed attempt now commits
+`.agent/attempts/<run-id>.md` to the branch, in two labelled halves that are
+never blended: the harness's observed facts, written unconditionally even after
+a kill, and the agent's claims, quoted rather than restated. The next attempt
+reads the whole trail through a `{{ATTEMPTS_DIR}}` path rather than having it
+inlined — which is the static/dynamic boundary this section says the package
+had no occasion to draw, drawn deliberately and written down.
+
+**Examples and tools remain at zero.**
 
 ### 3.6 Smaller items
 
