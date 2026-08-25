@@ -7,12 +7,23 @@
 ownership), and _The New SDLC With Vibe Coding_ §3 (context types), §4 (the
 SDLC phases), §5 (harness anatomy).
 
-Status: **settled, unbuilt, and reviewed.** Twenty-four decisions taken in one
-grilling session. Nothing here is implemented; this document is the record to
-file issues from. One item was left open by the session — see
-[Residual](#residual) — and a later review found seven more, plus one decision
-this document should reverse: see
-[Review — open flaws](#review--open-flaws-2026-08-14).
+Status: **settled, reviewed, and shipped in `1.0.0`.** Twenty-four decisions
+taken in one grilling session, written up as the record to file issues from.
+Every one of those issues is now closed: the ten steps in
+[Suggested sequencing](#suggested-sequencing), the one item the session left
+open ([Residual](#residual), closed by shopfloor#44), and all seven findings a
+later review added ([Review — open flaws](#review--open-flaws-2026-08-14)) —
+each of which now carries a note saying where it landed.
+
+**This document is history, not a specification.** It records what was decided
+and why, at the moment it was decided. Three of its mechanisms were reversed
+during implementation, and each says so where it stands rather than only here:
+§4 and §7's `gh run list --branch` (it cannot fire; both now read the issue's
+own label history), §8's create-labels-at-startup (reversed by §11's `init`;
+the run verifies and refuses), and §6's attribution (widened, and it carries
+the machine edge's spend gate). What the harness does **today** is
+[`CONTEXT.md`](../CONTEXT.md) — read that first if the question is behaviour
+rather than provenance.
 
 This supersedes nothing in the gap analysis. It covers the layer that document
 never examined: the **trigger and state layer** around a run, rather than the
@@ -371,6 +382,17 @@ refuse on uncertainty.
 
 ## 8. Label vocabulary
 
+> **Half reversed by §11, and shipped that way in shopfloor#43 and #45.**
+> **Fixed, not configurable** stands and is what shipped. **Create-at-startup
+> did not.** Once `init` exists, the zero-setup install this section weighed
+> the durable write against is no longer the alternative, so creation moved to
+> the moment a human asks for it and a run **verifies and refuses** instead.
+> Nothing in a run has ever created a label. The refusal is what makes Fact 2
+> impossible, not the creation — a run that cannot see the six labels never
+> spawns, so a transition onto a label that does not exist is unreachable. See
+> [§11](#this-reverses-8s-create-at-startup) and
+> `src/guardrails/run-label-vocabulary.ts`.
+
 **Fixed, not configurable**, and the harness **creates the labels at startup,
 refusing the run if it cannot**.
 
@@ -421,6 +443,16 @@ than failing at spawn time.
 
 ## Residual
 
+> **Closed by shopfloor#43 and #44.** `init` emits the `TODO(shopfloor)`
+> sentinel and fills the environment block from the project's own lockfile and
+> `package.json` scripts — anything it cannot read stays a sentinel, never a
+> guess. The **run** refuses on it too, among the preconditions and ahead of
+> the `git` and `gh` probes: a prompt still carrying the sentinel, or a
+> `{{TOKEN}}` outside the substituted set, never reaches a spawn. The doctor
+> and the run are deliberately not one check, and the run is the stricter —
+> a diagnostic tolerates what it cannot be sure about, a gate on spend does
+> not.
+
 **One item is open.** A skeleton default with unfilled environment placeholders
 fails the way `standardsDir` failed: present, plausible, wrong, and silent. A
 consumer who skips the fill-in gets a run that spends tokens and then fails on
@@ -446,7 +478,25 @@ Read back against the paper and the live consumer after the session settled.
 Ordered by cost. Seven findings, and one decision above that should reverse
 (§8, see §11).
 
+**All seven are closed, and each says where below.** One is closed in the
+narrower sense it was raised in rather than the broader one its title names —
+finding 1 built the gate and left evals at zero, which is still the largest
+open gap in this package. The findings are kept in full as the record of what
+was open; what the harness does now is [`CONTEXT.md`](../CONTEXT.md).
+
 ### 1. The loop's only closure signal is tests. Evals are still zero
+
+> **The gate shipped in shopfloor#48; evals did not, and the title is still
+> true of them.** `evaluateClosure` is the half that acts on the scorecard:
+> `gate-before-commit` and `red-before-green` block the success path, the other
+> two invariants stay advisory, and a run with no transcript to grade does not
+> close on it — the one guardrail here that refuses on an unreadable signal
+> without being about spend. So the loop's definition of done is no longer "CI
+> is green." What that did **not** build is evals in the paper's §2 sense:
+> there is still no labelled dataset, no rubric, no LM judge, and nothing
+> scoring whether a run produced good work. Trajectory evaluation of one
+> attempt is not that, and this remains the largest named gap.
+> See [`CONTEXT.md`](../CONTEXT.md#the-closure-condition).
 
 The paper's §2 is unambiguous: tests and evals **together**, or "it's still
 vibe coding no matter how sophisticated the prompts are." §4 puts trajectory
@@ -469,6 +519,14 @@ think → act → observe-what-CI-said, which is not what §5.3 describes.
 
 ### 2. §2 puts the adversarial guard behind the spend it guards
 
+> **Closed as proposed, in shopfloor#46 and #47.** Admission is a callable and
+> a bin — `shopfloor-admit` — that a job with nothing installed but this
+> package and `gh` runs first: classification, the spend gate, the in-flight
+> narrowing, and the ceiling, all in front of the runner setup they exist to
+> protect. `runPhase` re-asks the same question rather than trusting the
+> answer. Anything added to admission has to keep that property; a probe
+> needing a checkout belongs in the run.
+
 §2 prices the one-verb collapse at "roughly a minute of CI." §1's own table
 prices the live consumer's setup at 3–5 minutes billed. But the size is the
 smaller problem: §3 identifies authorization as **the only guardrail whose
@@ -485,6 +543,15 @@ survive is running the spend gate after the spend.
 
 ### 3. The transition Fact 2 is about is still unspecified
 
+> **Stated, in shopfloor#45's `TRANSITION_TABLE` and applied by shopfloor#47.**
+> Not at PR creation, which this finding guessed at: `ready-for-human` is set
+> by **every terminal outcome** — `succeeded`, `exhausted`, `failed`, and
+> `refused` alike. It marks whose move it is, not whether the work is good, and
+> the `agent:` labels are what say which kind of attention is wanted. The table
+> has one row per outcome and the type makes a new one a compile error, so the
+> fall-through that left an issue in `agent:in-progress` forever is
+> unreachable.
+
 §8 makes `ready-for-agent` and `ready-for-human` package-owned. §3's edge table
 and §4's terminal states transition only `agent:implement`,
 `agent:in-progress`, `agent:blocked`, and `agent:exhausted`. **No section says
@@ -496,6 +563,15 @@ be stated there, in the transition table §4 of the sequencing calls for, rather
 than inferred — inference is how the bash layer got here.
 
 ### 4. No handoff exists on exactly the runs the ceiling is for
+
+> **Closed as proposed, in shopfloor#49.** The harness-authored half is written
+> unconditionally, including on the way out of a throw, because everything in
+> it is a fact this package holds by then. Only the claims can be missing, and
+> the document **says which file it looked in** rather than omitting the
+> section — an absent section reads as an attempt with nothing to say, which is
+> a different and wrong story. The one bound no design closes: the runaway
+> guards kill the child, so the harness survives to write this, but a `SIGKILL`
+> of the harness process itself leaves nothing.
 
 §4 declines to count `.agent/attempts/*` because a wall-clock kill or a crash
 writes no file, so the count would be blindest against its own failure mode.
@@ -511,6 +587,19 @@ that section says so rather than being absent.
 
 ### 5. The derived count counts the wrong runs, and derived is not a lock
 
+> **Both halves settled in shopfloor#46 and #50, and neither the way this
+> finding assumed.** The filters it asks for are moot: `gh run list --branch`
+> **cannot fire at all**, because a run triggered by `issues.labeled` or
+> `workflow_run` executes on the default branch, so a list filtered by
+> `agent/issue-<n>` is empty on every real run. There is no run list being
+> counted — attempts come off the issue's permanent `labeled` timeline events,
+> which no later edit or `always()` clear can rewrite. On the lock: recorded as
+> a decision, as this asks. The `agent:in-progress` read is **a narrowing, not
+> a lock**, §7's rejection of it as a lock stands unchanged, and the real
+> mutual exclusion is a `concurrency:` group that stays in consumer YAML —
+> §11's scaffold writes one, keyed on the branch rather than the issue number
+> so the machine edge is covered too.
+
 `gh run list --branch` counts every workflow on the branch. The live consumer
 has three (`agent-implement.yml`, `test.yml`, `main.yml`), plus the
 strip-screenshots push and the human-edge run itself. The call needs
@@ -525,6 +614,17 @@ an eventually-consistent API. GitHub's real mutual exclusion is a
 That tension is unresolved and should be recorded as a decision either way.
 
 ### 6. Observability fell out of the sequencing
+
+> **Taken before the outer loop rather than after it, in shopfloor#42.** The
+> `stream-json` the idle guard was already reading for a heartbeat is parsed as
+> it arrives, and a run reports its tokens and cost as `usage` — on the result,
+> or on the error a failed run throws, since the runs worth costing are the
+> ones that did not finish. shopfloor#50 puts it in the handoff, so the trail a
+> spent ceiling posts states what each attempt spent. **It still decides
+> nothing**, which is the half of this finding answered with a justification
+> rather than with code: the ceiling bounds attempts, and the spend is what
+> makes the argument about raising it readable. Latency, tool-call counts, turn
+> counts, and drift remain unbuilt — gap analysis §3.3 is the standing record.
 
 [`docs/harness-gap-analysis.md`](./harness-gap-analysis.md) §3.3 names
 stream-json parsing "the highest leverage remaining" and a prerequisite for
@@ -570,20 +670,33 @@ it is cheap or ruinous, and none is answered:
   It triggers only from workflows on the default branch, and pushes made with
   `GITHUB_TOKEN` do not fire downstream events. The consumer's `AGENT_PAT` is
   now load-bearing on the machine edge — a requirement the harness should
-  check, not an accident it depends on.
+  check, not an accident it depends on. **Checked, in shopfloor#43**: the
+  doctor's `workflow-run-prerequisites` asks both — that the workflow is on the
+  default branch, and that it references the PAT secret rather than the
+  built-in token.
 - **§8's ordering against §3 is unstated.** Label creation is a durable write
   to the consumer's repository. Whether it happens before or after the
   authorization probe decides whether an unauthorized trigger writes to someone
   else's repo. §11 makes the question moot.
 - **§6 attributes the harness's own commit to the agent.** The
   strip-screenshots commit is authored by `claude-code[bot]`, so CI red caused
-  by it reads as an agent failure and retriggers the loop.
+  by it reads as an agent failure and retriggers the loop. **Closed in
+  shopfloor#50**, and the asymmetry turned out to be the loop: a failed
+  attempt's handoff commit _must_ retrigger, while the successful run's closing
+  commit must not, so the latter carries `LOOP_CLOSED_TRAILER` and the machine
+  edge refuses on it. The commit is made even when there is nothing to strip.
 - **"The table reaches four of the paper's six phases" overstates.** Two edges
   ship; the other two are deferred, and code review is reached only through
-  them. The sentence is doing honesty work the count does not support.
+  them. The sentence is doing honesty work the count does not support. **Still
+  true, and the sentence stands as written** — the two deferred edges are still
+  deferred, so read the §3 claim as two phases reached and two more reachable.
 - **Model routing (paper §8) never appears.** Plausibly out of scope, but a
   document that audits itself against the paper should say so rather than be
-  silent.
+  silent. **Still absent, and now said rather than silent:** one `model` runs
+  planning and mechanical work alike. It is not out of scope so much as
+  unargued — routing cheap models to deterministic work is a spend decision,
+  and this package does not yet act on spend at all (finding 6). Gap analysis
+  §3.6 carries it.
 
 ---
 
@@ -660,9 +773,19 @@ stating in `CLAUDE.md` rather than leaving to be inferred. Note that the
 workflow-template line is amended by §11 as well as §2 — the original session
 changed it once and the review changes it again.
 
+**All five landed in `1.0.0`**, and that file rather than this table is where
+the scope boundary is stated now. Read [`CLAUDE.md`](../CLAUDE.md) for what the
+package owns today; the table above is what was proposed, not what is in force.
+
 ---
 
 ## Suggested sequencing
+
+> **All ten shipped, in this order, ending at `1.0.0`.** Kept as the record of
+> how the work was cut and why each step went where it did — the dependencies
+> below are the reason `doctor` preceded the label vocabulary, and the reason
+> the handoff and the outer loop came last. `CHANGELOG.md` has what each
+> release actually contained.
 
 Cheapest and most independent first; each is separately shippable.
 
@@ -723,7 +846,8 @@ repository has now designed against twice.
 ## Also found
 
 Unrelated to the design, found while establishing the facts above:
-**`README.md` lines 351–602 are a verbatim duplicate of lines 50–350** — a bad
-merge. `### CLI` appears twice, the first occurrence followed by a
-`runImplementAgent` snippet rather than the bin invocation. Worth its own small
-PR.
+**`README.md` lines 351–602 were a verbatim duplicate of lines 50–350** — a bad
+merge. `### CLI` appeared twice, the first occurrence followed by a
+`runImplementAgent` snippet rather than the bin invocation.
+
+**Fixed.** The duplicate is gone and `### CLI` appears once.
