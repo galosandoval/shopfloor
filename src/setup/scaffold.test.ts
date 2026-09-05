@@ -232,6 +232,21 @@ describe('buildWorkflowScaffold', () => {
     expect(workflow).not.toMatch(/\bsed\b|\btr\b|\bcut\b/)
   })
 
+  it('names every bin with `--package ... --` rather than bare `npx <spec> <bin>`', () => {
+    // The bare form derives the command from the package *name* — `shopfloor`
+    // — which this package does not ship as a bin, so npx exits with "could
+    // not determine executable to run" and swallows the bin name as an
+    // argument. Silent where it matters: the admit step captures stdout, an
+    // empty verdict parses to `null`, and `run-phase` is skipped on it, so a
+    // run that did nothing reads green.
+    for (const bin of ['shopfloor-admit', 'shopfloor-run-phase']) {
+      expect(workflow).toContain(
+        `npx --yes --package @galosandoval/shopfloor@${ENVIRONMENT_UNFILLED_SENTINEL} -- ${bin}`
+      )
+    }
+    expect(workflow).not.toMatch(/npx --yes @galosandoval\/shopfloor@\S+ shopfloor-/)
+  })
+
   it('follows a renamed PAT secret', () => {
     const renamed = buildWorkflowScaffold({
       patSecret: 'LOOP_PAT',

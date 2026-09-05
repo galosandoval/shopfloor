@@ -6,7 +6,8 @@
  * (shopfloor#47).
  *
  * **It ships rather than being deleted, for a reason particular to `npx`.** A
- * workflow step still running `npx --yes @galosandoval/shopfloor@1 shopfloor-implement 51`
+ * workflow step still running
+ * `npx --yes --package @galosandoval/shopfloor@1 -- shopfloor-implement 51`
  * against a package that no longer declares the bin does not stop: `npx` falls
  * through to the registry and runs whatever package is published under that
  * name — which is nobody's yet, and is a name anyone may claim. A shim that

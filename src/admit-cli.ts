@@ -12,7 +12,7 @@ import { runAdmission } from './trigger/run-admission'
  * runner installs anything**, needing only this package and `gh`:
  *
  * ```sh
- * GH_TOKEN=*** npx @galosandoval/shopfloor@<version> shopfloor-admit
+ * GH_TOKEN=*** npx --package @galosandoval/shopfloor@<version> -- shopfloor-admit
  * ```
  *
  * `GITHUB_EVENT_PATH` comes from the runner, so a workflow step states it
