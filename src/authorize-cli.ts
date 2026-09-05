@@ -6,7 +6,7 @@ import { runAuthorization } from './guardrails/run-authorization'
  * first, before the runner has installed anything:
  *
  * ```sh
- * GH_TOKEN=*** npx @galosandoval/shopfloor@<version> shopfloor-authorize
+ * GH_TOKEN=*** npx --package @galosandoval/shopfloor@<version> -- shopfloor-authorize
  * ```
  *
  * `GITHUB_ACTOR` and `GITHUB_REPOSITORY` come from the runner, so a workflow

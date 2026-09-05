@@ -235,6 +235,14 @@ export interface WorkflowScaffoldInput {
  * fetched the latest of either would change what it runs on a schedule nobody
  * set, and the `cli-version-pin` check exists precisely because a drifting CLI
  * is a run that fails in a way the transcript does not explain.
+ *
+ * **Both `npx` invocations name the bin with `--package ... --`.** The bare
+ * `npx <spec> <bin>` form derives the command from the package *name* —
+ * `shopfloor` — which is not a bin this package ships, so npx exits with
+ * "could not determine executable to run" and the bin name is swallowed as an
+ * argument. That failure is quiet in exactly the place it matters: the admit
+ * step captures stdout, an empty verdict parses to `null`, `run-phase` is
+ * skipped on it, and the run reads green having done nothing.
  */
 export function buildWorkflowScaffold(input: WorkflowScaffoldInput): string {
   const pat = `\${{ secrets.${input.patSecret} }}`
@@ -242,6 +250,7 @@ export function buildWorkflowScaffold(input: WorkflowScaffoldInput): string {
   const shopfloor = input.packageVersion
     ? `${SHOPFLOOR_PACKAGE}@${input.packageVersion}`
     : `${SHOPFLOOR_PACKAGE}@${ENVIRONMENT_UNFILLED_SENTINEL}`
+  const runBin = (bin: string) => `npx --yes --package ${shopfloor} -- ${bin}`
   return `name: Agent implement
 
 # Scaffolded by \`shopfloor init\`. The loop's two edges: a human labelling an
@@ -307,7 +316,7 @@ jobs:
           # delete. The verdict is read and echoed either way; nothing is
           # swallowed.
           set +e
-          verdict="$(npx --yes ${shopfloor} shopfloor-admit)"
+          verdict="$(${runBin('shopfloor-admit')})"
           set -e
           echo "$verdict"
           echo "admitted=$(echo "$verdict" | jq -r '.admitted')" >> "$GITHUB_OUTPUT"
@@ -347,6 +356,6 @@ jobs:
           GH_TOKEN: ${pat}
           PROMPT_FILE: ${input.promptFile}
           CLI_VERSION: '${cliVersion}'
-        run: npx --yes ${shopfloor} shopfloor-run-phase
+        run: ${runBin('shopfloor-run-phase')}
 `
 }

@@ -232,6 +232,17 @@ describe('buildWorkflowScaffold', () => {
     expect(workflow).not.toMatch(/\bsed\b|\btr\b|\bcut\b/)
   })
 
+  it('names every bin with `--package ... --` rather than bare `npx <spec> <bin>`', () => {
+    // Why the bare form fails silently: `buildWorkflowScaffold`'s doc block.
+    for (const bin of ['shopfloor-admit', 'shopfloor-run-phase']) {
+      expect(workflow).toContain(
+        `npx --yes --package @galosandoval/shopfloor@${ENVIRONMENT_UNFILLED_SENTINEL} -- ${bin}`
+      )
+    }
+    // Every spelling of the bare form, not just the one that regressed.
+    expect(workflow).not.toMatch(/npx (?!--yes --package)[^\n]*shopfloor-(admit|run-phase)/)
+  })
+
   it('follows a renamed PAT secret', () => {
     const renamed = buildWorkflowScaffold({
       patSecret: 'LOOP_PAT',
