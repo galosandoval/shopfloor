@@ -250,6 +250,7 @@ export function buildWorkflowScaffold(input: WorkflowScaffoldInput): string {
   const shopfloor = input.packageVersion
     ? `${SHOPFLOOR_PACKAGE}@${input.packageVersion}`
     : `${SHOPFLOOR_PACKAGE}@${ENVIRONMENT_UNFILLED_SENTINEL}`
+  const runBin = (bin: string) => `npx --yes --package ${shopfloor} -- ${bin}`
   return `name: Agent implement
 
 # Scaffolded by \`shopfloor init\`. The loop's two edges: a human labelling an
@@ -315,7 +316,7 @@ jobs:
           # delete. The verdict is read and echoed either way; nothing is
           # swallowed.
           set +e
-          verdict="$(npx --yes --package ${shopfloor} -- shopfloor-admit)"
+          verdict="$(${runBin('shopfloor-admit')})"
           set -e
           echo "$verdict"
           echo "admitted=$(echo "$verdict" | jq -r '.admitted')" >> "$GITHUB_OUTPUT"
@@ -355,6 +356,6 @@ jobs:
           GH_TOKEN: ${pat}
           PROMPT_FILE: ${input.promptFile}
           CLI_VERSION: '${cliVersion}'
-        run: npx --yes --package ${shopfloor} -- shopfloor-run-phase
+        run: ${runBin('shopfloor-run-phase')}
 `
 }

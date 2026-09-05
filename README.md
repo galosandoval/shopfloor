@@ -120,21 +120,26 @@ jobs:
   admit:
     runs-on: ubuntu-latest
     outputs:
-      verdict: ${{ steps.admit.outputs.verdict }}
+      admitted: ${{ steps.admit.outputs.admitted }}
     steps:
       # No checkout, no toolchain, no install.
       - id: admit
         env:
           GH_TOKEN: ${{ secrets.AGENT_PAT }}
-        # The assignment runs on its own so a non-zero refusal fails the step.
         run: |
-          verdict="$(npx -y @galosandoval/shopfloor@<version> shopfloor-admit)"
-          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          # A refusal is a skip, not a red workflow: the verdict is read and
+          # echoed either way, and the job below is gated on it.
+          set +e
+          verdict="$(npx --yes --package @galosandoval/shopfloor@<version> -- shopfloor-admit)"
+          set -e
+          echo "$verdict"
+          echo "admitted=$(echo "$verdict" | jq -r '.admitted')" >> "$GITHUB_OUTPUT"
 
-  implement:
+  run-phase:
     needs: admit
-    if: fromJSON(needs.admit.outputs.verdict).admitted
-    # … checkout, install, browsers, then `npx shopfloor-run-phase`
+    if: needs.admit.outputs.admitted == 'true'
+    # … checkout, install, browsers, then
+    # `npx --yes --package @galosandoval/shopfloor@<version> -- shopfloor-run-phase`
 ```
 
 The verdict is one line of JSON on **stdout**; the human sentence goes to stderr.
