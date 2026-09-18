@@ -16,28 +16,17 @@ reading at the first sentence.
 - [`docs/testing.md`](./docs/testing.md) — read before writing a test.
 - [`docs/typescript-style.md`](./docs/typescript-style.md) — size, colocation, extraction.
 - [`docs/doc-comments.md`](./docs/doc-comments.md) — when a comment becomes a doc block.
+- [`VERSIONING.md`](./VERSIONING.md) — changesets, the release flow, why it is automatic.
 - [`README.md`](./README.md) — the consumer-facing API; keep it accurate.
 
 ## Every PR carries a changeset
 
 `npx changeset` — CI fails a PR that has none. A PR that deliberately ships
 nothing — docs, CI config, tests — records an explicit empty one,
-`npx changeset --empty`, so "this doesn't release" is on the record rather than
-inferred from silence. Write the body for a consumer deciding whether the bump
-is safe, naming new failure modes and what breaks, not just what was added.
-
-Since `1.0.0`, semver means what it says: a breaking change is a major, and
-"minor is additive" is a promise rather than the caveat it was pre-`1.0.0`.
-Consumers still exact-pin, and that is their call, not a licence to break a
-minor.
-
-**One merge releases.** Before merging to `main`, run `npm run version:packages`
-and commit what it writes — the version bump and the `CHANGELOG.md` entry ride
-in the PR itself, and merging publishes. There is no "Version Packages" PR to
-merge afterwards; CI on `main` only runs `changeset publish` and pushes the tag,
-and never writes to `main`. Re-run it if you push more commits after versioning.
-A PR that ships nothing skips this and just carries its empty changeset, which
-the next versioning PR consumes.
+`npx changeset --empty`. You never write a version bump: `changesets/action`
+does that on `main`, in a "Version Packages" PR of its own, and merging that PR
+is the release. [`VERSIONING.md`](./VERSIONING.md) has the rest — the semver
+promise, why the bump is not a manual step, and what not to change.
 
 ## Pure core, IO shell
 
