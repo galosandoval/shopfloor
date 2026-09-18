@@ -22,6 +22,7 @@
  */
 
 import { asRecord } from '../json/record'
+import { createLineReader } from './lines'
 
 /** Token counts in the four buckets the CLI's stream reports them in. */
 export interface TokenUsage {
@@ -228,58 +229,40 @@ const MAX_LINE_CHARS = 512_000
  * A stateful adapter over the pure pair above: bytes in at arbitrary chunk
  * boundaries, totals out. It holds one partial line and nothing else.
  *
- * It lives here rather than inside `spawnClaude` so the chunk-splitting — the
- * part with the actual edge cases, a line split mid-token, a stream with no
- * trailing newline, a line too long to keep — is testable against recorded
- * fixtures instead of only against a real child process.
+ * It lives here rather than inside `spawnClaude` so the folding is testable
+ * against recorded fixtures instead of only against a real child process; the
+ * chunk-splitting under it — a line split mid-token, a stream with no trailing
+ * newline, a line too long to keep — is `createLineReader`'s, shared with the
+ * job-log renderer over the same stdout.
  */
 export function createStreamUsageReader(
   options: StreamUsageReaderOptions = {}
 ): StreamUsageReader {
-  const maxLineChars = options.maxLineChars ?? MAX_LINE_CHARS
   let acc = emptyUsageAccumulator()
-  let buffer = ''
-  // Set when a line outgrew the buffer: everything up to the next newline is
-  // the tail of a line already thrown away, and parsing it would be parsing a
-  // fragment.
-  let resyncing = false
 
-  const consume = (line: string) => {
-    const event = parseUsageEvent(line)
-    if (event) acc = accumulateUsage(acc, event)
-  }
+  const reader = createLineReader({
+    maxLineChars: options.maxLineChars ?? MAX_LINE_CHARS,
+    onLine: (line) => {
+      const event = parseUsageEvent(line)
+      if (event) acc = accumulateUsage(acc, event)
+    }
+  })
 
   return {
-    push(chunk: string) {
-      buffer += chunk
-      let newline = buffer.indexOf('\n')
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline)
-        buffer = buffer.slice(newline + 1)
-        if (resyncing) resyncing = false
-        else consume(line)
-        newline = buffer.indexOf('\n')
-      }
-
-      if (buffer.length > maxLineChars) {
-        buffer = ''
-        resyncing = true
-      }
-    },
+    push: reader.push,
 
     usage() {
       // The last line of a stream that ended without a newline is a real line,
       // and on a `result` event it is the only one that carries the cost.
-      if (buffer && !resyncing) {
-        const event = parseUsageEvent(buffer)
+      const pending = reader.pending()
+      if (pending) {
+        const event = parseUsageEvent(pending)
         if (event) return summarizeUsage(accumulateUsage(acc, event))
       }
       return summarizeUsage(acc)
     },
 
-    buffered() {
-      return buffer.length
-    }
+    buffered: reader.buffered
   }
 }
 

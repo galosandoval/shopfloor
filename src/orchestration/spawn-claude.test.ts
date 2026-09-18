@@ -233,6 +233,49 @@ describe('spawnClaude usage metering', () => {
   })
 })
 
+describe('spawnClaude job-log rendering', () => {
+  /** Recorded: an `assistant` event carrying one tool call. */
+  const TOOL_USE_LINE =
+    '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01UWPY","name":"Bash","input":{"command":"npm test"}}],"usage":{"input_tokens":2,"output_tokens":5}},"session_id":"81f73fc3"}'
+
+  /** What the run wrote to this process's stdout, which is the job log. */
+  function captureStdout() {
+    const written: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      written.push(String(chunk))
+      return true
+    })
+    return () => written.join('')
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('writes the rendered line to the log rather than the raw stream-json', async () => {
+    const log = captureStdout()
+
+    await run(
+      `process.stdout.write(${JSON.stringify(`${TOOL_USE_LINE}\n`)}); process.exit(0)`
+    )
+
+    expect(log()).toContain('⏺ Bash(npm test)')
+    expect(log()).not.toContain('"type":"assistant"')
+  })
+
+  it('passes the CLI prose on stderr through as it arrived', async () => {
+    const written: string[] = []
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+      written.push(String(chunk))
+      return true
+    })
+
+    await run("process.stderr.write('Invalid API key'); process.exit(0)")
+
+    expect(written.join('')).toContain('Invalid API key')
+  })
+})
+
 describe('describeRunawayKill', () => {
   it('names the guard and the budget it enforced', () => {
     expect(
