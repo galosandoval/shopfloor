@@ -1,5 +1,47 @@
 # @galosandoval/shopfloor
 
+## 1.1.0
+
+### Minor Changes
+
+- [#83](https://github.com/galosandoval/shopfloor/pull/83) [`e8c0251`](https://github.com/galosandoval/shopfloor/commit/e8c0251dcb384353e385985cd6d9497127df52eb) Thanks [@galosandoval](https://github.com/galosandoval)! - Render the agent's `stream-json` output as readable job-log lines instead of raw JSONL.
+
+  A run streams with `--verbose --include-partial-messages` so the idle guard has a heartbeat, and every byte of that — including one JSON line per output token — went straight to the caller's job log. The log is the only place a human watches a headless run, so it was effectively unreadable.
+
+  The spawn shell now renders stdout: a session banner, the model's prose, one line per tool call naming the argument worth seeing (`⏺ Bash(npm test)`), its result or error under it, and a terminal line with turns, duration, and cost. Partial-message events are dropped, thinking is summarized by length, and long arguments and tool results are truncated.
+
+  New failure modes to know about:
+
+  - **stdout is no longer passed through verbatim.** Anything parsing this package's stdout as JSONL breaks. The verbatim record is unchanged — it is the transcript artifact (`transcriptFile`), which is where an audit should have been reading it from. stderr is still passed through untouched, and a stdout line that is not JSON still prints as it arrived.
+  - Rendering is a diagnostic and degrades rather than failing: an unparseable line prints raw, a line too long to buffer is dropped, and a throw in the renderer costs a log line rather than the run. Usage metering and the runaway guards are unaffected — the idle guard still reads the raw chunk before anything renders it.
+
+### Patch Changes
+
+- [#82](https://github.com/galosandoval/shopfloor/pull/82) [`8b87321`](https://github.com/galosandoval/shopfloor/commit/8b8732142342740b86ecf23278e47d6031707f67) Thanks [@galosandoval](https://github.com/galosandoval)! - Fix the scaffolded workflow invoking its own bins in a form `npx` cannot
+  resolve. Both steps used the bare `npx --yes @galosandoval/shopfloor@<v>
+shopfloor-admit` form, which derives the command from the package _name_ —
+  `shopfloor` — a bin this package does not ship. `npx` exits with "could not
+  determine executable to run" and swallows the bin name as an argument, so
+  neither `shopfloor-admit` nor `shopfloor-run-phase` ever ran.
+
+  **The failure mode this closes is a silent one, and existing workflows have
+  it.** The admit step captures stdout; an empty verdict parses to `null`;
+  `run-phase` is gated on `admitted == 'true'` and skips. The run reads green in
+  a few seconds having implemented nothing, which looks like ordinary
+  "not-a-trigger" traffic rather than broken wiring. Anyone whose runs finish
+  fast and change nothing is seeing this.
+
+  **Consumers must edit their own workflow — nothing reads it back.** `init`
+  scaffolds the file once and the consumer owns it after, so a re-scaffold does
+  not reach an already-installed one. Change both steps in
+  `.github/workflows/*.yml` to the `--package` form:
+
+      npx --yes --package @galosandoval/shopfloor@<version> -- shopfloor-admit
+      npx --yes --package @galosandoval/shopfloor@<version> -- shopfloor-run-phase
+
+  No API, input, or result field changed; freshly scaffolded workflows carry the
+  fixed form.
+
 ## 1.0.0
 
 ### Major Changes
