@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
 import { ImplementAgentError } from './implement-error'
 import { createStreamUsageReader, type RunUsage } from '../observability/usage'
+import { createStreamRenderer } from '../observability/stream-render'
 
 /** Which runaway budget ended a run. */
 export type KillReason = 'idle' | 'wall-clock'
@@ -105,20 +106,38 @@ export async function spawnClaude(
 
   let killedBy: RunawayKill | null = null
   const usageReader = createStreamUsageReader()
+  const renderer = createStreamRenderer()
   // A decoder rather than `chunk.toString()`: a chunk boundary can fall inside
   // a multi-byte character, and a `usage` line mangled into replacement
   // characters is a line that silently fails to parse.
   const decoder = new StringDecoder('utf8')
 
   /**
-   * Meters one stdout chunk. stdout only — that is where `stream-json` goes,
-   * while stderr is the CLI's own prose. Anything thrown in here is swallowed:
-   * metering is a diagnostic, and a diagnostic must never be what takes down a
-   * run that is otherwise working.
+   * One decoded stdout chunk, which two readers share: the renderer that turns
+   * `stream-json` into the job log's readable lines, and the usage meter.
+   * stdout only — that is where the stream goes, while stderr is the CLI's own
+   * prose and is passed through untouched.
+   *
+   * Anything thrown in here is swallowed: both are diagnostics, and a
+   * diagnostic must never be what takes down a run that is otherwise working.
+   * A render that throws still leaves the meter to run, and the reverse.
    */
-  const meterUsage = (chunk: Buffer) => {
+  const readStdout = (chunk: Buffer): void => {
+    let text = ''
     try {
-      usageReader.push(decoder.write(chunk))
+      text = decoder.write(chunk)
+    } catch {
+      return
+    }
+
+    try {
+      process.stdout.write(renderer.push(text))
+    } catch {
+      // The log loses a line; the run does not notice.
+    }
+
+    try {
+      usageReader.push(text)
     } catch {
       // Nothing to do and nothing to say: the totals just under-report.
     }
@@ -127,7 +146,9 @@ export async function spawnClaude(
   /** The spawn's totals, with any bytes the decoder was still holding flushed. */
   const finalUsage = (): RunUsage => {
     try {
-      usageReader.push(decoder.end())
+      const rest = decoder.end()
+      usageReader.push(rest)
+      process.stdout.write(renderer.push(rest) + renderer.end())
     } catch {
       // Same trade as above.
     }
@@ -147,19 +168,22 @@ export async function spawnClaude(
 
       const startedAt = Date.now()
       let lastActivity = startedAt
-      const onOutput =
-        (stream: NodeJS.WriteStream, meter?: (chunk: Buffer) => void) =>
-        (chunk: Buffer) => {
-          stream.write(chunk)
-          captureTail(chunk)
-          // Before the metering, and unconditionally: the idle guard reads the
-          // child's output as its heartbeat, so nothing downstream of this line
-          // may decide whether the run looks alive.
-          lastActivity = Date.now()
-          meter?.(chunk)
-        }
-      child.stdout.on('data', onOutput(process.stdout, meterUsage))
-      child.stderr.on('data', onOutput(process.stderr))
+      const onOutput = (handle: (chunk: Buffer) => void) => (chunk: Buffer) => {
+        captureTail(chunk)
+        // Before the handling, and unconditionally: the idle guard reads the
+        // child's output as its heartbeat, so nothing downstream of this line
+        // may decide whether the run looks alive.
+        lastActivity = Date.now()
+        handle(chunk)
+      }
+      // stdout is not passed through: what reaches the log is what the renderer
+      // made of the `stream-json` on it. stderr is the CLI's own prose and goes
+      // out as it arrived.
+      child.stdout.on('data', onOutput(readStdout))
+      child.stderr.on(
+        'data',
+        onOutput((chunk) => process.stderr.write(chunk))
+      )
 
       let graceTimer: NodeJS.Timeout | undefined
       const guardTimer = setInterval(() => {
