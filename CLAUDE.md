@@ -31,13 +31,30 @@ Since `1.0.0`, semver means what it says: a breaking change is a major, and
 Consumers still exact-pin, and that is their call, not a licence to break a
 minor.
 
-**One merge releases.** Before merging to `main`, run `npm run version:packages`
-and commit what it writes — the version bump and the `CHANGELOG.md` entry ride
-in the PR itself, and merging publishes. There is no "Version Packages" PR to
-merge afterwards; CI on `main` only runs `changeset publish` and pushes the tag,
-and never writes to `main`. Re-run it if you push more commits after versioning.
-A PR that ships nothing skips this and just carries its empty changeset, which
-the next versioning PR consumes.
+**You write changesets; CI writes versions.** A PR of yours never carries a
+version bump — `npm run version:packages` is not a step you run before merging.
+On a push to `main`, `changesets/action` does one of two things: unconsumed
+changesets exist, so it opens or updates a **"Version Packages" PR** carrying
+the bump and the `CHANGELOG.md` entry and publishes nothing; or `main` is
+already bumped because you merged that PR, so it publishes to npm and pushes
+the tag. Releasing is therefore two merges, and the second one is a button.
+
+This replaces an earlier rule that made the bump a manual step in the PR itself.
+That rule is what let `1.0.0` ship four times over: a PR merged with its
+changesets unconsumed, `changeset publish` found the version already on npm, and
+reported nothing to publish — exit 0, no release, no complaint. A step a human
+has to remember is not a release process.
+
+The load-bearing detail is what the release job writes: a branch
+(`changeset-release/main`) and a pull request, **never `main`**. So `main`'s
+ruleset needs no bypass actor — which matters because GitHub Actions cannot be
+one on a user-owned repository, and any design that pushed to `main` directly
+would need a stored PAT or deploy key instead.
+
+**Do not make `verify` a required status check.** A pull request opened with
+`GITHUB_TOKEN` does not trigger workflows, so the Version Packages PR would
+never report one and could never be merged. That PR-time checks are currently
+unenforced is a real gap, but it is a separate one, and this is not its fix.
 
 ## Pure core, IO shell
 
