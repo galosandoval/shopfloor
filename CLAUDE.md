@@ -16,45 +16,17 @@ reading at the first sentence.
 - [`docs/testing.md`](./docs/testing.md) — read before writing a test.
 - [`docs/typescript-style.md`](./docs/typescript-style.md) — size, colocation, extraction.
 - [`docs/doc-comments.md`](./docs/doc-comments.md) — when a comment becomes a doc block.
+- [`VERSIONING.md`](./VERSIONING.md) — changesets, the release flow, why it is automatic.
 - [`README.md`](./README.md) — the consumer-facing API; keep it accurate.
 
 ## Every PR carries a changeset
 
 `npx changeset` — CI fails a PR that has none. A PR that deliberately ships
 nothing — docs, CI config, tests — records an explicit empty one,
-`npx changeset --empty`, so "this doesn't release" is on the record rather than
-inferred from silence. Write the body for a consumer deciding whether the bump
-is safe, naming new failure modes and what breaks, not just what was added.
-
-Since `1.0.0`, semver means what it says: a breaking change is a major, and
-"minor is additive" is a promise rather than the caveat it was pre-`1.0.0`.
-Consumers still exact-pin, and that is their call, not a licence to break a
-minor.
-
-**You write changesets; CI writes versions.** A PR of yours never carries a
-version bump — `npm run version:packages` is not a step you run before merging.
-On a push to `main`, `changesets/action` does one of two things: unconsumed
-changesets exist, so it opens or updates a **"Version Packages" PR** carrying
-the bump and the `CHANGELOG.md` entry and publishes nothing; or `main` is
-already bumped because you merged that PR, so it publishes to npm and pushes
-the tag. Releasing is therefore two merges, and the second one is a button.
-
-This replaces an earlier rule that made the bump a manual step in the PR itself.
-That rule is what let `1.0.0` ship four times over: a PR merged with its
-changesets unconsumed, `changeset publish` found the version already on npm, and
-reported nothing to publish — exit 0, no release, no complaint. A step a human
-has to remember is not a release process.
-
-The load-bearing detail is what the release job writes: a branch
-(`changeset-release/main`) and a pull request, **never `main`**. So `main`'s
-ruleset needs no bypass actor — which matters because GitHub Actions cannot be
-one on a user-owned repository, and any design that pushed to `main` directly
-would need a stored PAT or deploy key instead.
-
-**Do not make `verify` a required status check.** A pull request opened with
-`GITHUB_TOKEN` does not trigger workflows, so the Version Packages PR would
-never report one and could never be merged. That PR-time checks are currently
-unenforced is a real gap, but it is a separate one, and this is not its fix.
+`npx changeset --empty`. You never write a version bump: `changesets/action`
+does that on `main`, in a "Version Packages" PR of its own, and merging that PR
+is the release. [`VERSIONING.md`](./VERSIONING.md) has the rest — the semver
+promise, why the bump is not a manual step, and what not to change.
 
 ## Pure core, IO shell
 
