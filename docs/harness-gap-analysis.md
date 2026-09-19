@@ -481,8 +481,8 @@ makes about hooks ("things you should never forget but often do").
   becomes cryptographically attested rather than merely documented. Publishing
   access was also tightened to disallow bypass-2FA tokens, so the only paths to
   the registry are the workflow and a human with an OTP.
-- **OIDC requires npm >= 11.5.1**, which neither node 20 nor node 22 bundles, so
-  the release job installs npm explicitly. Skipping this fails authentication
+- **OIDC requires npm >= 11.5.1**, which not every node bundles, so the release
+  job installs npm explicitly. Skipping this fails authentication
   with an error that doesn't point at the npm version.
 - **PR-time changeset enforcement, with an explicit empty changeset** as the
   escape hatch for non-shipping PRs. Chosen over path-filtering and over

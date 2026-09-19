@@ -53,8 +53,8 @@ would need a stored PAT or a deploy key. This one needs no secret beyond
 `GITHUB_TOKEN`.
 
 **Publishing is OIDC trusted publishing** — no `NPM_TOKEN` is stored anywhere.
-That is why the release job installs `npm@^11.5.1`, which neither node 20 nor
-node 22 ships, and why it sets `NPM_CONFIG_PROVENANCE` rather than relying on
+That is why the release job installs `npm@^11.5.1` rather than trusting the
+npm that node 24 bundles, and why it sets `NPM_CONFIG_PROVENANCE` rather than relying on
 npm's trusted-publisher default.
 
 ## Do not make `verify` a required status check

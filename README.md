@@ -18,7 +18,7 @@ Why any of it is shaped this way is in [`CONTEXT.md`](./CONTEXT.md).
 npm install @galosandoval/shopfloor
 ```
 
-Node 20+, with `claude` and `gh` on `PATH` (this package shells out to both), and
+Node 24+, with `claude` and `gh` on `PATH` (this package shells out to both), and
 `git` plus reachable GitHub at install time — the skills the agent runs on ship
 as a bundled plugin, a git dependency on
 [`galosandoval/skills`](https://github.com/galosandoval/skills) pinned to a tag.

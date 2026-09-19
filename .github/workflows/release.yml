@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run lint
@@ -80,12 +80,13 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
-      # OIDC trusted publishing requires npm >= 11.5.1, which neither node 20
-      # nor node 22 ships. Without this the publish fails to authenticate with
-      # an error that does not point at the npm version. Pinned to the 11.x
-      # range so a future npm major does not land unreviewed in the publish path.
+      # OIDC trusted publishing requires npm >= 11.5.1, which is not what
+      # every node 24 patch bundles. Without this the publish fails to
+      # authenticate with an error that does not point at the npm version.
+      # Pinned to the 11.x range so a future npm major does not land unreviewed
+      # in the publish path.
       - run: npm install -g npm@^11.5.1
       - run: npm ci
       # Versioning is automatic, and this one step is both halves of it.
