@@ -1,5 +1,13 @@
 # @galosandoval/shopfloor
 
+## 2.1.0
+
+### Minor Changes
+
+- [#90](https://github.com/galosandoval/shopfloor/pull/90) [`e49e351`](https://github.com/galosandoval/shopfloor/commit/e49e351b3a409f707673f60d4caa7d51342351de) Thanks [@galosandoval](https://github.com/galosandoval)! - Require Node 24. `engines` is now `>=24`, the build targets `node24`, the
+  release workflow and the scaffolded consumer workflow install node 24, and
+  `@types/node` moves to `^24`.
+
 ## 2.0.0
 
 ### Major Changes
