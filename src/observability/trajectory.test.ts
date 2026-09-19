@@ -295,6 +295,43 @@ describe('checkTrajectory', () => {
     })
   })
 
+  describe('commit-before-stop', () => {
+    it('fails when the run ended without committing', () => {
+      // `gate-before-commit` passes vacuously on the same trajectory, which is
+      // the gap this invariant closes.
+      const findings = checkTrajectory(
+        [...failingStep('npm test'), ...step('npm test')],
+        OPTIONS
+      )
+      expect(find(findings, 'gate-before-commit').status).toBe('pass')
+
+      const finding = find(findings, 'commit-before-stop')
+      expect(finding.status).toBe('fail')
+      expect(finding.detail).toContain('without committing')
+    })
+
+    it('points at the turn the run stopped on', () => {
+      const finding = find(
+        checkTrajectory([...step('npm test'), ...step('echo idle')], OPTIONS),
+        'commit-before-stop'
+      )
+      expect(finding.evidence).toHaveLength(1)
+      expect(finding.evidence[0].turnIndex).toBe(2)
+    })
+
+    it('passes on a single commit', () => {
+      const finding = find(
+        checkTrajectory(
+          [...step('npm test'), ...step('git commit -m "feat: done"')],
+          OPTIONS
+        ),
+        'commit-before-stop'
+      )
+      expect(finding.status).toBe('pass')
+      expect(finding.detail).toContain('1 commit(s)')
+    })
+  })
+
   describe('not-evaluable transcripts', () => {
     it('grades every invariant not-evaluable for an empty transcript', () => {
       const findings = checkTrajectory([], OPTIONS)
@@ -313,6 +350,7 @@ describe('checkTrajectory', () => {
       expect(statuses(findings)).toEqual({
         'gate-before-commit': 'not-evaluable',
         'red-before-green': 'not-evaluable',
+        'commit-before-stop': 'not-evaluable',
         'no-forbidden-git-ops': 'not-evaluable',
         'turn-budget-headroom': 'not-evaluable'
       })
@@ -339,7 +377,7 @@ describe('formatScorecard', () => {
     const markdown = formatScorecard(findings)
     expect(markdown).toContain('Trajectory scorecard')
     expect(markdown).toContain('| Invariant | Result |')
-    expect(markdown).toContain('4/4 process invariants passed')
+    expect(markdown).toContain('5/5 process invariants passed')
     for (const finding of findings) {
       expect(markdown).toContain(finding.title)
     }

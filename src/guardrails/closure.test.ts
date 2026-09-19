@@ -21,6 +21,7 @@ function scorecard(
     [
       ['gate-before-commit', 'Quality gate ran before every commit'],
       ['red-before-green', 'A failing test preceded the first commit'],
+      ['commit-before-stop', 'The run committed before it stopped'],
       ['no-forbidden-git-ops', 'No force-push or amend in the trajectory'],
       ['turn-budget-headroom', 'Turn usage within headroom of the cap']
     ] as const
@@ -56,15 +57,34 @@ describe('evaluateClosure', () => {
   })
 
   it('closes a run whose gating invariant had nothing to judge, given another that did', () => {
-    // No commits yet: `red-before-green` has no first commit to measure against
-    // while `gate-before-commit` passes vacuously. That is a graded run with no
-    // violation, not an ungraded one.
+    // One gating invariant ungraded is not an ungraded run: the others still
+    // measured the attempt, and none of them found a violation.
     const verdict = evaluateClosure({
       findings: scorecard({ 'red-before-green': 'not-evaluable' }),
       budgetRemaining: true
     })
 
     expect(verdict.kind).toBe('pass')
+  })
+
+  it('does not close a run that reached a green gate without committing', () => {
+    // The failure this invariant was added for: the work was done, the suite
+    // was green, and the agent ended its turn waiting on something. A headless
+    // spawn has no turn after that one, so the working tree is discarded and
+    // the branch keeps nothing. `gate-before-commit` passes vacuously on a run
+    // with no commits, which is why it took a third invariant to notice.
+    const verdict = evaluateClosure({
+      findings: scorecard({
+        'commit-before-stop': 'fail',
+        'red-before-green': 'not-evaluable'
+      }),
+      budgetRemaining: true
+    })
+
+    expect(verdict).toMatchObject({
+      kind: 're-enter',
+      violations: ['commit-before-stop']
+    })
   })
 
   it.each(GATING_TRAJECTORY_INVARIANTS)(
@@ -113,7 +133,8 @@ describe('evaluateClosure', () => {
     const verdict = evaluateClosure({
       findings: scorecard({
         'gate-before-commit': 'fail',
-        'red-before-green': 'fail'
+        'red-before-green': 'fail',
+        'commit-before-stop': 'fail'
       }),
       budgetRemaining: false
     })
@@ -122,6 +143,7 @@ describe('evaluateClosure', () => {
     expect(verdict.violations).toEqual([...GATING_TRAJECTORY_INVARIANTS])
     expect(verdict.reason).toContain('gate-before-commit')
     expect(verdict.reason).toContain('red-before-green')
+    expect(verdict.reason).toContain('commit-before-stop')
     expect(verdict.reason).toContain('gate-before-commit detail')
   })
 
@@ -145,10 +167,11 @@ describe('evaluateClosure', () => {
     // transcript: every invariant `not-evaluable`. Read as a pass, it would be
     // the cheapest way past this gate.
     const verdict = evaluateClosure({
-      findings: scorecard({
-        'gate-before-commit': 'not-evaluable',
-        'red-before-green': 'not-evaluable'
-      }),
+      findings: scorecard(
+        Object.fromEntries(
+          GATING_TRAJECTORY_INVARIANTS.map((id) => [id, 'not-evaluable'])
+        )
+      ),
       budgetRemaining: true
     })
 

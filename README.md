@@ -301,8 +301,9 @@ work. The gate runs on the run's own environment, not the CLI's child env.
 `transcript.iteration-<n>.jsonl`. `evaluateIteration` is the exported rule.
 
 **The closure condition.** A green gate is necessary and not sufficient. Every
-attempt is graded over its own transcript, and two of the four trajectory
-invariants gate: `gate-before-commit` and `red-before-green`. A violation with
+attempt is graded over its own transcript, and three of the five trajectory
+invariants gate: `gate-before-commit`, `red-before-green` and
+`commit-before-stop`. A violation with
 attempts left respawns with the violated invariants appended — even with no
 `gateCommand` stated. With none left, the run fails as `agent:blocked` (not
 `agent:exhausted`), pushes, opens no PR, and comments naming the invariants. An
@@ -491,6 +492,7 @@ const { graded, findings, scorecard } = runTrajectoryCheck({
 | ---------------------- | ---------------------------------------------------------------- |
 | `gate-before-commit`   | A `git commit` was not preceded by a whole-suite test run        |
 | `red-before-green`     | No failing test run preceded the first commit                    |
+| `commit-before-stop`   | The run ended without committing anything                        |
 | `no-forbidden-git-ops` | The run force-pushed or amended                                  |
 | `turn-budget-headroom` | Turn usage reached the headroom threshold (default: ≥80% of cap) |
 

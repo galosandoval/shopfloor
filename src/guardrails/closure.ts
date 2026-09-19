@@ -26,10 +26,20 @@ import {
  * scorecard — **not every finding is a gate**, and which ones are is the
  * decision this ticket exists to make.
  *
- * The two here are the implement phase's own contract: the quality gate ran
- * before each commit, and a failing test preceded the first one. Both describe
- * work the run claims to have done, and both are exactly what a test-deleting
- * shortcut to green violates.
+ * The three here are the implement phase's own contract: the quality gate ran
+ * before each commit, a failing test preceded the first one, and the run
+ * committed before it stopped. Each describes work the run claims to have
+ * done. The first two are what a test-deleting shortcut to green violates; the
+ * third is what an agent violates by doing the work and then ending its turn
+ * on a wait — a headless spawn has no turn after that one, so the branch keeps
+ * nothing and the gate it passed was measuring a working tree about to be
+ * thrown away.
+ *
+ * `commit-before-stop` gates rather than advises because it is the one of the
+ * three the loop can actually fix. The work was done and the gate was green;
+ * what is missing is a `git commit` the next attempt can be told to make. An
+ * advisory finding here would name the most expensive way to produce nothing
+ * and then let the run close on it.
  *
  * The other two stay advisory, each for its own reason.
  * `no-forbidden-git-ops` is already refused *at spawn time* by the command
@@ -41,7 +51,8 @@ import {
  */
 export const GATING_TRAJECTORY_INVARIANTS = [
   'gate-before-commit',
-  'red-before-green'
+  'red-before-green',
+  'commit-before-stop'
 ] as const
 
 export type GatingTrajectoryInvariantId =
@@ -172,8 +183,9 @@ function noEvidence(what: string): ClosureBlock {
     cause: 'no-evidence',
     violations: [],
     reason:
-      `${what} — so there is no evidence that the quality gate ran before ` +
-      'each commit or that a failing test preceded the first one. The ' +
+      `${what} — so there is no evidence that the process held: that the ` +
+      'quality gate ran before each commit, that a failing test preceded the ' +
+      'first one, or that the run committed at all before it stopped. The ' +
       'closure condition is met by evidence that the process held, never by ' +
       'the absence of evidence that it did not, so the run does not close as ' +
       'a success.'

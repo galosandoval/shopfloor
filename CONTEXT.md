@@ -312,9 +312,17 @@ as a success. The trajectory checker could already prove that wrong and did
 nothing about it. `evaluateClosure` is the half that acts, and four things
 about it are decisions rather than implementation.
 
-- **Two invariants gate; two stay advisory, and the list is stated.**
+- **Three invariants gate; two stay advisory, and the list is stated.**
   `gate-before-commit` and `red-before-green` are the implement phase's own
   contract, and both are exactly what a shortcut to green violates.
+  `commit-before-stop` joined them for the opposite failure: an agent that did
+  the work, reached a green gate, and then ended its turn waiting on a
+  background task. A headless spawn has no turn after that one, so the working
+  tree is discarded and the branch keeps nothing — and `gate-before-commit`
+  passes *vacuously* on a run with no commits, so the scorecard called it
+  clean. It gates rather than advises because it is the one of the three the
+  loop can actually fix: the work was done and the gate was green, and what is
+  missing is a commit the next attempt can be told to make.
   `no-forbidden-git-ops` stays advisory because the command guard already
   refuses those _at spawn time_ — a finding there reports on a guardrail that
   acted, and blocking would be a second punishment for something that did not
@@ -748,8 +756,9 @@ it, and what happens when the ceiling trips.
   as a success would be a more expensive version of the single-shot run it
   replaced.
 - **A green gate is necessary and no longer sufficient.** Since shopfloor#48 a
-  run also has to close on its own trajectory, and the two gating invariants
-  are the ones a shortcut to green violates. This is the only guardrail in the
+  run also has to close on its own trajectory: two of the gating invariants are
+  the ones a shortcut to green violates, and the third is the one a run
+  violates by never committing what the gate just passed. This is the only guardrail in the
   package that **refuses on an unreadable signal without being about spend** —
   authorization and admission refuse on uncertainty because the failure is
   financial and adversarial; this one refuses because the signal _is_ the
