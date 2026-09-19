@@ -124,6 +124,34 @@ function escapeRegExp(literal: string): string {
   return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/**
+ * How a test runner says it failed, in its own output.
+ *
+ * The exit status is the primary evidence a run went red, but it is routinely
+ * thrown away: an agent that runs `bun run test 2>&1 | tail -30` gets `tail`'s
+ * status, and one that appends `; echo done` gets the echo's. Either makes a
+ * genuinely red run indistinguishable from a green one, and a run that did
+ * hold red-before-green is then graded as though it never went red. Reading
+ * the runner's own summary out of the captured output recovers that evidence.
+ *
+ * Deliberately narrow — a jest/vitest failure summary or a `FAIL <file>` line,
+ * never a bare "error" or a non-zero exit echoed by the agent — and only ever
+ * consulted for output captured under a command that already matched the gate
+ * patterns. Both halves matter: the loose reading of this would grade a `cat`
+ * of a log file as a test run.
+ */
+const TEST_FAILURE_OUTPUT_PATTERNS: readonly RegExp[] = [
+  /^\s*Tests?\b[^\n]*?\b\d+ failed/m,
+  /^\s*Test Suites:[^\n]*?\b\d+ failed/m,
+  /^\s*FAIL\s+\S/m
+]
+
+/** True when a captured tool output carries a test runner's failure report. */
+function reportsTestFailure(output: string | null): boolean {
+  if (output === null) return false
+  return TEST_FAILURE_OUTPUT_PATTERNS.some((pattern) => pattern.test(output))
+}
+
 // --- Command classification ---------------------------------------------------
 
 /** A gate run, per the patterns in force for this check. */
@@ -173,6 +201,12 @@ interface Action {
   toolUseId: string | null
   /** From the paired tool_result's is_error; null when unknown/unpaired. */
   failed: boolean | null
+  /**
+   * The paired tool_result's text, when it had any. Kept because a command's
+   * exit status is not the only record of whether it failed — see
+   * {@link reportsTestFailure}.
+   */
+  output: string | null
 }
 
 interface NormalizedTrajectory {
@@ -194,6 +228,23 @@ function contentBlocks(
 }
 
 /**
+ * The text of a tool_result block: the CLI writes it either as a plain string
+ * or as an array of content blocks, and both shapes carry the same output.
+ * Anything else reads as no output rather than throwing.
+ */
+function resultText(block: Record<string, unknown>): string | null {
+  const content = block.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return null
+  const text = content
+    .map(asRecord)
+    .map((entry) => (typeof entry?.text === 'string' ? entry.text : ''))
+    .filter((entry) => entry !== '')
+    .join('\n')
+  return text === '' ? null : text
+}
+
+/**
  * Fold the raw transcript into an ordered action list with turn indices and
  * pass/fail results, pairing each tool_use with its tool_result via id. Never
  * throws on odd shapes — an unrecognizable record contributes nothing.
@@ -204,6 +255,7 @@ function normalize(events: unknown): NormalizedTrajectory {
   }
 
   const resultErrors = new Map<string, boolean>()
+  const resultOutputs = new Map<string, string>()
   const actions: Action[] = []
   let turnCount = 0
   let lastAssistantId: unknown = Symbol('none')
@@ -225,24 +277,30 @@ function normalize(events: unknown): NormalizedTrajectory {
           turnIndex: turnCount,
           command: typeof input.command === 'string' ? input.command : null,
           toolUseId: typeof block.id === 'string' ? block.id : null,
-          failed: null
+          failed: null,
+          output: null
         })
       }
     } else if (event.type === 'user') {
       for (const block of contentBlocks(event)) {
         if (block.type !== 'tool_result') continue
         const id = block.tool_use_id
-        if (typeof id === 'string' && typeof block.is_error === 'boolean') {
+        if (typeof id !== 'string') continue
+        if (typeof block.is_error === 'boolean') {
           resultErrors.set(id, block.is_error)
         }
+        const text = resultText(block)
+        if (text !== null) resultOutputs.set(id, text)
       }
     }
   }
 
   for (const action of actions) {
-    if (action.toolUseId !== null && resultErrors.has(action.toolUseId)) {
+    if (action.toolUseId === null) continue
+    if (resultErrors.has(action.toolUseId)) {
       action.failed = resultErrors.get(action.toolUseId) ?? null
     }
+    action.output = resultOutputs.get(action.toolUseId) ?? null
   }
 
   return { actions, turnCount, evaluable: turnCount > 0 }
@@ -329,7 +387,7 @@ const INVARIANTS: InvariantDefinition[] = [
           (action) =>
             action.command !== null &&
             matchesGate(action.command, gatePatterns) &&
-            action.failed === true
+            (action.failed === true || reportsTestFailure(action.output))
         )
       if (sawFailingTest) {
         return {

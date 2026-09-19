@@ -37,11 +37,18 @@ function bash(command: string): { events: TranscriptEvent[]; id: string } {
 }
 
 /** The user tool_result pairing a Bash call with a pass/fail exit. */
-function result(id: string, failed: boolean): TranscriptEvent {
+function result(id: string, failed: boolean, output?: string): TranscriptEvent {
   return {
     type: 'user',
     message: {
-      content: [{ type: 'tool_result', tool_use_id: id, is_error: failed }]
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: id,
+          is_error: failed,
+          ...(output === undefined ? {} : { content: output })
+        }
+      ]
     }
   }
 }
@@ -56,6 +63,15 @@ function step(command: string): TranscriptEvent[] {
 function failingStep(command: string): TranscriptEvent[] {
   const { events, id } = bash(command)
   return [...events, result(id, true)]
+}
+
+/**
+ * A test run that failed but exited zero — the shape a pipe produces
+ * (`bun run test | tail -20`), where the exit status is the last command's.
+ */
+function pipedFailingStep(command: string, output: string): TranscriptEvent[] {
+  const { events, id } = bash(command)
+  return [...events, result(id, false, output)]
 }
 
 const OPTIONS = { maxTurns: 150 }
@@ -212,6 +228,82 @@ describe('checkTrajectory', () => {
         'red-before-green'
       )
       expect(finding.status).toBe('not-evaluable')
+    })
+
+    it.each([
+      [
+        'a jest summary',
+        'Tests:       1 failed, 587 passed, 588 total\nRan all test suites.'
+      ],
+      ['a jest suite summary', 'Test Suites: 1 failed, 69 passed, 70 total'],
+      ['a vitest summary', ' Tests  1 failed | 5 passed (6)'],
+      ['a FAIL line', 'FAIL src/lib/thing.test.ts\n  ● pins the behavior']
+    ])(
+      'passes when the run exited zero through a pipe but %s reports failure',
+      (_label, output) => {
+        const events = [
+          ...pipedFailingStep('bun run test 2>&1 | tail -30', output),
+          ...step('bun run test'),
+          ...step('git commit -m "feat: red was piped"')
+        ]
+        const finding = find(
+          checkTrajectory(events, OPTIONS),
+          'red-before-green'
+        )
+        expect(finding.status).toBe('pass')
+      }
+    )
+
+    it('still fails when a piped run reports no failure', () => {
+      const events = [
+        ...pipedFailingStep(
+          'bun run test 2>&1 | tail -30',
+          'Tests:       588 passed, 588 total\nRan all test suites.'
+        ),
+        ...step('git commit -m "feat: never went red"')
+      ]
+      const finding = find(checkTrajectory(events, OPTIONS), 'red-before-green')
+      expect(finding.status).toBe('fail')
+    })
+
+    it('reads failure out of a structured tool_result content array', () => {
+      const { events, id } = bash('bun run test 2>&1 | tail -30')
+      const trajectory = [
+        ...events,
+        {
+          type: 'user',
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: id,
+                is_error: false,
+                content: [
+                  { type: 'text', text: 'Tests:       1 failed, 587 passed' }
+                ]
+              }
+            ]
+          }
+        },
+        ...step('git commit -m "feat: red was piped"')
+      ]
+      const finding = find(
+        checkTrajectory(trajectory, OPTIONS),
+        'red-before-green'
+      )
+      expect(finding.status).toBe('pass')
+    })
+
+    it('ignores failure text under a command that is not a gate run', () => {
+      const events = [
+        ...pipedFailingStep(
+          'cat notes.md',
+          'Tests:       1 failed, 587 passed, 588 total'
+        ),
+        ...step('git commit -m "feat: not a test run"')
+      ]
+      const finding = find(checkTrajectory(events, OPTIONS), 'red-before-green')
+      expect(finding.status).toBe('fail')
     })
   })
 

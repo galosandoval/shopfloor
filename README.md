@@ -496,6 +496,11 @@ const { graded, findings, scorecard } = runTrajectoryCheck({
 | `no-forbidden-git-ops` | The run force-pushed or amended                                  |
 | `turn-budget-headroom` | Turn usage reached the headroom threshold (default: ≥80% of cap) |
 
+A failing test run is recognized by the tool call's non-zero exit **or** by a
+test runner's own failure summary in its output — an agent that pipes the run
+(`bun run test | tail -30`) throws the exit status away, and the evidence that
+it went red would otherwise vanish with it.
+
 `runTrajectoryCheck` is advisory — it reports, never throws, and an unreadable
 transcript returns `graded: false`. The gate over it is `evaluateClosure`.
 `checkTrajectory` and `formatScorecard` are the pure halves. Grading uses the
