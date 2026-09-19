@@ -4,8 +4,14 @@
  * it is.
  *
  * **What ships is a shim, not a prompt.** The default names the phase, names
- * the issue and the branch, and says where the run's outputs go — then defers
- * to the bundled skills plugin for how to carry the work out. Procedure
+ * the issue and the branch, says that the run is headless and what that costs,
+ * and says where the run's outputs go — then defers to the bundled skills
+ * plugin for how to carry the work out. Headless is in because it is a *fact
+ * about the run* rather than a judgement about the work, the same line the
+ * gate-failure feedback is on: an agent that does not know its turn is the
+ * last one ends the run waiting for an answer that cannot come, and the branch
+ * keeps nothing. What to do about it — commit order, how to wait on a slow
+ * command — is procedure, and stays in the skill. Procedure
  * already lives in skills (shopfloor#26), and a shipped prompt carrying it too
  * would put the same content in two places with no rule for which wins.
  * Environment — a consumer's install command, their gate, their seeded
@@ -35,6 +41,11 @@ export const DEFAULT_PHASE_PROMPTS: Record<Phase, string> = {
 
 Read the issue with \`gh issue view {{ISSUE_NUMBER}}\` and implement what it
 asks for. You are on branch \`{{BRANCH}}\`; commit your work there.
+
+This run is **headless**. The CLI was spawned to finish on its own: nobody
+reads your output between turns, nothing answers a question you ask, and there
+is no turn after the one you stop on. What you committed on \`{{BRANCH}}\` is
+what survives — the working tree this run ends with is discarded.
 
 How to carry the work out is the \`implement\` skill, from the plugin this run
 already loaded. Follow this repository's own standards — \`CLAUDE.md\` and

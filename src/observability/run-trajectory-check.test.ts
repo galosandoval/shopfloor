@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { runTrajectoryCheck } from './run-trajectory-check'
-import type { TranscriptEvent } from './trajectory'
+import { TRAJECTORY_INVARIANT_IDS, type TranscriptEvent } from './trajectory'
 
 // Wiring tests for the shell: real files in a real tmpdir rather than a mocked
 // `fs`, because what is under test is precisely whether it reads a transcript
@@ -61,13 +61,12 @@ describe('runTrajectoryCheck', () => {
     const result = runTrajectoryCheck({ transcriptFile, maxTurns: 150 })
 
     expect(result.graded).toBe(true)
-    expect(result.findings.map((f) => f.status)).toEqual([
-      'pass',
-      'pass',
-      'pass',
-      'pass'
-    ])
-    expect(result.scorecard).toContain('4/4 process invariants passed')
+    expect(result.findings.map((f) => f.status)).toEqual(
+      TRAJECTORY_INVARIANT_IDS.map(() => 'pass')
+    )
+    expect(result.scorecard).toContain(
+      `${TRAJECTORY_INVARIANT_IDS.length}/${TRAJECTORY_INVARIANT_IDS.length} process invariants passed`
+    )
   })
 
   it('passes the turn cap through to the budget invariant', () => {
@@ -138,7 +137,7 @@ describe('runTrajectoryCheck', () => {
     const result = runTrajectoryCheck({ transcriptFile, maxTurns: 150 })
 
     expect(result.graded).toBe(true)
-    expect(result.findings).toHaveLength(4)
+    expect(result.findings).toHaveLength(TRAJECTORY_INVARIANT_IDS.length)
   })
 
   it('reports ungraded, not an error, when the transcript is missing', () => {

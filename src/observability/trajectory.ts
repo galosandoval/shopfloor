@@ -10,11 +10,12 @@ import { asRecord } from '../json/record'
  * that record, and a process failure becomes visible even when the output
  * happens to pass.
  *
- * All four invariants read facts this package already owns:
+ * Every invariant reads facts this package already owns:
  * `turn-budget-headroom` measures against `runPolicy.maxTurns`,
  * `no-forbidden-git-ops` defers to {@link classifyCommand}'s own rule set, and
- * `gate-before-commit` / `red-before-green` are the implement phase's contract
- * — which is why the checker lives here rather than in a consumer.
+ * `gate-before-commit` / `red-before-green` / `commit-before-stop` are the
+ * implement phase's contract — which is why the checker lives here rather than
+ * in a consumer.
  *
  * **Advisory by contract.** Findings describe a run; they never fail one. A
  * gate built on them is a separate, later decision.
@@ -32,6 +33,7 @@ export type TrajectoryStatus = 'pass' | 'fail' | 'not-evaluable'
 export const TRAJECTORY_INVARIANT_IDS = [
   'gate-before-commit',
   'red-before-green',
+  'commit-before-stop',
   'no-forbidden-git-ops',
   'turn-budget-headroom'
 ] as const
@@ -343,6 +345,31 @@ const INVARIANTS: InvariantDefinition[] = [
         evidence: [
           { turnIndex: commit.turnIndex, command: commit.command ?? undefined }
         ]
+      }
+    }
+  },
+  {
+    id: 'commit-before-stop',
+    title: 'The run committed before it stopped',
+    evaluate({ actions, turnCount }) {
+      const commits = actions.filter(
+        (action) => action.command !== null && isCommit(action.command)
+      )
+      if (commits.length > 0) {
+        return {
+          status: 'pass',
+          detail: `${commits.length} commit(s) before the run ended`,
+          evidence: []
+        }
+      }
+      return {
+        status: 'fail',
+        detail:
+          'the run ended without committing — whatever it built was left in ' +
+          'the working tree and discarded',
+        // The turn it stopped on, which is the turn worth reading: a run that
+        // fails this almost always ends by saying what it was waiting for.
+        evidence: [{ turnIndex: turnCount }]
       }
     }
   },
