@@ -339,7 +339,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       # The harness spawns \`claude\` from PATH; nothing else on this runner
       # installs it. Pinned to the same version CLI_VERSION states below, so
